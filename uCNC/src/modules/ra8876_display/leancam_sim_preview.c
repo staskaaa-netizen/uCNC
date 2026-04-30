@@ -37,14 +37,14 @@
 #define SIM_TILE_H           12
 #define SIM_CHUCK_H          30
 
-#define SIM_LABEL_Z1_DX       6
-#define SIM_LABEL_Z1_DY      -4
-#define SIM_LABEL_D1_DX       6
-#define SIM_LABEL_D1_DY     -20
-#define SIM_LABEL_Z2_DX       6
-#define SIM_LABEL_Z2_DY      -4
-#define SIM_LABEL_D2_DX       6
-#define SIM_LABEL_D2_DY     -20
+#define SIM_LABEL_Z1_DX     -48
+#define SIM_LABEL_Z1_DY     -20
+#define SIM_LABEL_D1_DX     -48
+#define SIM_LABEL_D1_DY      -4
+#define SIM_LABEL_Z2_DX     -48
+#define SIM_LABEL_Z2_DY     -20
+#define SIM_LABEL_D2_DX     -48
+#define SIM_LABEL_D2_DY      -4
 
 typedef struct
 {
@@ -530,6 +530,7 @@ static void sim_draw_id_preview(const lcam_sim_view_t *view, const char *line, c
 
 static void sim_draw_face_preview(const lcam_sim_view_t *view, const char *line, const ui_snapshot_frame_t *frame)
 {
+    float d1 = 0.0f;
     float d;
     float z1 = 0.0f;
     float z;
@@ -550,7 +551,7 @@ static void sim_draw_face_preview(const lcam_sim_view_t *view, const char *line,
 
     label_x1 = sim_z_to_px(view, z1);
     label_x2 = sim_z_to_px(view, z);
-    label_y1 = view->stock_top;
+    label_y1 = sim_d_to_py(view, d1);
     label_y2 = sim_d_to_py(view, d);
     x1 = label_x1;
     x2 = label_x2;
@@ -564,7 +565,7 @@ static void sim_draw_face_preview(const lcam_sim_view_t *view, const char *line,
     if (spacing <= 0) spacing = 4;
 
     sim_draw_hatch_rect(x1, view->stock_top, x2, y2, spacing, true);
-    sim_draw_dz_corner_labels(view, label_x1, label_y1, 0.0f, z1, label_x2, label_y2, d, z);
+    sim_draw_dz_corner_labels(view, label_x1, label_y1, d1, z1, label_x2, label_y2, d, z);
 }
 
 static void sim_draw_groove_preview(const lcam_sim_view_t *view, const char *line)

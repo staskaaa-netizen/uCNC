@@ -474,8 +474,8 @@ static void sim_draw_od_preview(const lcam_sim_view_t *view, const char *line, c
     if (x2 <= x1) x2 = x1 + 1;
     if (y2 <= y1) y2 = y1 + 1;
 
-    if (sim_field_float2(line, "DOC", "ROUGH_DOC", &doc) ||
-        (frame && sim_field_float2(frame->leancam_tool_line, "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc)))
+    if (sim_field_float3(line, "DOC", "R_DOC", "ROUGH_DOC", &doc) ||
+        (frame && sim_field_float3(frame->leancam_tool_line, "R_DOC", "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc)))
         spacing = (int)(sim_absf(doc) * view->d_scale + 0.5f);
     if (spacing <= 0) spacing = 4;
 
@@ -519,8 +519,8 @@ static void sim_draw_id_preview(const lcam_sim_view_t *view, const char *line, c
     if (x2 <= x1) x2 = x1 + 1;
     if (y2 <= y1) y2 = y1 + 1;
 
-    if (sim_field_float2(line, "DOC", "ROUGH_DOC", &doc) ||
-        (frame && sim_field_float2(frame->leancam_tool_line, "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc)))
+    if (sim_field_float3(line, "DOC", "R_DOC", "ROUGH_DOC", &doc) ||
+        (frame && sim_field_float3(frame->leancam_tool_line, "R_DOC", "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc)))
         spacing = (int)(sim_absf(doc) * view->d_scale + 0.5f);
     if (spacing <= 0) spacing = 4;
 
@@ -558,8 +558,8 @@ static void sim_draw_face_preview(const lcam_sim_view_t *view, const char *line,
     y2 = label_y2;
     if (x2 <= x1) x2 = x1 + 1;
 
-    if (sim_field_float2(line, "DOC", "ROUGH_DOC", &doc) ||
-        (frame && sim_field_float2(frame->leancam_tool_line, "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc)))
+    if (sim_field_float3(line, "DOC", "R_DOC", "ROUGH_DOC", &doc) ||
+        (frame && sim_field_float3(frame->leancam_tool_line, "R_DOC", "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc)))
         spacing = (int)(sim_absf(doc) * view->d_scale + 0.5f);
     if (spacing <= 0) spacing = 4;
 

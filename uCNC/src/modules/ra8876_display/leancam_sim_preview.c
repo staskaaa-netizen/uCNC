@@ -535,6 +535,10 @@ static void sim_draw_face_preview(const lcam_sim_view_t *view, const char *line,
     float z;
     int x1;
     int x2;
+    int label_x1;
+    int label_x2;
+    int label_y1;
+    int label_y2;
     int y2;
     int tmp;
     float doc;
@@ -544,10 +548,14 @@ static void sim_draw_face_preview(const lcam_sim_view_t *view, const char *line,
     (void)sim_field_float2(line, "Z1", "Z_1", &z1);
     if (!sim_field_float2(line, "Z", "Z_2", &z)) return;
 
-    x1 = sim_z_to_px(view, z1);
-    x2 = sim_z_to_px(view, z);
+    label_x1 = sim_z_to_px(view, z1);
+    label_x2 = sim_z_to_px(view, z);
+    label_y1 = view->stock_top;
+    label_y2 = sim_d_to_py(view, d);
+    x1 = label_x1;
+    x2 = label_x2;
     if (x2 < x1) { tmp = x1; x1 = x2; x2 = tmp; }
-    y2 = sim_d_to_py(view, d);
+    y2 = label_y2;
     if (x2 <= x1) x2 = x1 + 1;
 
     if (sim_field_float2(line, "DOC", "ROUGH_DOC", &doc) ||
@@ -556,8 +564,7 @@ static void sim_draw_face_preview(const lcam_sim_view_t *view, const char *line,
     if (spacing <= 0) spacing = 4;
 
     sim_draw_hatch_rect(x1, view->stock_top, x2, y2, spacing, true);
-    sim_draw_corner_label(view, x2, view->stock_top, "Z", z, 6, -18);
-    sim_draw_corner_label(view, x2, y2, "D", d, 6, 4);
+    sim_draw_dz_corner_labels(view, label_x1, label_y1, 0.0f, z1, label_x2, label_y2, d, z);
 }
 
 static void sim_draw_groove_preview(const lcam_sim_view_t *view, const char *line)

@@ -38,13 +38,13 @@
 #define SIM_CHUCK_H          30
 
 #define SIM_LABEL_Z1_DX     -48
-#define SIM_LABEL_Z1_DY     -20
+#define SIM_LABEL_Z1_DY      -4
 #define SIM_LABEL_D1_DX     -48
-#define SIM_LABEL_D1_DY      -4
+#define SIM_LABEL_D1_DY     -20
 #define SIM_LABEL_Z2_DX     -48
-#define SIM_LABEL_Z2_DY     -20
+#define SIM_LABEL_Z2_DY      -4
 #define SIM_LABEL_D2_DX     -48
-#define SIM_LABEL_D2_DY      -4
+#define SIM_LABEL_D2_DY     -20
 
 typedef struct
 {
@@ -424,27 +424,18 @@ static void sim_draw_corner_label(const lcam_sim_view_t *view, int x, int y, con
 
 static void sim_draw_dz_corner_labels(const lcam_sim_view_t *view,
                                       int start_x,
-                                      int start_d_y,
+                                      int start_y,
                                       float d1,
                                       float z1,
                                       int end_x,
-                                      int end_d_y,
+                                      int end_y,
                                       float d2,
                                       float z2)
 {
-    int start_z_y = start_d_y;
-    int end_z_y = end_d_y;
-
-    if (end_d_y < start_d_y)
-    {
-        start_z_y = end_d_y;
-        end_z_y = start_d_y;
-    }
-
-    sim_draw_corner_label(view, start_x, start_z_y, "Z1", z1, SIM_LABEL_Z1_DX, SIM_LABEL_Z1_DY);
-    sim_draw_corner_label(view, start_x, start_d_y, "D1", d1, SIM_LABEL_D1_DX, SIM_LABEL_D1_DY);
-    sim_draw_corner_label(view, end_x, end_z_y, "Z2", z2, SIM_LABEL_Z2_DX, SIM_LABEL_Z2_DY);
-    sim_draw_corner_label(view, end_x, end_d_y, "D2", d2, SIM_LABEL_D2_DX, SIM_LABEL_D2_DY);
+    sim_draw_corner_label(view, start_x, start_y, "Z1", z1, SIM_LABEL_Z1_DX, SIM_LABEL_Z1_DY);
+    sim_draw_corner_label(view, start_x, start_y, "D1", d1, SIM_LABEL_D1_DX, SIM_LABEL_D1_DY);
+    sim_draw_corner_label(view, end_x, end_y, "Z2", z2, SIM_LABEL_Z2_DX, SIM_LABEL_Z2_DY);
+    sim_draw_corner_label(view, end_x, end_y, "D2", d2, SIM_LABEL_D2_DX, SIM_LABEL_D2_DY);
 }
 
 static void sim_draw_od_preview(const lcam_sim_view_t *view, const char *line, const ui_snapshot_frame_t *frame)

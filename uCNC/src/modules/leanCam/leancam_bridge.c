@@ -463,6 +463,35 @@ static void lc_begin_setup_if_missing_then(const char *tmpl)
     }
 }
 
+static void lc_begin_tool_template(void)
+{
+    if (leancam_files_busy())
+    {
+        lc_set_msg("LC: file IO busy");
+        return;
+    }
+
+    if (!lc_has_setup())
+    {
+        if (leancam_ui_begin_template(&g_leancam_ui, g_leancam_setup_template))
+        {
+            g_draft_field_index = 0;
+            g_lc_mode = LC_MODE_DRAFT;
+            lc_set_msg("LC: setup first");
+        }
+        return;
+    }
+
+    if (leancam_ui_begin_template(&g_leancam_ui, g_leancam_tool_template))
+    {
+        g_draft_field_index = 0;
+        g_lc_mode = LC_MODE_DRAFT;
+        lc_set_msg("LC: tool draft");
+    }
+    else
+        lc_set_msg("LC: tool draft failed");
+}
+
 static void lc_delete_current_line(void)
 {
     if (leancam_files_busy())
@@ -866,6 +895,41 @@ static void lc_input_add_dot(void)
     buf[len + 1u] = 0;
 }
 
+static int lc_find_brace_field(const char *s, uint8_t field_index, const char **open_out, const char **close_out);
+
+static bool lc_active_field_is_negative(void)
+{
+    const char *open;
+    const char *close;
+    const char *p;
+
+    if (!g_leancam_ui.draft_active)
+        return false;
+
+    if (!lc_find_brace_field(g_leancam_ui.draft_line, g_draft_field_index, &open, &close))
+        return false;
+
+    p = open + 1;
+    while (p < close && *p == ' ')
+        p++;
+    if (p < close && *p == '(')
+    {
+        p++;
+        while (p < close && *p == ' ')
+            p++;
+    }
+
+    return p < close && *p == '-';
+}
+
+static void lc_input_digit(char digit)
+{
+    if (g_leancam_ui.input_buf[0] == 0 && lc_active_field_is_negative())
+        lc_input_toggle_sign();
+
+    leancam_ui_input_char(&g_leancam_ui, digit);
+}
+
 
 static int lc_find_brace_field(const char *s, uint8_t field_index, const char **open_out, const char **close_out)
 {
@@ -977,7 +1041,7 @@ static int lc_commit_draft_bridge_owned(void)
         {
             if (prog_insert_after(&g_leancam_ui.prog,
                                   g_leancam_ui.cur_line,
-                                  "TOOL|T{1}|S{800}|R_FEED{120}|FIN_FEED{60}|R_DOC{2.0}|FIN_DOC{0.5}"))
+                                  "TOOL|T{1}|D{6}|S{800}|R_FEED{120}|FIN_FEED{60}|R_DOC{2.0}|FIN_DOC{0.5}"))
             {
                 g_leancam_ui.cur_line++;
             }
@@ -1118,7 +1182,7 @@ void leancam_bridge_handle_key(ui_key_t key)
                     lc_ensure_program_visible();
                     return;
 
-                case UI_KEY_DIGIT_0: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_RADIUS_OD]); return;
+                case UI_KEY_DIGIT_0: lc_begin_tool_template();                                      return;
                 case UI_KEY_DIGIT_1: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_OD]);        return;
                 case UI_KEY_DIGIT_2: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_ID]);        return;
                 case UI_KEY_DIGIT_3: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_FACE]);      return;
@@ -1182,16 +1246,16 @@ void leancam_bridge_handle_key(ui_key_t key)
                 case UI_KEY_PREV:     lc_input_toggle_sign(); return; /* B = +/- in draft */
                 case UI_KEY_NEXT:     lc_input_add_dot();     return; /* C = decimal point in draft */
 
-                case UI_KEY_DIGIT_0: leancam_ui_input_char(&g_leancam_ui, '0'); return;
-                case UI_KEY_DIGIT_1: leancam_ui_input_char(&g_leancam_ui, '1'); return;
-                case UI_KEY_DIGIT_2: leancam_ui_input_char(&g_leancam_ui, '2'); return;
-                case UI_KEY_DIGIT_3: leancam_ui_input_char(&g_leancam_ui, '3'); return;
-                case UI_KEY_DIGIT_4: leancam_ui_input_char(&g_leancam_ui, '4'); return;
-                case UI_KEY_DIGIT_5: leancam_ui_input_char(&g_leancam_ui, '5'); return;
-                case UI_KEY_DIGIT_6: leancam_ui_input_char(&g_leancam_ui, '6'); return;
-                case UI_KEY_DIGIT_7: leancam_ui_input_char(&g_leancam_ui, '7'); return;
-                case UI_KEY_DIGIT_8: leancam_ui_input_char(&g_leancam_ui, '8'); return;
-                case UI_KEY_DIGIT_9: leancam_ui_input_char(&g_leancam_ui, '9'); return;
+                case UI_KEY_DIGIT_0: lc_input_digit('0'); return;
+                case UI_KEY_DIGIT_1: lc_input_digit('1'); return;
+                case UI_KEY_DIGIT_2: lc_input_digit('2'); return;
+                case UI_KEY_DIGIT_3: lc_input_digit('3'); return;
+                case UI_KEY_DIGIT_4: lc_input_digit('4'); return;
+                case UI_KEY_DIGIT_5: lc_input_digit('5'); return;
+                case UI_KEY_DIGIT_6: lc_input_digit('6'); return;
+                case UI_KEY_DIGIT_7: lc_input_digit('7'); return;
+                case UI_KEY_DIGIT_8: lc_input_digit('8'); return;
+                case UI_KEY_DIGIT_9: lc_input_digit('9'); return;
 
                 default:
                     return;
@@ -1384,7 +1448,7 @@ static void lc_snapshot_program(ui_snapshot_frame_t *f)
     else
     {
         ui_snapshot_strcpy(f->leancam_helper,
-                           "0 radius | 1-9 new op | B/C move | D edit | A files | * delete | # run",
+                           "0 tool | 1-9 new op | B/C move | D edit | A files | * delete | # run",
                            sizeof(f->leancam_helper));
     }
 }

@@ -218,7 +218,7 @@ bool sd_fs_finfo(const char *path, fs_file_info_t *finfo)
 	if (sd_fileinfo(path, &info) == FR_OK)
 	{
 		strcpy(finfo->full_name, path);
-		finfo->is_dir = (info.fattrib && AM_DIR);
+		finfo->is_dir = ((info.fattrib & AM_DIR) != 0);
 		finfo->size = info.fsize;
 		finfo->timestamp = ((uint32_t)info.fdate << 16) | info.ftime;
 		return true;
@@ -338,8 +338,8 @@ bool sd_fs_next_file(fs_file_t *fp, fs_file_info_t *finfo)
 	strcat(finfo->full_name, "/");
 	strcat(finfo->full_name, info.fname);
 	finfo->is_dir = (info.fattrib & AM_DIR);
-	fp->file_info.size = info.fsize;
-	fp->file_info.timestamp = ((uint32_t)info.fdate << 16) | info.ftime;
+	finfo->size = info.fsize;
+	finfo->timestamp = ((uint32_t)info.fdate << 16) | info.ftime;
 
 	return true;
 }

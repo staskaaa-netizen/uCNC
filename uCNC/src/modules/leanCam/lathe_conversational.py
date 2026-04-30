@@ -1,11 +1,8 @@
-#!/usr/bin/env python2
-# coding: latin-1
-#
-#
+
+
 # Module for G-code generator and parameter validation for conversational routines
 #
-# "©2012 Tormach® LLC. All rights reserved."
-#
+
 
 # for debugging within Wing IDE
 try:

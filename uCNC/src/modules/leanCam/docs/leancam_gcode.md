@@ -33,7 +33,7 @@ For each cycle, the caller resolves:
 * active setup: last `SETUP` line above the cycle
 * active tool: last `TOOL` line above the cycle
 
-The tool line supplies fallback `S`, `R_FEED`, `FIN_FEED`, `R_DOC`, and `FIN_DOC`. The converter also accepts the older long names as aliases.
+The tool line supplies fallback `S`, `R_FEED`, `FIN_FEED`, `R_DOC`, `FIN_DOC`, and display/comment metadata such as `T` and tool diameter. The converter also accepts the older long names as aliases.
 
 ## Preamble
 
@@ -121,13 +121,22 @@ Optional:
 * `PECK`
 * `FEED`
 * `S`, `RPM`, or `SPINDLE_RPM`
+* tool diameter from `TD`, `TOOL_DIAMETER`, `TOOL_DIA`, `DIA`, `DIAMETER`, or `D`
 
 Validation:
 
 * `FEED > 0`
 * `PECK >= 0`
+* target Z must be below `Z1`
+* peck output is capped so very small pecks fail instead of blocking generation
 
 Positive `DEPTH` is interpreted as distance from `Z1`; negative `DEPTH` is interpreted as an absolute target Z.
+
+The first emitted drill comment includes resolved context when available, for example:
+
+```gcode
+(LC DRILL T3 D 6.000 Z1 0.000 Z -60.000 PECK 5.000 F 90.000)
+```
 
 ### `CUT` / `PART`
 
@@ -165,6 +174,20 @@ Validation:
 ## Error Handling
 
 Generation stops on the first failing cycle. The caller reports the line number plus the converter error text and removes the incomplete `.nc` file.
+
+## Host Safety Tests
+
+A small host-side test harness exercises the supported cycles plus common bad inputs:
+
+```powershell
+gcc -std=c99 -Wall -Wextra -IuCNC/src/modules/leanCam `
+  uCNC/src/modules/leanCam/tests/leancam_gcode_host_test.c `
+  uCNC/src/modules/leanCam/leancam_gcode.c `
+  -o $env:TEMP\leancam_gcode_host_test.exe
+& $env:TEMP\leancam_gcode_host_test.exe
+```
+
+The tests check that normal OD/ID/FACE/DRILL/CUT/PART/GROOVE cycles emit output, while malformed numbers, missing setup, impossible geometry, unsupported cycles, excessive pecks, and oversized values fail cleanly.
 
 ## Output Policy
 

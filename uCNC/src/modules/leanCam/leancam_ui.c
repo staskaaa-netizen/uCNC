@@ -3,6 +3,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static bool line_get_field_value(const char *line, const char *key, char *out, int out_sz)
 {

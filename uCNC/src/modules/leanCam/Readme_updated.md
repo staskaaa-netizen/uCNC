@@ -134,6 +134,7 @@ This keeps stored programs deterministic and parser-friendly.
 
 Initial visible cycle set:
 
+* `TOOL` on key `0`
 * `OD`
 * `ID`
 * `FACE`
@@ -184,6 +185,7 @@ Draft input supports:
 * digits `0–9`
 * `B` → toggle negative sign
 * `C` → decimal point
+* typing digits over an existing negative value keeps the minus sign; press `B` to make it positive
 
 Examples:
 
@@ -234,6 +236,8 @@ B / C → line up/down
 *     → delete line
 D     → run/edit selected line
 ```
+
+Key `0` adds a `TOOL` context line. Keys `1-9` add cycles.
 
 For OD lines, `D` currently triggers OD G-code generation/streaming.
 
@@ -360,6 +364,36 @@ Implementation strategy is deferred.
 * Text rows are cleared with padded text where possible
 * Renderer should remain dumb: it draws snapshot data and should not infer field logic
 
+### Preview As Sanity Strip
+
+The preview is not meant to become a full CAM backplotter. Its first job is to show what LeanCam understood from the selected line:
+
+* stock length, diameter, extra length, and clamp come from the active setup
+* cycle geometry comes from the selected or draft cycle
+* roughing hatch/filled areas show the material affected by that cycle
+* drill preview uses the active tool diameter as a diameter value, but draws half of it in the lathe half-section view
+* labels near the affected area show the important values so mistakes are visible before generation
+
+This keeps the display useful when cutting corners during data entry. If the visible shape does not match the operator's intent, the line should be corrected before streaming or writing G-code.
+
+Current preview context is intentionally simple. It works well for small programs where there is usually one setup and one active tool. For larger programs the UI should make context more explicit:
+
+* keep the active setup visible or quickly recallable while browsing cycles
+* keep the current tool line sticky enough that the operator knows which tool feeds the selected cycle
+* resolve preview context as "latest setup/tool above this cycle"
+* make all cycle lines scrollable without losing the setup/tool context
+* show enough current context that a selected cycle never feels detached from its setup and tool
+
+One later UI shape is a compact context bar above the program list:
+
+```text
+SETUP L80 OD40 CLR1 | TOOL T3 D6 S800 F90
+```
+
+It should be derived from the latest setup and tool above the selected cycle, not manually maintained by the renderer.
+
+That context UI is deferred. The immediate rule is: the preview should remain fast, readable, and deterministic, not clever.
+
 Draft display may hide expressions:
 
 ```text
@@ -452,7 +486,8 @@ Next steps:
 
 * tighten OD generator details: roughing, finishing, DOC, feed rules
 * add FACE cycle
-* add tool context block
+* improve sticky setup/tool context for larger programs
+* make longer cycle lists scroll without hiding current setup/tool meaning
 * add material/feed database
 * improve simulation/preview
 * file save/load polish
@@ -510,4 +545,3 @@ LeanCam is a minimal but practical conversational layer that:
 * resolves smart defaults before saving
 * produces deterministic `.lcam` files
 * can already execute the first OD cycle path as generated G-code
-

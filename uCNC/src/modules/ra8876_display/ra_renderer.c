@@ -94,12 +94,12 @@
 #define UI_COL_FRAME            RA_GRAY
 #define UI_COL_TEXT             RA_WHITE
 #define UI_COL_WARN             RA_YELLOW
-#define UI_COL_VALUE            RA_CYAN
+#define UI_COL_VALUE            RA_AMBER_SOFT
 #define UI_COL_CAM_FRAME        RA_GRAY
 #define UI_COL_CAM_FILL         RA_BLACK
 #define UI_COL_CAM_TITLE        RA_WHITE
 #define UI_COL_CAM_INDEX        RA_YELLOW
-#define UI_COL_CAM_LABEL        RA_CYAN
+#define UI_COL_CAM_LABEL        RA_AMBER_SOFT
 
 #define UI_TEXT_CACHE_SLOTS       64
 #define UI_TEXT_CACHE_LEN        129

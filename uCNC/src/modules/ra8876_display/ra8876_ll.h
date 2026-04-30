@@ -60,6 +60,9 @@ extern "C" {
 #define RA_CYAN    0x07FF
 #define RA_GRAY    0x8410
 #define RA_DGRAY   0x4208
+#define RA_AMBER     0xFD20   // warm amber (~#FFBF00)
+#define RA_LGRAY     0xC618   // light grey (~#C0C0C0)
+#define RA_AMBER_SOFT 0xFCA0   // slightly dimmer amber
 
 typedef enum {
     RA_MODE_GRAPHIC = 0,

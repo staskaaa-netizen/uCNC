@@ -217,6 +217,25 @@ Implementation strategy is deferred.
 * Stock drawing reflects setup
 * Simulation separate from text
 
+### Preview / sanity view
+
+The simulation area is the operator sanity view. It should show what LeanCam understood from the current line, not try to become a full CAM backplotter.
+
+Current intent:
+
+* setup defines stock length, OD, clamp, and extra length
+* selected cycle defines the highlighted material or drill path
+* active tool can affect preview, for example drill diameter
+* drill tool `D` is a diameter value, while the half-section preview draws its radius
+
+For larger programs, setup and tool context need to become more visible while scrolling:
+
+* selected cycles should resolve against the latest setup and tool above them
+* current setup/tool should stay sticky or easy to see
+* all cycle lines should be scrollable without losing that context
+
+This is deferred until the small-program workflow is stable.
+
 ---
 
 ## 15. Asset Mapping (LOCKED)
@@ -308,6 +327,7 @@ B/C → line up/down
 * → delete line
 D → edit (later)
 ## Cycles
+0 TOOL
 1 OD
 2 ID
 3 FACE

@@ -1,6 +1,7 @@
 #include "leancam_gcode.h"
 
 #include <stdarg.h>
+#include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +12,14 @@
 
 #ifndef LC_GCODE_SPINDLE_RPM
 #define LC_GCODE_SPINDLE_RPM 800
+#endif
+
+#ifndef LC_GCODE_MAX_PASSES
+#define LC_GCODE_MAX_PASSES 500
+#endif
+
+#ifndef LC_GCODE_MAX_ABS_VALUE
+#define LC_GCODE_MAX_ABS_VALUE 1000000.0f
 #endif
 
 typedef struct
@@ -40,6 +49,49 @@ static lc_gcode_result_t lc_fail(lc_gcode_result_t r, char *err, unsigned err_le
     }
 
     return r;
+}
+
+static int lc_float_ok(float v)
+{
+    return v == v &&
+           v <= FLT_MAX &&
+           v >= -FLT_MAX &&
+           v <= LC_GCODE_MAX_ABS_VALUE &&
+           v >= -LC_GCODE_MAX_ABS_VALUE;
+}
+
+static int lc_parse_float_text(const char *s, float *out)
+{
+    char *endp;
+    float v;
+
+    if (!s || !out)
+        return 0;
+
+    while (*s == ' ')
+        s++;
+    if (*s == '(' || *s == '*' || *s == 0)
+        return 0;
+
+    v = (float)strtod(s, &endp);
+    if (endp == s || !lc_float_ok(v))
+        return 0;
+
+    while (*endp == ' ')
+        endp++;
+    if (*endp != 0)
+        return 0;
+
+    *out = v;
+    return 1;
+}
+
+static int lc_too_many_steps(float span, float step)
+{
+    if (span < 0.0f)
+        span = -span;
+
+    return step > 0.0f && (span / step) > (float)LC_GCODE_MAX_PASSES;
 }
 
 static int lc_emit(lc_gcode_send_fn send, void *user, const char *fmt, ...)
@@ -102,21 +154,10 @@ static int lc_get_field_text(const char *line, const char *name, char *out, unsi
 static int lc_field_float(const char *line, const char *name, float *out)
 {
     char buf[32];
-    char *endp;
-    float v;
-
     if (!lc_get_field_text(line, name, buf, sizeof(buf)))
         return 0;
 
-    if (buf[0] == '(' || buf[0] == '*' || buf[0] == 0)
-        return 0;
-
-    v = (float)strtod(buf, &endp);
-    if (endp == buf)
-        return 0;
-
-    *out = v;
-    return 1;
+    return lc_parse_float_text(buf, out);
 }
 
 static int lc_field_float2(const char *line, const char *a, const char *b, float *out)
@@ -133,6 +174,35 @@ static int lc_field_float3(const char *line, const char *a, const char *b, const
     if (lc_field_float(line, b, out))
         return 1;
     return lc_field_float(line, c, out);
+}
+
+static int lc_field_tool_diameter(const char *line, float *out)
+{
+    return lc_field_float3(line, "TD", "TOOL_DIAMETER", "TOOL_DIA", out) ||
+           lc_field_float3(line, "DIA", "DIAMETER", "D", out);
+}
+
+static int lc_get_tool_number(const char *line, const char *tool, int *out)
+{
+    float t;
+
+    if (!out)
+        return 0;
+
+    if ((lc_field_float(line, "T", &t) || lc_field_float(tool, "T", &t)) && t > 0.0f)
+    {
+        *out = (int)t;
+        return 1;
+    }
+
+    return 0;
+}
+
+static int lc_get_tool_diameter(const char *line, const char *tool, float *out)
+{
+    return (out &&
+            (lc_field_tool_diameter(line, out) || lc_field_tool_diameter(tool, out)) &&
+            *out > 0.0f);
 }
 
 static void lc_sanitize_cut_ctx(lc_cut_ctx_t *ctx)
@@ -230,6 +300,7 @@ static lc_gcode_result_t lc_run_od(const char *line,
     float zsafe;
     float rough_target;
     float pass_d;
+    int passes = 0;
     lc_cut_ctx_t ctx;
 
     if (!setup)
@@ -262,15 +333,19 @@ static lc_gcode_result_t lc_run_od(const char *line,
     lc_override_ctx_from_line(line, &ctx);
     if (ctx.finish_doc >= (d1 - d2))
         ctx.finish_doc = 0.0f;
+    rough_target = d2 + ctx.finish_doc;
+    if (lc_too_many_steps(d1 - rough_target, ctx.rough_doc))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "OD: too many rough passes");
 
     if (!lc_emit(send, user, "(LC OD)")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
     if (!lc_emit_preamble(send, user, &ctx)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: preamble write failed");
     if (!lc_emit(send, user, "G0 X%.3f Z%.3f", xsafe, zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
 
-    rough_target = d2 + ctx.finish_doc;
     pass_d = d1;
     while (pass_d - ctx.rough_doc > rough_target)
     {
+        if (++passes > LC_GCODE_MAX_PASSES)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "OD: too many rough passes");
         pass_d -= ctx.rough_doc;
         if (!lc_emit(send, user, "(OD rough D%.3f)", pass_d)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
         if (!lc_emit(send, user, "G0 X%.3f Z%.3f", pass_d + tc, z1 + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
@@ -313,6 +388,7 @@ static lc_gcode_result_t lc_run_id(const char *line,
     float zsafe;
     float rough_target;
     float pass_d;
+    int passes = 0;
     lc_cut_ctx_t ctx;
 
     if (!setup)
@@ -335,15 +411,19 @@ static lc_gcode_result_t lc_run_id(const char *line,
     lc_override_ctx_from_line(line, &ctx);
     if (ctx.finish_doc >= (d2 - d1))
         ctx.finish_doc = 0.0f;
+    rough_target = d2 - ctx.finish_doc;
+    if (lc_too_many_steps(rough_target - d1, ctx.rough_doc))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "ID: too many rough passes");
 
     zsafe = z1 + tc;
     if (!lc_emit(send, user, "(LC ID)")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
     if (!lc_emit_preamble(send, user, &ctx)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: preamble write failed");
 
-    rough_target = d2 - ctx.finish_doc;
     pass_d = d1;
     while (pass_d + ctx.rough_doc < rough_target)
     {
+        if (++passes > LC_GCODE_MAX_PASSES)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "ID: too many rough passes");
         pass_d += ctx.rough_doc;
         if (!lc_emit(send, user, "(ID rough D%.3f)", pass_d)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
         if (!lc_emit(send, user, "G0 X%.3f Z%.3f", pass_d, zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
@@ -379,6 +459,7 @@ static lc_gcode_result_t lc_run_face(const char *line,
     float d, z1 = 0.0f, z, doc, tc;
     float inner = 0.0f;
     float pass_z;
+    int passes = 0;
     lc_cut_ctx_t ctx;
 
     if (!setup)
@@ -402,12 +483,17 @@ static lc_gcode_result_t lc_run_face(const char *line,
 
     lc_read_cut_ctx(tool, &ctx);
     lc_override_ctx_from_line(line, &ctx);
+    if (lc_too_many_steps(z1 - z, doc))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "FACE: too many rough passes");
+
     if (!lc_emit(send, user, "(LC FACE)")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
     if (!lc_emit_preamble(send, user, &ctx)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: preamble write failed");
 
     pass_z = z1;
     while (pass_z - doc > z)
     {
+        if (++passes > LC_GCODE_MAX_PASSES)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "FACE: too many rough passes");
         pass_z -= doc;
         if (!lc_emit(send, user, "(FACE rough Z%.3f)", pass_z)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
         if (!lc_emit(send, user, "G0 X%.3f Z%.3f", d + tc, pass_z + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
@@ -437,6 +523,11 @@ static lc_gcode_result_t lc_run_drill(const char *line,
     float z1, depth, peck = 0.0f;
     float feed;
     float target;
+    int passes = 0;
+    int tool_no = 0;
+    int has_tool_no;
+    float tool_d = 0.0f;
+    int has_tool_d;
     lc_cut_ctx_t ctx;
 
     if (!lc_field_float2(line, "Z1", "Z_START", &z1)) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "DRILL: missing/bad Z1");
@@ -451,8 +542,28 @@ static lc_gcode_result_t lc_run_drill(const char *line,
 
     if (feed <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "DRILL: FEED must be > 0");
     if (peck < 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "DRILL: PECK must be >= 0");
+    if (target >= z1) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "DRILL: target must be below Z1");
+    if (peck > 0.0f && lc_too_many_steps(z1 - target, peck))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "DRILL: too many pecks");
 
-    if (!lc_emit(send, user, "(LC DRILL)")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
+    has_tool_no = lc_get_tool_number(line, tool, &tool_no);
+    has_tool_d = lc_get_tool_diameter(line, tool, &tool_d);
+    if (has_tool_no && has_tool_d)
+    {
+        if (!lc_emit(send, user, "(LC DRILL T%d D %.3f Z1 %.3f Z %.3f PECK %.3f F %.3f)", tool_no, tool_d, z1, target, peck, feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
+    }
+    else if (has_tool_no)
+    {
+        if (!lc_emit(send, user, "(LC DRILL T%d Z1 %.3f Z %.3f PECK %.3f F %.3f)", tool_no, z1, target, peck, feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
+    }
+    else if (has_tool_d)
+    {
+        if (!lc_emit(send, user, "(LC DRILL D %.3f Z1 %.3f Z %.3f PECK %.3f F %.3f)", tool_d, z1, target, peck, feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
+    }
+    else if (!lc_emit(send, user, "(LC DRILL Z1 %.3f Z %.3f PECK %.3f F %.3f)", z1, target, peck, feed))
+    {
+        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
+    }
     if (!lc_emit_preamble(send, user, &ctx)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: preamble write failed");
     if (!lc_emit(send, user, "G0 X0 Z%.3f", z1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
 
@@ -461,6 +572,8 @@ static lc_gcode_result_t lc_run_drill(const char *line,
         float z = z1 - peck;
         while (z > target)
         {
+            if (++passes > LC_GCODE_MAX_PASSES)
+                return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "DRILL: too many pecks");
             if (!lc_emit(send, user, "G1 Z%.3f F%.3f", z, feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
             if (!lc_emit(send, user, "G0 Z%.3f", z1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
             z -= peck;

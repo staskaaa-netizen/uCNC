@@ -71,7 +71,7 @@ Cycles inherit defaults from this context, then may override fields locally.
 
 ```text
 SETUP|L{120}|OD{50}|ID{0}|CLAMP{0}|EXTRA{0}|CLR{1}|MAT{ST45}|WOFF{G54}
-TOOL|T{1}|S{800}|R_FEED{120}|FIN_FEED{60}|R_DOC{2.0}|FIN_DOC{0.5}
+TOOL|T{1}|D{6}|S{800}|R_FEED{120}|FIN_FEED{60}|R_DOC{2.0}|FIN_DOC{0.5}
 OD|D1{50}|Z1{0}|Z2{-100}|D2{42}|CLR{1}
 FACE|D{42}|Z1{1}|Z{0}|DOC{1.0}|CLR{1}
 ```

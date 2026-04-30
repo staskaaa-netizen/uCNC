@@ -37,13 +37,13 @@
 #define SIM_TILE_H           12
 #define SIM_CHUCK_H          30
 
-#define SIM_LABEL_Z1_DX     -48
+#define SIM_LABEL_Z1_DX       6
 #define SIM_LABEL_Z1_DY     -20
-#define SIM_LABEL_D1_DX     -48
+#define SIM_LABEL_D1_DX       6
 #define SIM_LABEL_D1_DY      -4
-#define SIM_LABEL_Z2_DX     -48
+#define SIM_LABEL_Z2_DX       6
 #define SIM_LABEL_Z2_DY     -20
-#define SIM_LABEL_D2_DX     -48
+#define SIM_LABEL_D2_DX       6
 #define SIM_LABEL_D2_DY      -4
 
 typedef struct

@@ -51,6 +51,20 @@ static int lc_trimmed_len(const char *s)
     return len;
 }
 
+static int lc_column_width(const char *name, const char *value)
+{
+    int width = lc_trimmed_len(name);
+    int value_width = lc_trimmed_len(value);
+
+    if (value_width > width)
+        width = value_width;
+
+    if (width < 2)
+        width = 2;
+
+    return width + 2;
+}
+
 static bool lc_raw_hi_hits_token(uint8_t hi_s, uint8_t hi_e, int tok_s, int tok_e, int val_s, int val_e)
 {
     int hs = (int)hi_s;
@@ -144,10 +158,7 @@ void ra_lc_build_table_line(const ui_snapshot_frame_t *frame, int row, ra_lc_tab
             val_e = (int)(close - line);
         }
 
-        width = lc_trimmed_len(name);
-        if (lc_trimmed_len(value) > width) width = lc_trimmed_len(value);
-        if (width < 6) width = 6;
-        width += 2;
+        width = lc_column_width(name, value);
 
         if (hpos + width + 3 >= UI_LC_LINE_LEN - 1)
             width = (UI_LC_LINE_LEN - 4) - hpos;

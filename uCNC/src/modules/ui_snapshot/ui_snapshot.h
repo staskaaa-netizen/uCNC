@@ -132,6 +132,8 @@ typedef struct
 
 extern ui_snapshot_shared_t g_ui_snapshot;
 
+void ui_snapshot_build_live(void);
+
 #ifdef ARDUINO_ARCH_ESP32
 extern SemaphoreHandle_t g_ui_snapshot_mutex;
 #endif

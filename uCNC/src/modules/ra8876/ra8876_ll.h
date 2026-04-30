@@ -25,6 +25,16 @@ extern "C" {
 #define RA8876_TFT_W     1024
 #define RA8876_TFT_H      600
 
+#define RA_SCREEN_W       RA8876_TFT_W
+#define RA_SCREEN_H       RA8876_TFT_H
+#define RA_BPP_BYTES      2UL
+
+#define RA_PAGE_BYTES     ((uint32_t)(RA_SCREEN_W * RA_SCREEN_H * RA_BPP_BYTES))
+#define RA_PAGE_BASE(n)   ((uint32_t)((n) * RA_PAGE_BYTES))
+
+#define RA_PAGE_VISIBLE   0
+#define RA_PAGE_BACKBUF   1
+
 #define RA8876_LCD_VBPD         20
 #define RA8876_LCD_VFPD         12
 #define RA8876_LCD_VSPW          3
@@ -38,6 +48,7 @@ extern "C" {
 #define RA8876_LCD_DE_ACTIVE_POL         1
 
 #define RA8876_VISIBLE_ADDR 0x00000000UL
+#define RA8876_BACKBUF_ADDR RA_PAGE_BASE(RA_PAGE_BACKBUF)
 
 /* RGB565 */
 #define RA_BLACK   0x0000
@@ -68,6 +79,17 @@ void ra_init(void);
 bool ra_is_inited(void);
 
 void ra_clear(uint16_t color);
+void ra_set_draw_base(uint32_t base);
+uint32_t ra_get_draw_base(void);
+void ra_set_draw_page(uint8_t page);
+void ra_blit(uint32_t src_base,
+             uint16_t src_x,
+             uint16_t src_y,
+             uint32_t dst_base,
+             uint16_t dst_x,
+             uint16_t dst_y,
+             uint16_t width,
+             uint16_t height);
 void ra_fill_rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t color);
 void ra_draw_rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t color);
 void ra_draw_line(int x1, int y1, int x2, int y2, uint16_t color);

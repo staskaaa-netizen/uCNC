@@ -32,6 +32,7 @@ HARDSPI(ra8876_spi, SPI2_FREQ, 0, mcu_spi2_port);
 static bool g_ra8876_inited = false;
 ra_mode_t g_mode = RA_MODE_GRAPHIC;
 ra_font_size_t g_font_size = RA_FONT_SMALL;
+static uint32_t g_draw_base = RA8876_VISIBLE_ADDR;
 
 /* ------------------------------------------------------------------------- */
 /*                       LOW LEVEL SPI / REGISTER I/O                        */
@@ -184,6 +185,19 @@ static void ra_wait_text_done(void)
     while (ra_status() & 0x08)
     {
         if ((mcu_millis() - t0) > 50)
+            break;
+
+        vTaskDelay(1);
+    }
+}
+
+static void ra_wait_bte_done(void)
+{
+    uint32_t t0 = mcu_millis();
+
+    while (ra_status() & 0x08)
+    {
+        if ((mcu_millis() - t0) > 250)
             break;
 
         vTaskDelay(1);
@@ -427,6 +441,7 @@ void ra_init(void)
     ra_panel_init();
     g_mode = RA_MODE_GRAPHIC;
     g_font_size = RA_FONT_SMALL;
+    g_draw_base = RA8876_VISIBLE_ADDR;
     ra_text_setup();
     ra_text_mode();
 
@@ -442,6 +457,94 @@ void ra_clear(uint16_t color)
 {
     ra_fill_rect(0, 0, RA8876_TFT_W - 1, RA8876_TFT_H - 1, color);
 }
+
+void ra_set_draw_base(uint32_t base)
+{
+    if (!g_ra8876_inited)
+        return;
+
+    if (g_draw_base == base)
+        return;
+
+    ra_wait_draw_done();
+    ra_wait_bte_done();
+
+    ra_reg32(0x50, base);
+    ra_reg16(0x54, RA8876_TFT_W);
+
+    ra_reg16(0x56, 0);
+    ra_reg16(0x58, 0);
+    ra_reg16(0x5A, RA8876_TFT_W);
+    ra_reg16(0x5C, RA8876_TFT_H);
+
+    g_draw_base = base;
+}
+
+uint32_t ra_get_draw_base(void)
+{
+    return g_draw_base;
+}
+
+void ra_set_draw_page(uint8_t page)
+{
+    ra_set_draw_base(RA_PAGE_BASE((uint32_t)page));
+}
+
+void ra_blit(uint32_t src_base,
+             uint16_t src_x,
+             uint16_t src_y,
+             uint32_t dst_base,
+             uint16_t dst_x,
+             uint16_t dst_y,
+             uint16_t width,
+             uint16_t height)
+{
+    if (!g_ra8876_inited || width == 0 || height == 0)
+        return;
+
+    if (src_x >= RA8876_TFT_W || src_y >= RA8876_TFT_H ||
+        dst_x >= RA8876_TFT_W || dst_y >= RA8876_TFT_H)
+        return;
+
+    if ((uint32_t)src_x + width > RA8876_TFT_W)
+        width = (uint16_t)(RA8876_TFT_W - src_x);
+    if ((uint32_t)dst_x + width > RA8876_TFT_W)
+        width = (uint16_t)(RA8876_TFT_W - dst_x);
+    if ((uint32_t)src_y + height > RA8876_TFT_H)
+        height = (uint16_t)(RA8876_TFT_H - src_y);
+    if ((uint32_t)dst_y + height > RA8876_TFT_H)
+        height = (uint16_t)(RA8876_TFT_H - dst_y);
+    if (width == 0 || height == 0)
+        return;
+
+    ra_wait_draw_done();
+    ra_wait_bte_done();
+    ra_graphic_mode();
+
+    /* Source 0: hidden/visible framebuffer rectangle. */
+    ra_reg32(0x93, src_base);
+    ra_reg16(0x97, RA8876_TFT_W);
+    ra_reg16(0x99, src_x);
+    ra_reg16(0x9B, src_y);
+
+    /* Destination: visible/hidden framebuffer rectangle. */
+    ra_reg32(0xA7, dst_base);
+    ra_reg16(0xAB, RA8876_TFT_W);
+    ra_reg16(0xAD, dst_x);
+    ra_reg16(0xAF, dst_y);
+
+    ra_reg16(0xB1, width);
+    ra_reg16(0xB3, height);
+
+    /* S0/S1/destination are all RGB565. ROP C copies S0 to destination. */
+    ra_reg(0x92, 0x25);
+    ra_reg(0x91, 0xC2);
+    ra_reg(0x90, 0x10);
+
+    ra_wait_bte_done();
+    ra_text_mode();
+}
+
 void ra_draw_line(int x1, int y1, int x2, int y2, uint16_t color)
 {
     if (!g_ra8876_inited)

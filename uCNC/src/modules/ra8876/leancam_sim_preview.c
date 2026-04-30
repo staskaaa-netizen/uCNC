@@ -12,6 +12,8 @@
 #define SIM_AREA_Y0          180
 #define SIM_AREA_X1         1023
 #define SIM_AREA_Y1          529
+#define SIM_AREA_W          (SIM_AREA_X1 - SIM_AREA_X0 + 1)
+#define SIM_AREA_H          (SIM_AREA_Y1 - SIM_AREA_Y0 + 1)
 
 #define SIM_STOCK_TOP        200
 #define SIM_RIGHT_MARGIN      70
@@ -283,7 +285,7 @@ static void sim_draw_stock(const lcam_sim_view_t *view, const sim_setup_t *setup
                  SIM_COL_AXIS);
 
     sim_textf(z0_x - 18, view->stock_top - 18, SIM_COL_DIM, SIM_COL_BG, "Z0");
-    sim_textf(view->stock_left - 28, view->stock_top - 18, SIM_COL_DIM, SIM_COL_BG, "Z-%.0f", (double)view->stock_len);
+    sim_textf(view->stock_left + 6, view->stock_top - 18, SIM_COL_DIM, SIM_COL_BG, "Z-%.0f", (double)view->stock_len);
     sim_textf(view->stock_right + 6, view->stock_top - 6, SIM_COL_DIM, SIM_COL_BG, "X0");
     if (setup->extra > 0.0f)
         sim_textf(z0_x + 5, view->stock_top - 22, SIM_COL_DIM, SIM_COL_BG, "EX %.1f", (double)setup->extra);
@@ -351,6 +353,36 @@ static bool sim_is_cycle(const char *line, const char *name)
 static bool sim_should_draw_for_mode(uint8_t mode)
 {
     return mode == SIM_LC_MODE_PROGRAM || mode == SIM_LC_MODE_DRAFT;
+}
+
+static void sim_begin_offscreen(uint32_t *old_draw_base)
+{
+    if (old_draw_base)
+        *old_draw_base = ra_get_draw_base();
+
+    ra_set_draw_base(RA8876_BACKBUF_ADDR);
+}
+
+static void sim_present_offscreen(uint32_t old_draw_base)
+{
+    ra_set_draw_base(old_draw_base);
+    ra_blit(RA8876_BACKBUF_ADDR,
+            SIM_AREA_X0,
+            SIM_AREA_Y0,
+            RA8876_VISIBLE_ADDR,
+            SIM_AREA_X0,
+            SIM_AREA_Y0,
+            SIM_AREA_W,
+            SIM_AREA_H);
+}
+
+static void sim_draw_status_message(const ui_snapshot_frame_t *frame)
+{
+    const char *msg = (frame && frame->leancam_message[0]) ? frame->leancam_message : "LC: ready";
+
+    ra_fill_rect(SIM_AREA_X0, SIM_AREA_Y0, SIM_AREA_X1, SIM_AREA_Y1, SIM_COL_BG);
+    sim_textf(SIM_AREA_X0 + 20, SIM_AREA_Y0 + 34, SIM_COL_DIM, SIM_COL_BG, "G-code generator");
+    sim_textf(SIM_AREA_X0 + 20, SIM_AREA_Y0 + 58, SIM_COL_AXIS, SIM_COL_BG, "%-48.48s", msg);
 }
 
 static bool sim_preview_sources_changed(const ui_snapshot_frame_t *frame,
@@ -492,11 +524,11 @@ static void sim_draw_id_preview(const lcam_sim_view_t *view, const char *line, c
         spacing = (int)(sim_absf(doc) * view->d_scale + 0.5f);
     if (spacing <= 0) spacing = 4;
 
-    sim_draw_hatch_rect(x1, y1, x2, y2, spacing, true);
+    sim_draw_hatch_rect(x1, y1, x2, y2, spacing, false);
     sim_draw_dz_corner_labels(view, label_x1, label_y1, d1, z1, label_x2, label_y2, d2, z2);
 }
 
-static void sim_draw_face_preview(const lcam_sim_view_t *view, const char *line)
+static void sim_draw_face_preview(const lcam_sim_view_t *view, const char *line, const ui_snapshot_frame_t *frame)
 {
     float d;
     float z1 = 0.0f;
@@ -505,6 +537,8 @@ static void sim_draw_face_preview(const lcam_sim_view_t *view, const char *line)
     int x2;
     int y2;
     int tmp;
+    float doc;
+    int spacing = 0;
 
     if (!sim_field_float3(line, "D", "OD", "OUTER_DIAMETER", &d)) d = view->stock_od;
     (void)sim_field_float2(line, "Z1", "Z_1", &z1);
@@ -516,7 +550,12 @@ static void sim_draw_face_preview(const lcam_sim_view_t *view, const char *line)
     y2 = sim_d_to_py(view, d);
     if (x2 <= x1) x2 = x1 + 1;
 
-    sim_draw_hatch_rect(x1, view->stock_top, x2, y2, 4, false);
+    if (sim_field_float2(line, "DOC", "ROUGH_DOC", &doc) ||
+        (frame && sim_field_float2(frame->leancam_tool_line, "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc)))
+        spacing = (int)(sim_absf(doc) * view->d_scale + 0.5f);
+    if (spacing <= 0) spacing = 4;
+
+    sim_draw_hatch_rect(x1, view->stock_top, x2, y2, spacing, true);
     sim_draw_corner_label(view, x2, view->stock_top, "Z", z, 6, -18);
     sim_draw_corner_label(view, x2, y2, "D", d, 6, 4);
 }
@@ -547,7 +586,7 @@ static void sim_draw_groove_preview(const lcam_sim_view_t *view, const char *lin
     if (x2 <= x1) x2 = x1 + 1;
     if (y2 <= y1) y2 = y1 + 1;
 
-    sim_draw_hatch_rect(x1, y1, x2, y2, 4, false);
+    sim_draw_hatch_rect(x1, y1, x2, y2, 4, true);
     sim_draw_corner_label(view, x1, y1, "D1", d1, -54, -18);
     sim_draw_corner_label(view, x2, y2, "D2", d2, 6, 4);
 }
@@ -557,13 +596,16 @@ void leancam_sim_preview_draw(const ui_snapshot_frame_t *frame)
     static uint32_t last_draw_ms = 0;
     static uint8_t last_mode = 0xff;
     static bool was_visible = false;
+    static bool was_msg_visible = false;
     static char last_setup[UI_LC_LINE_LEN];
     static char last_line[UI_LC_LINE_LEN];
     static char last_tool[UI_LC_LINE_LEN];
+    static char last_msg[UI_SNAPSHOT_POPUP_LEN];
     sim_setup_t setup;
     lcam_sim_view_t view;
     const char *line;
     uint32_t now;
+    uint32_t old_draw_base = RA8876_VISIBLE_ADDR;
     bool mode_changed;
     bool source_changed;
 
@@ -574,8 +616,32 @@ void leancam_sim_preview_draw(const ui_snapshot_frame_t *frame)
 
     if (!sim_should_draw_for_mode(frame->leancam_mode))
     {
-        if (was_visible || mode_changed)
-            ra_fill_rect(SIM_AREA_X0, SIM_AREA_Y0, SIM_AREA_X1, SIM_AREA_Y1, SIM_COL_BG);
+        if (frame->leancam_message[0])
+        {
+            if (was_visible || !was_msg_visible || mode_changed ||
+                strcmp(last_msg, frame->leancam_message) != 0)
+            {
+                sim_begin_offscreen(&old_draw_base);
+                sim_draw_status_message(frame);
+                sim_present_offscreen(old_draw_base);
+                ui_snapshot_strcpy(last_msg, frame->leancam_message, sizeof(last_msg));
+            }
+
+            was_msg_visible = true;
+        }
+        else
+        {
+            if (was_visible || was_msg_visible || mode_changed)
+            {
+                sim_begin_offscreen(&old_draw_base);
+                ra_fill_rect(SIM_AREA_X0, SIM_AREA_Y0, SIM_AREA_X1, SIM_AREA_Y1, SIM_COL_BG);
+                sim_present_offscreen(old_draw_base);
+            }
+
+            was_msg_visible = false;
+            last_msg[0] = 0;
+        }
+
         was_visible = false;
         last_mode = frame->leancam_mode;
         last_setup[0] = 0;
@@ -597,8 +663,11 @@ void leancam_sim_preview_draw(const ui_snapshot_frame_t *frame)
     last_draw_ms = now;
     last_mode = frame->leancam_mode;
     was_visible = true;
+    was_msg_visible = false;
+    last_msg[0] = 0;
     sim_store_preview_sources(frame, last_setup, last_line, last_tool);
 
+    sim_begin_offscreen(&old_draw_base);
     sim_read_setup(frame, &setup);
     sim_build_view(&setup, &view);
     sim_draw_stock(&view, &setup);
@@ -606,14 +675,19 @@ void leancam_sim_preview_draw(const ui_snapshot_frame_t *frame)
 
     line = frame->leancam_preview_line;
     if (!line || !line[0] || sim_is_cycle(line, "SETUP"))
+    {
+        sim_present_offscreen(old_draw_base);
         return;
+    }
 
     if (sim_is_cycle(line, "OD"))
         sim_draw_od_preview(&view, line, frame);
     else if (sim_is_cycle(line, "ID"))
         sim_draw_id_preview(&view, line, frame);
     else if (sim_is_cycle(line, "FACE"))
-        sim_draw_face_preview(&view, line);
+        sim_draw_face_preview(&view, line, frame);
     else if (sim_is_cycle(line, "GROOVE"))
         sim_draw_groove_preview(&view, line);
+
+    sim_present_offscreen(old_draw_base);
 }

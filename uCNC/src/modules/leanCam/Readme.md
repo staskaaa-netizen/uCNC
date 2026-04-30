@@ -91,8 +91,8 @@ Fields referencing setup are resolved **during draft creation**.
 Example:
 
 ```
-START_DIAMETER{(SETUP.OUTER_DIAMETER)}
-→ START_DIAMETER{60}
+D1{(SETUP.OD)}
+-> D1{60}
 ```
 
 ---
@@ -226,8 +226,8 @@ UI assets are derived from module name.
 Example:
 
 ```
-ODTURN → odturn.bmp   (helper image)
-ODTURN → odturn.ico   (button icon)
+OD -> od.bmp   (helper image)
+OD -> od.ico   (button icon)
 ```
 
 Rules:

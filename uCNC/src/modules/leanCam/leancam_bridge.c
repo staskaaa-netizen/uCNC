@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdarg.h>
 
 #define LC_FILES_DIR LC_DEFAULT_DIR
 
@@ -70,6 +71,35 @@ static void lc_set_msg(const char *s)
     if (!s) s = "";
     strncpy(g_last_msg, s, sizeof(g_last_msg) - 1);
     g_last_msg[sizeof(g_last_msg) - 1] = 0;
+}
+
+static void lc_set_msgf(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (!fmt)
+    {
+        lc_set_msg("");
+        return;
+    }
+
+    va_start(ap, fmt);
+    vsnprintf(g_last_msg, sizeof(g_last_msg), fmt, ap);
+    va_end(ap);
+}
+
+static void lc_publish_msg(const char *fmt, ...)
+{
+    va_list ap;
+
+    if (fmt)
+    {
+        va_start(ap, fmt);
+        vsnprintf(g_last_msg, sizeof(g_last_msg), fmt, ap);
+        va_end(ap);
+    }
+
+    ui_snapshot_build_live();
 }
 
 static int lc_stricmp_local(const char *a, const char *b)
@@ -282,6 +312,8 @@ static void lc_generate_selected_file_gcode(void)
         return;
     }
 
+    lc_publish_msg("LC: preparing %s", leancam_files_name(g_file_sel));
+
     if (!leancam_files_build_path(LC_FILES_DIR, g_file_sel, in_path, sizeof(in_path)) ||
         !lc_make_gcode_path(in_path, out_path, sizeof(out_path)))
     {
@@ -289,11 +321,16 @@ static void lc_generate_selected_file_gcode(void)
         return;
     }
 
+    lc_publish_msg("LC: loading %s", lc_basename(in_path));
+
     if (!leancam_files_load(in_path, &prog))
     {
         lc_set_msg("LC: load failed");
+        ui_snapshot_build_live();
         return;
     }
+
+    lc_publish_msg("LC: opening %s", lc_basename(out_path));
 
     cnc_set_file_io_critical(true);
     fp = fs_open(out_path, "w");
@@ -301,10 +338,12 @@ static void lc_generate_selected_file_gcode(void)
     {
         cnc_set_file_io_critical(false);
         lc_set_msg("LC: gcode open failed");
+        ui_snapshot_build_live();
         return;
     }
 
     emit_ctx.fp = fp;
+    lc_publish_msg("LC: writing header");
     (void)lc_write_line_to_file("(LeanCam generated)", &emit_ctx);
     (void)lc_write_line_to_file("(Check setup and first motion before running)", &emit_ctx);
 
@@ -320,6 +359,8 @@ static void lc_generate_selected_file_gcode(void)
         if (strncmp(line, "SETUP|", 6) == 0 || strncmp(line, "TOOL|", 5) == 0)
             continue;
 
+        lc_publish_msg("LC: gen L%d %.32s", i + 1, line);
+
         setup = lc_find_setup_in_program(&prog, i);
         tool = lc_find_prefix_in_program(&prog, i, "TOOL|");
         r = leancam_gcode_run_line_ex(line, setup, tool, lc_write_line_to_file, &emit_ctx, err, sizeof(err));
@@ -329,13 +370,15 @@ static void lc_generate_selected_file_gcode(void)
         made++;
     }
 
+    lc_publish_msg("LC: closing %s", lc_basename(out_path));
     fs_close(fp);
     cnc_set_file_io_critical(false);
 
     if (r != LC_GCODE_OK)
     {
         (void)fs_remove(out_path);
-        snprintf(g_last_msg, sizeof(g_last_msg), "LC: L%d %.36s", i + 1, err[0] ? err : lc_gcode_result_name(r));
+        lc_set_msgf("LC: L%d %.36s", i + 1, err[0] ? err : lc_gcode_result_name(r));
+        ui_snapshot_build_live();
         return;
     }
 
@@ -343,11 +386,14 @@ static void lc_generate_selected_file_gcode(void)
     {
         (void)fs_remove(out_path);
         lc_set_msg("LC: no cycles");
+        ui_snapshot_build_live();
         return;
     }
 
+    lc_publish_msg("LC: refreshing files");
     lc_refresh_files();
-    snprintf(g_last_msg, sizeof(g_last_msg), "LC: saved %s", lc_basename(out_path));
+    lc_set_msgf("LC: saved %s", lc_basename(out_path));
+    ui_snapshot_build_live();
 }
 
 static void lc_autosave(void)
@@ -931,7 +977,7 @@ static int lc_commit_draft_bridge_owned(void)
         {
             if (prog_insert_after(&g_leancam_ui.prog,
                                   g_leancam_ui.cur_line,
-                                  "TOOL|T{1}|RPM{800}|ROUGH_FEED{120}|FIN_FEED{60}|ROUGH_DOC{2.0}|FIN_DOC{0.5}"))
+                                  "TOOL|T{1}|S{800}|R_FEED{120}|FIN_FEED{60}|R_DOC{2.0}|FIN_DOC{0.5}"))
             {
                 g_leancam_ui.cur_line++;
             }

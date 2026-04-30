@@ -101,6 +101,9 @@
 #define UI_COL_CAM_INDEX        RA_YELLOW
 #define UI_COL_CAM_LABEL        RA_CYAN
 
+#define UI_TEXT_CACHE_SLOTS       64
+#define UI_TEXT_CACHE_LEN        129
+
 static uint32_t g_ra_last_snapshot_seq = 0;
 static bool g_ra_renderer_inited = false;
 static uint8_t g_ra_last_leancam_mode = 0xff;
@@ -108,20 +111,75 @@ static uint8_t g_ra_last_leancam_mode = 0xff;
 static TaskHandle_t g_ra_renderer_task = NULL;
 #endif
 
+typedef struct
+{
+    bool valid;
+    uint16_t x;
+    uint16_t y;
+    uint16_t fg;
+    uint16_t bg;
+    char text[UI_TEXT_CACHE_LEN];
+} ui_text_cache_entry_t;
+
+static ui_text_cache_entry_t g_ui_text_cache[UI_TEXT_CACHE_SLOTS];
+
+static void ui_text_cache_invalidate_all(void)
+{
+    memset(g_ui_text_cache, 0, sizeof(g_ui_text_cache));
+}
+
 static void ui_textf(int x, int y, uint16_t fg, uint16_t bg, const char *fmt, ...)
 {
     char buf[129];
     va_list ap;
+    ui_text_cache_entry_t *free_slot = NULL;
+    ui_text_cache_entry_t *oldest = &g_ui_text_cache[0];
+    int i;
 
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
+
+    for (i = 0; i < UI_TEXT_CACHE_SLOTS; ++i)
+    {
+        ui_text_cache_entry_t *e = &g_ui_text_cache[i];
+
+        if (!e->valid)
+        {
+            if (!free_slot)
+                free_slot = e;
+            continue;
+        }
+
+        if (e->x == (uint16_t)x && e->y == (uint16_t)y)
+        {
+            if (e->fg == fg &&
+                e->bg == bg &&
+                strcmp(e->text, buf) == 0)
+                return;
+
+            e->fg = fg;
+            e->bg = bg;
+            ui_snapshot_strcpy(e->text, buf, sizeof(e->text));
+            ra_text((uint16_t)x, (uint16_t)y, fg, bg, buf);
+            return;
+        }
+    }
+
+    oldest = free_slot ? free_slot : oldest;
+    oldest->valid = true;
+    oldest->x = (uint16_t)x;
+    oldest->y = (uint16_t)y;
+    oldest->fg = fg;
+    oldest->bg = bg;
+    ui_snapshot_strcpy(oldest->text, buf, sizeof(oldest->text));
 
     ra_text((uint16_t)x, (uint16_t)y, fg, bg, buf);
 }
 
 static void ui_draw_static_frame(void)
 {
+    ui_text_cache_invalidate_all();
     ra_fill_rect(0, 0, UI_SCREEN_W - 1, UI_SCREEN_H - 1, UI_COL_BG);
 
     ra_fill_rect(0, 0, UI_SCREEN_W - 1, UI_TOP_BAR_H - 1, UI_COL_TOP);
@@ -250,6 +308,7 @@ static int ui_lc_cols_for_y(int y)
 
 static void ui_clear_leancam_text_area(void)
 {
+    ui_text_cache_invalidate_all();
     ra_fill_rect(UI_LEANCAM_TEXT_X,
                  UI_LEANCAM_TEXT_Y,
                  UI_LEANCAM_TEXT_X + UI_LEANCAM_TEXT_W - 1,

@@ -12,6 +12,16 @@ mingw32-make
 .\build\LeanCamWin.exe
 ```
 
+## Download
+
+A prebuilt Windows executable is included for quick testing:
+
+```text
+tools/leancam_win/dist/LeanCamWin.zip
+```
+
+Unzip it and run `LeanCamWin.exe`.
+
 ## What It Does
 
 * view `.lcam` commands in the same two-row LeanCam style as the RA8876 UI: field labels on top, field values below

@@ -22,6 +22,19 @@ tools/leancam_win/dist/LeanCamWin.zip
 
 Unzip it and run `LeanCamWin.exe`.
 
+## Requirements
+
+To run the prebuilt executable:
+
+* 64-bit Windows 10 or newer
+* no extra DLLs or runtime libraries are required; the app uses the standard Win32/GDI APIs
+* an optional virtual COM pair or real serial COM port is only needed for `Connect`/`Run` streaming to uCNC or Grbl
+
+To build it from source:
+
+* MinGW-w64 with `g++` and `mingw32-make` on `PATH`
+* the shared LeanCam/uCNC source files from this repository
+
 ## What It Does
 
 * view `.lcam` commands in the same two-row LeanCam style as the RA8876 UI: field labels on top, field values below

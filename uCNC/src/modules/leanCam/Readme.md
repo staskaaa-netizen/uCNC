@@ -236,6 +236,63 @@ For larger programs, setup and tool context need to become more visible while sc
 
 This is deferred until the small-program workflow is stable.
 
+### RA8876 live run simulation
+
+The RA8876 renderer now has two separate LeanCam visual modes:
+
+* edit mode preview: compact right-side stock/cycle preview from `.lcam` lines
+* live run view: full-screen material-removal view driven by runtime X/Z position
+
+How to use:
+
+* open a LeanCam program
+* run the program or selected cycle from LeanCam
+* the renderer switches into the full-screen live run view
+* HOLD keeps the live run screen visible
+* leaving run/hold returns to the normal LeanCam editor view
+
+Live run behavior:
+
+* stock is drawn once into an RA8876 hidden page
+* material removal is accumulated into that hidden page and is not reset by ordinary redraws
+* a separate RA8876 page stores the moving cutter marker
+* the final frame is composed through the back buffer and copied to the visible page
+* removed material is clipped to the stock rectangle
+* the moving cutter marker is allowed to move outside the stock so approach and clearance are visible
+* live stock is placed from the left side of the screen with about 50 px padding
+
+Live run DRO overlay:
+
+* X and Z runtime position
+* tool number from the active `TOOL|T{...}` line
+* DOC from the active cycle/tool line
+* runtime feed
+* runtime spindle RPM
+* calculated surface speed, metric: `V = pi * X_diameter * RPM / 1000`
+
+Important implementation lessons found on hardware:
+
+* RA8876 text writes need FIFO pacing; otherwise text can flicker or drop during heavy graphics work
+* avoid frequent font-size switching while the graphics engine is busy
+* BTE/page composition is much smoother than repeatedly drawing directly to the visible page
+* stock texture hatch lines caused visible artifacts, so stock is drawn with simple filled rectangles
+* cutter marker size and material-removal size must not share a small display cap
+* DOC scaling must distinguish live X/diameter display from Z removal width
+* runtime X from the machine snapshot is radius-side data for this view, so it is converted to diameter before mapping
+* coordinate helpers that clamp to stock are good for removal, but the moving cutter needs unclamped live mapping
+* removal needs slight rear-edge bias to avoid leftover pixels from integer rounding, but the front/cutting edge should stay exact
+
+### Live run simulation notes
+
+Future live simulation should stay renderer-side and visual only. It should not change LeanCam cycle execution, G-code generation, or machine safety logic.
+
+Planned visual details:
+
+* threading should draw a 60 degree rhomboid/thread-tool shape
+* thread material removal should happen only at matching spindle angular positions, so the screen can show a physical thread form building up
+* tool markers should become cutting-edge primitives rather than generic blocks
+* turning tools may be drawn as real inserts, for example a rhombic blade with a 30 degree cutting edge
+
 ---
 
 ## 15. Asset Mapping (LOCKED)

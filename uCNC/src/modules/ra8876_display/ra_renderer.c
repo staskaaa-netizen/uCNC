@@ -49,12 +49,12 @@
 #define UI_FS_Y0                    30
 
 #define UI_FOOTER_X                 10
-#define UI_FOOTER_Y                566
+#define UI_FOOTER_Y                558
 
 #define UI_PREVIEW_X                10
 #define UI_PREVIEW_Y               100
-#define UI_PREVIEW_ROW_H            20
-#define UI_LC_PHYSICAL_ROWS         22
+#define UI_PREVIEW_ROW_H            30
+#define UI_LC_PHYSICAL_ROWS         16
 
 #define UI_CAM_MENU_W              300
 #define UI_CAM_MENU_AREA_H         300
@@ -71,10 +71,10 @@
 #define UI_LEANCAM_TEXT_X           10
 #define UI_LEANCAM_TEXT_Y           60
 #define UI_LEANCAM_TEXT_W          480
-#define UI_LEANCAM_TEXT_H          440
+#define UI_LEANCAM_TEXT_H          480
 
 #define UI_LEANCAM_HELPER_X         10
-#define UI_LEANCAM_HELPER_Y        570
+#define UI_LEANCAM_HELPER_Y        560
 #define UI_LEANCAM_HELPER_W        850
 #define UI_LEANCAM_HELPER_H        260
 
@@ -224,15 +224,12 @@ static const char *ui_exec_state_text(uint8_t state)
 
 static void ui_draw_top_status(const ui_snapshot_frame_t *frame)
 {
-    static uint32_t last_draw_ms = 0;
     static char last_left[32] = {0};
     static char last_right[96] = {0};
-    ra_font_size_t old_font;
     float x = 0.0f;
     float z = 0.0f;
     float feed = 0.0f;
     unsigned spindle = 0;
-    uint32_t now;
     char left[32];
     char right[96];
 
@@ -263,37 +260,19 @@ static void ui_draw_top_status(const ui_snapshot_frame_t *frame)
              (double)feed,
              spindle);
 
-    /*now = mcu_millis();
     if (strcmp(last_left, left) == 0 && strcmp(last_right, right) == 0)
         return;
 
-    if (last_draw_ms != 0 && (uint32_t)(now - last_draw_ms) < RA_TOP_STATUS_UPDATE_MS)
-        return;
-
-    last_draw_ms = now;*/
     ui_snapshot_strcpy(last_left, left, sizeof(last_left));
     ui_snapshot_strcpy(last_right, right, sizeof(last_right));
 
-    //old_font = ra_get_font_size();
-    //ra_set_font_size(RA_FONT_MEDIUM);
+    ra_set_font_size(RA_FONT_MEDIUM);
+    ra_fill_rect(0, 0, UI_SCREEN_W - 1, UI_TOP_BAR_H - 1, UI_COL_TOP);
 
-    //ra_fill_rect(0, 0, 190, UI_TOP_BAR_H - 1, UI_COL_TOP);
-    ui_textf(UI_STATUS_MSG_X,
-             UI_STATUS_MSG_Y,
-             UI_COL_TEXT,
-             UI_COL_TOP,
-             "%s",
-             left);
+    ra_text(UI_STATUS_MSG_X, UI_STATUS_MSG_Y, UI_COL_TEXT, UI_COL_TOP, left);
+    ra_text(344, UI_STATUS_MSG_Y, UI_COL_TEXT, UI_COL_TOP, right);
 
-    //ra_fill_rect(340, 0, UI_SCREEN_W - 1, UI_TOP_BAR_H - 1, UI_COL_TOP);
-    ui_textf(344,
-             UI_STATUS_MSG_Y,
-             UI_COL_TEXT,
-             UI_COL_TOP,
-             "%s",
-             right);
-
-    //ra_set_font_size(RA_FONT_SMALL);
+    ra_set_font_size(RA_FONT_SMALL);
 }
 
 static void ui_draw_runtime_status(const ui_snapshot_frame_t *frame)
@@ -484,8 +463,32 @@ static void ui_draw_leancam_preview(const ui_snapshot_frame_t *frame)
 
 static void ra_renderer_draw_frame(const ui_snapshot_frame_t *frame)
 {
+    static bool live_sim_visible = false;
+    bool live_run_state;
+
     if (!frame)
         return;
+
+    live_run_state = cnc_get_exec_state(EXEC_RUN) ||
+                     (live_sim_visible && cnc_get_exec_state(EXEC_HOLD));
+
+    if (frame->leancam_active && live_run_state)
+    {
+        if (!live_sim_visible)
+            ra_set_font_size(RA_FONT_MEDIUM);
+
+        leancam_sim_live_draw(frame);
+        live_sim_visible = true;
+        return;
+    }
+
+    if (live_sim_visible)
+    {
+        ra_set_font_size(RA_FONT_SMALL);
+        ui_draw_static_frame();
+        g_ra_last_leancam_mode = 0xff;
+        live_sim_visible = false;
+    }
 
     ui_draw_top_status(frame);
     ui_draw_runtime_status(frame);

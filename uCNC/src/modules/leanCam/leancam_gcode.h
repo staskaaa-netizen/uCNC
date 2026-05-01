@@ -16,6 +16,12 @@ typedef enum
 
 typedef int (*lc_gcode_send_fn)(const char *line, void *user);
 
+typedef struct
+{
+    int emit_modal_header;
+    int emit_spindle_stop;
+} lc_gcode_line_options_t;
+
 lc_gcode_result_t leancam_gcode_run_line(const char *line,
                                          const char *setup_line,
                                          const char *tool_line,
@@ -28,6 +34,23 @@ lc_gcode_result_t leancam_gcode_run_line_ex(const char *line,
                                             void *user,
                                             char *err,
                                             unsigned err_len);
+lc_gcode_result_t leancam_gcode_run_line_with_options(const char *line,
+                                                      const char *setup_line,
+                                                      const char *tool_line,
+                                                      const lc_gcode_line_options_t *options,
+                                                      lc_gcode_send_fn send,
+                                                      void *user,
+                                                      char *err,
+                                                      unsigned err_len);
+lc_gcode_result_t leancam_gcode_run_program_line_ex(const char *line,
+                                                    const char *setup_line,
+                                                    const char *tool_line,
+                                                    lc_gcode_send_fn send,
+                                                    void *user,
+                                                    char *err,
+                                                    unsigned err_len);
+int leancam_gcode_emit_program_header(lc_gcode_send_fn send, void *user);
+int leancam_gcode_emit_program_footer(lc_gcode_send_fn send, void *user);
 
 #ifdef __cplusplus
 }

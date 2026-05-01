@@ -31,6 +31,9 @@ typedef struct
     int spindle_rpm;
 } lc_cut_ctx_t;
 
+static const lc_gcode_line_options_t lc_default_line_options = { 1, 1 };
+static const lc_gcode_line_options_t lc_program_line_options = { 0, 0 };
+
 static int lc_starts_with(const char *s, const char *prefix)
 {
     return s && prefix && strncmp(s, prefix, strlen(prefix)) == 0;
@@ -277,11 +280,25 @@ static void lc_read_cut_ctx(const char *tool, lc_cut_ctx_t *ctx)
     lc_sanitize_cut_ctx(ctx);
 }
 
-static int lc_emit_preamble(lc_gcode_send_fn send, void *user, const lc_cut_ctx_t *ctx)
+static int lc_emit_modal_header(lc_gcode_send_fn send, void *user)
 {
     if (!lc_emit(send, user, "G21")) return 0;
     if (!lc_emit(send, user, "G90")) return 0;
     if (!lc_emit(send, user, "G8"))  return 0;
+    return 1;
+}
+
+static int lc_emit_cycle_preamble(lc_gcode_send_fn send,
+                                  void *user,
+                                  const lc_cut_ctx_t *ctx,
+                                  const lc_gcode_line_options_t *options)
+{
+    if (!options)
+        options = &lc_default_line_options;
+
+    if (options->emit_modal_header && !lc_emit_modal_header(send, user))
+        return 0;
+
     if (!lc_emit(send, user, "S%d M3", ctx ? ctx->spindle_rpm : LC_GCODE_SPINDLE_RPM)) return 0;
     return 1;
 }
@@ -289,6 +306,7 @@ static int lc_emit_preamble(lc_gcode_send_fn send, void *user, const lc_cut_ctx_
 static lc_gcode_result_t lc_run_od(const char *line,
                                    const char *setup,
                                    const char *tool,
+                                   const lc_gcode_line_options_t *options,
                                    lc_gcode_send_fn send,
                                    void *user,
                                    char *err,
@@ -338,7 +356,7 @@ static lc_gcode_result_t lc_run_od(const char *line,
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "OD: too many rough passes");
 
     if (!lc_emit(send, user, "(LC OD)")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
-    if (!lc_emit_preamble(send, user, &ctx)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: preamble write failed");
+    if (!lc_emit_cycle_preamble(send, user, &ctx, options)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: preamble write failed");
     if (!lc_emit(send, user, "G0 X%.3f Z%.3f", xsafe, zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
 
     pass_d = d1;
@@ -371,7 +389,7 @@ static lc_gcode_result_t lc_run_od(const char *line,
     if (!lc_emit(send, user, "G1 Z%.3f", z2)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
     if (!lc_emit(send, user, "G0 X%.3f", xsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
     if (!lc_emit(send, user, "G0 Z%.3f", zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
-    if (!lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
+    if ((!options || options->emit_spindle_stop) && !lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
 
     return LC_GCODE_OK;
 }
@@ -379,6 +397,7 @@ static lc_gcode_result_t lc_run_od(const char *line,
 static lc_gcode_result_t lc_run_id(const char *line,
                                    const char *setup,
                                    const char *tool,
+                                   const lc_gcode_line_options_t *options,
                                    lc_gcode_send_fn send,
                                    void *user,
                                    char *err,
@@ -417,7 +436,7 @@ static lc_gcode_result_t lc_run_id(const char *line,
 
     zsafe = z1 + tc;
     if (!lc_emit(send, user, "(LC ID)")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
-    if (!lc_emit_preamble(send, user, &ctx)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: preamble write failed");
+    if (!lc_emit_cycle_preamble(send, user, &ctx, options)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: preamble write failed");
 
     pass_d = d1;
     while (pass_d + ctx.rough_doc < rough_target)
@@ -443,7 +462,7 @@ static lc_gcode_result_t lc_run_id(const char *line,
     if (!lc_emit(send, user, "G0 X%.3f Z%.3f", d2, zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
     if (!lc_emit(send, user, "G1 Z%.3f F%.3f", z2, ctx.finish_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
     if (!lc_emit(send, user, "G0 Z%.3f", zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
-    if (!lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
+    if ((!options || options->emit_spindle_stop) && !lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
 
     return LC_GCODE_OK;
 }
@@ -451,6 +470,7 @@ static lc_gcode_result_t lc_run_id(const char *line,
 static lc_gcode_result_t lc_run_face(const char *line,
                                      const char *setup,
                                      const char *tool,
+                                     const lc_gcode_line_options_t *options,
                                      lc_gcode_send_fn send,
                                      void *user,
                                      char *err,
@@ -487,7 +507,7 @@ static lc_gcode_result_t lc_run_face(const char *line,
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "FACE: too many rough passes");
 
     if (!lc_emit(send, user, "(LC FACE)")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
-    if (!lc_emit_preamble(send, user, &ctx)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: preamble write failed");
+    if (!lc_emit_cycle_preamble(send, user, &ctx, options)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: preamble write failed");
 
     pass_z = z1;
     while (pass_z - doc > z)
@@ -508,13 +528,14 @@ static lc_gcode_result_t lc_run_face(const char *line,
     if (!lc_emit(send, user, "G1 X%.3f", inner)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
     if (!lc_emit(send, user, "G0 X%.3f", d + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
     if (!lc_emit(send, user, "G0 Z%.3f", z + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
-    if (!lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
+    if ((!options || options->emit_spindle_stop) && !lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
 
     return LC_GCODE_OK;
 }
 
 static lc_gcode_result_t lc_run_drill(const char *line,
                                       const char *tool,
+                                      const lc_gcode_line_options_t *options,
                                       lc_gcode_send_fn send,
                                       void *user,
                                       char *err,
@@ -564,7 +585,7 @@ static lc_gcode_result_t lc_run_drill(const char *line,
     {
         return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
     }
-    if (!lc_emit_preamble(send, user, &ctx)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: preamble write failed");
+    if (!lc_emit_cycle_preamble(send, user, &ctx, options)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: preamble write failed");
     if (!lc_emit(send, user, "G0 X0 Z%.3f", z1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
 
     if (peck > 0.0f)
@@ -582,7 +603,7 @@ static lc_gcode_result_t lc_run_drill(const char *line,
 
     if (!lc_emit(send, user, "G1 Z%.3f F%.3f", target, feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
     if (!lc_emit(send, user, "G0 Z%.3f", z1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
-    if (!lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
+    if ((!options || options->emit_spindle_stop) && !lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "DRILL: write failed");
 
     return LC_GCODE_OK;
 }
@@ -590,6 +611,7 @@ static lc_gcode_result_t lc_run_drill(const char *line,
 static lc_gcode_result_t lc_run_cut(const char *line,
                                     const char *setup,
                                     const char *tool,
+                                    const lc_gcode_line_options_t *options,
                                     lc_gcode_send_fn send,
                                     void *user,
                                     char *err,
@@ -617,7 +639,7 @@ static lc_gcode_result_t lc_run_cut(const char *line,
     lc_read_cut_ctx(tool, &ctx);
     lc_override_ctx_from_line(line, &ctx);
     if (!lc_emit(send, user, "(LC CUT)")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "CUT: write failed");
-    if (!lc_emit_preamble(send, user, &ctx)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "CUT: preamble write failed");
+    if (!lc_emit_cycle_preamble(send, user, &ctx, options)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "CUT: preamble write failed");
     if (!lc_emit(send, user, "G0 X%.3f Z%.3f", setup_od + tc, z)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "CUT: write failed");
     if (!lc_emit(send, user, "G1 X%.3f F%.3f", d, ctx.rough_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "CUT: write failed");
     if (width > 0.0f)
@@ -626,7 +648,7 @@ static lc_gcode_result_t lc_run_cut(const char *line,
         if (!lc_emit(send, user, "G1 Z%.3f", z)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "CUT: write failed");
     }
     if (!lc_emit(send, user, "G0 X%.3f", setup_od + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "CUT: write failed");
-    if (!lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "CUT: write failed");
+    if ((!options || options->emit_spindle_stop) && !lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "CUT: write failed");
 
     return LC_GCODE_OK;
 }
@@ -634,6 +656,7 @@ static lc_gcode_result_t lc_run_cut(const char *line,
 static lc_gcode_result_t lc_run_groove(const char *line,
                                        const char *setup,
                                        const char *tool,
+                                       const lc_gcode_line_options_t *options,
                                        lc_gcode_send_fn send,
                                        void *user,
                                        char *err,
@@ -662,16 +685,52 @@ static lc_gcode_result_t lc_run_groove(const char *line,
     lc_read_cut_ctx(tool, &ctx);
     lc_override_ctx_from_line(line, &ctx);
     if (!lc_emit(send, user, "(LC GROOVE)")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "GROOVE: write failed");
-    if (!lc_emit_preamble(send, user, &ctx)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "GROOVE: preamble write failed");
+    if (!lc_emit_cycle_preamble(send, user, &ctx, options)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "GROOVE: preamble write failed");
     if (!lc_emit(send, user, "G0 X%.3f Z%.3f", d1 + tc, z1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "GROOVE: write failed");
     if (!lc_emit(send, user, "G1 X%.3f F%.3f", d2, ctx.rough_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "GROOVE: write failed");
     if (!lc_emit(send, user, "G1 Z%.3f", z2)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "GROOVE: write failed");
     if (width > 0.0f && z2 == z1)
         if (!lc_emit(send, user, "G1 Z%.3f", z1 - width)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "GROOVE: write failed");
     if (!lc_emit(send, user, "G0 X%.3f", d1 + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "GROOVE: write failed");
-    if (!lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "GROOVE: write failed");
+    if ((!options || options->emit_spindle_stop) && !lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "GROOVE: write failed");
 
     return LC_GCODE_OK;
+}
+
+lc_gcode_result_t leancam_gcode_run_line_with_options(const char *line,
+                                                      const char *setup_line,
+                                                      const char *tool_line,
+                                                      const lc_gcode_line_options_t *options,
+                                                      lc_gcode_send_fn send,
+                                                      void *user,
+                                                      char *err,
+                                                      unsigned err_len)
+{
+    if (err && err_len > 0)
+        err[0] = 0;
+
+    if (!options)
+        options = &lc_default_line_options;
+
+    if (!line || !line[0])
+        return lc_fail(LC_GCODE_UNSUPPORTED, err, err_len, "empty line");
+
+    if (lc_starts_with(line, "OD|"))
+        return lc_run_od(line, setup_line, tool_line, options, send, user, err, err_len);
+    if (lc_starts_with(line, "ID|"))
+        return lc_run_id(line, setup_line, tool_line, options, send, user, err, err_len);
+    if (lc_starts_with(line, "FACE|"))
+        return lc_run_face(line, setup_line, tool_line, options, send, user, err, err_len);
+    if (lc_starts_with(line, "DRILL|"))
+        return lc_run_drill(line, tool_line, options, send, user, err, err_len);
+    if (lc_starts_with(line, "CUT|"))
+        return lc_run_cut(line, setup_line, tool_line, options, send, user, err, err_len);
+    if (lc_starts_with(line, "PART|"))
+        return lc_run_cut(line, setup_line, tool_line, options, send, user, err, err_len);
+    if (lc_starts_with(line, "GROOVE|"))
+        return lc_run_groove(line, setup_line, tool_line, options, send, user, err, err_len);
+
+    return lc_fail(LC_GCODE_UNSUPPORTED, err, err_len, "unsupported cycle");
 }
 
 lc_gcode_result_t leancam_gcode_run_line_ex(const char *line,
@@ -682,28 +741,46 @@ lc_gcode_result_t leancam_gcode_run_line_ex(const char *line,
                                             char *err,
                                             unsigned err_len)
 {
-    if (err && err_len > 0)
-        err[0] = 0;
+    return leancam_gcode_run_line_with_options(line,
+                                               setup_line,
+                                               tool_line,
+                                               &lc_default_line_options,
+                                               send,
+                                               user,
+                                               err,
+                                               err_len);
+}
 
-    if (!line || !line[0])
-        return lc_fail(LC_GCODE_UNSUPPORTED, err, err_len, "empty line");
+lc_gcode_result_t leancam_gcode_run_program_line_ex(const char *line,
+                                                    const char *setup_line,
+                                                    const char *tool_line,
+                                                    lc_gcode_send_fn send,
+                                                    void *user,
+                                                    char *err,
+                                                    unsigned err_len)
+{
+    return leancam_gcode_run_line_with_options(line,
+                                               setup_line,
+                                               tool_line,
+                                               &lc_program_line_options,
+                                               send,
+                                               user,
+                                               err,
+                                               err_len);
+}
 
-    if (lc_starts_with(line, "OD|"))
-        return lc_run_od(line, setup_line, tool_line, send, user, err, err_len);
-    if (lc_starts_with(line, "ID|"))
-        return lc_run_id(line, setup_line, tool_line, send, user, err, err_len);
-    if (lc_starts_with(line, "FACE|"))
-        return lc_run_face(line, setup_line, tool_line, send, user, err, err_len);
-    if (lc_starts_with(line, "DRILL|"))
-        return lc_run_drill(line, tool_line, send, user, err, err_len);
-    if (lc_starts_with(line, "CUT|"))
-        return lc_run_cut(line, setup_line, tool_line, send, user, err, err_len);
-    if (lc_starts_with(line, "PART|"))
-        return lc_run_cut(line, setup_line, tool_line, send, user, err, err_len);
-    if (lc_starts_with(line, "GROOVE|"))
-        return lc_run_groove(line, setup_line, tool_line, send, user, err, err_len);
+int leancam_gcode_emit_program_header(lc_gcode_send_fn send, void *user)
+{
+    if (!lc_emit(send, user, "(LeanCam generated)")) return 0;
+    if (!lc_emit(send, user, "(Check setup, tools, and first motion before running)")) return 0;
+    return lc_emit_modal_header(send, user);
+}
 
-    return lc_fail(LC_GCODE_UNSUPPORTED, err, err_len, "unsupported cycle");
+int leancam_gcode_emit_program_footer(lc_gcode_send_fn send, void *user)
+{
+    if (!lc_emit(send, user, "M5")) return 0;
+    if (!lc_emit(send, user, "M30")) return 0;
+    return 1;
 }
 
 lc_gcode_result_t leancam_gcode_run_line(const char *line,

@@ -8,6 +8,7 @@ typedef struct
     int lines;
     int fail_after;
     char first[128];
+    char last[128];
 } lc_test_sink_t;
 
 typedef struct
@@ -32,6 +33,9 @@ static int lc_test_send(const char *line, void *user)
         strncpy(sink->first, line, sizeof(sink->first) - 1u);
         sink->first[sizeof(sink->first) - 1u] = 0;
     }
+
+    strncpy(sink->last, line, sizeof(sink->last) - 1u);
+    sink->last[sizeof(sink->last) - 1u] = 0;
 
     sink->lines++;
     if (sink->fail_after > 0 && sink->lines > sink->fail_after)
@@ -72,6 +76,60 @@ static int lc_run_case(const lc_case_t *c)
     return 0;
 }
 
+static int lc_run_program_mode_checks(const char *setup, const char *tool)
+{
+    lc_test_sink_t sink;
+    lc_gcode_result_t got;
+    char err[96];
+
+    memset(&sink, 0, sizeof(sink));
+    err[0] = 0;
+
+    if (!leancam_gcode_emit_program_header(lc_test_send, &sink))
+    {
+        printf("FAIL program header rejected\n");
+        return 1;
+    }
+
+    if (strcmp(sink.first, "(LeanCam generated)") != 0 || strcmp(sink.last, "G8") != 0)
+    {
+        printf("FAIL program header first=%s last=%s\n", sink.first, sink.last);
+        return 1;
+    }
+
+    memset(&sink, 0, sizeof(sink));
+    got = leancam_gcode_run_program_line_ex("DRILL|Z1{0}|DEPTH{-10}|PECK{5}|FEED{90}|S{800}",
+                                            setup,
+                                            tool,
+                                            lc_test_send,
+                                            &sink,
+                                            err,
+                                            sizeof(err));
+    if (got != LC_GCODE_OK)
+    {
+        printf("FAIL program drill result=%d err=%s\n", (int)got, err);
+        return 1;
+    }
+
+    if (strcmp(sink.first, "G21") == 0 || strcmp(sink.last, "M5") == 0)
+    {
+        printf("FAIL program drill kept per-cycle wrapper first=%s last=%s\n", sink.first, sink.last);
+        return 1;
+    }
+
+    memset(&sink, 0, sizeof(sink));
+    if (!leancam_gcode_emit_program_footer(lc_test_send, &sink) ||
+        strcmp(sink.first, "M5") != 0 ||
+        strcmp(sink.last, "M30") != 0)
+    {
+        printf("FAIL program footer first=%s last=%s\n", sink.first, sink.last);
+        return 1;
+    }
+
+    printf("PASS program mode wrappers\n");
+    return 0;
+}
+
 int main(void)
 {
     static const char *setup = "SETUP|L{80}|OD{40}|ID{10}|CLAMP{5}|EXTRA{2}|CLR{1}|MAT{ST45}|WOFF{G54}";
@@ -101,6 +159,8 @@ int main(void)
 
     for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
         fails += lc_run_case(&cases[i]);
+
+    fails += lc_run_program_mode_checks(setup, tool);
 
     if (fails)
     {

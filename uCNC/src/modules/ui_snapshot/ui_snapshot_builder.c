@@ -90,17 +90,6 @@ static void ui_builder_fill_runtime(ui_snapshot_frame_t *f)
     f->axis[2] = axis[2];
     f->axes_valid = true;
 
-    if (cnc_get_exec_state(EXEC_RUN))
-    {
-        f->runtime_line = itp_get_rt_line_number();
-        f->line_valid = true;
-    }
-    else
-    {
-        f->runtime_line = 0;
-        f->line_valid = false;
-    }
-
     f->feed = itp_get_rt_feed();
     f->feed_valid = true;
     f->spindle = tool_get_speed();

@@ -191,6 +191,19 @@ static void ra_wait_text_done(void)
     }
 }
 
+static void ra_wait_mem_write_fifo_not_full(void)
+{
+    uint32_t t0 = mcu_millis();
+
+    while (ra_status() & 0x80)
+    {
+        if ((mcu_millis() - t0) > 20)
+            break;
+
+        vTaskDelay(1);
+    }
+}
+
 static void ra_wait_bte_done(void)
 {
     uint32_t t0 = mcu_millis();
@@ -542,7 +555,6 @@ void ra_blit(uint32_t src_base,
     ra_reg(0x90, 0x10);
 
     ra_wait_bte_done();
-    ra_text_mode();
 }
 
 void ra_draw_line(int x1, int y1, int x2, int y2, uint16_t color)
@@ -576,7 +588,6 @@ void ra_draw_line(int x1, int y1, int x2, int y2, uint16_t color)
     ra_reg(0x67, 0x80);
 
     ra_wait_draw_done();
-    ra_text_mode();
 }
 void ra_draw_rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t color)
 {
@@ -612,8 +623,6 @@ void ra_draw_rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t c
 
     ra_send_cmd_data8(0x76, 0xA0);
     ra_wait_draw_done();
-
-    ra_text_mode();
 }
 
 void ra_fill_rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t color)
@@ -654,8 +663,6 @@ void ra_fill_rect(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t c
 
     ra_send_cmd_data8(0x76, 0xE0);
     ra_wait_draw_done();
-
-    ra_text_mode();
 }
 
 void ra_text(uint16_t x, uint16_t y, uint16_t fg, uint16_t bg, const char *s)
@@ -681,6 +688,10 @@ void ra_text(uint16_t x, uint16_t y, uint16_t fg, uint16_t bg, const char *s)
     while (*s)
     {
         ra_rw((uint8_t)(*s));
+        ra_spi_stop();
+        ra_wait_mem_write_fifo_not_full();
+        ra_spi_start();
+        ra_rw(0x80);
         s++;
     }
     ra_spi_stop();

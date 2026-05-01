@@ -113,10 +113,6 @@ typedef struct
     uint8_t state;
     bool axes_valid;
     float axis[3];
-    //float axisdtg[3];
-
-    bool line_valid;
-    uint32_t  runtime_line;
     bool spindle_valid;
     uint32_t  spindle;
     bool feed_valid;

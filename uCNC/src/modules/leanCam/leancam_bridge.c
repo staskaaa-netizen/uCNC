@@ -280,6 +280,81 @@ static const char *lc_find_prefix_in_program(const program_t *p, int before_or_a
     return NULL;
 }
 
+static int lc_gcode_discard_line(const char *line, void *user)
+{
+    (void)line;
+    (void)user;
+    return 1;
+}
+
+static bool lc_is_context_line(const char *line)
+{
+    return line &&
+           (strncmp(line, "SETUP|", 6) == 0 ||
+            strncmp(line, "TOOL|", 5) == 0);
+}
+
+static lc_gcode_result_t lc_preflight_program_gcode(const program_t *prog,
+                                                    int *made_out,
+                                                    int *line_out,
+                                                    char *err,
+                                                    unsigned err_len)
+{
+    int i;
+    int made = 0;
+    lc_gcode_result_t r = LC_GCODE_OK;
+
+    if (made_out) *made_out = 0;
+    if (line_out) *line_out = 0;
+    if (err && err_len > 0) err[0] = 0;
+
+    if (!prog)
+        return LC_GCODE_BAD_FIELD;
+
+    for (i = 0; i < prog->count; ++i)
+    {
+        const char *line = prog->lines[i];
+        const char *setup;
+        const char *tool;
+
+        if (!line || !line[0] || lc_is_context_line(line))
+            continue;
+
+        setup = lc_find_setup_in_program(prog, i);
+        tool = lc_find_prefix_in_program(prog, i, "TOOL|");
+        r = leancam_gcode_run_program_line_ex(line, setup, tool, lc_gcode_discard_line, NULL, err, err_len);
+        if (r != LC_GCODE_OK)
+        {
+            if (line_out) *line_out = i + 1;
+            if (made_out) *made_out = made;
+            return r;
+        }
+
+        made++;
+    }
+
+    if (made_out) *made_out = made;
+    return LC_GCODE_OK;
+}
+
+static int lc_emit_program_cycle_banner(lc_gcode_file_emit_t *emit_ctx, int line_no, const char *tool)
+{
+    char buf[96];
+
+    snprintf(buf, sizeof(buf), "(--- LeanCam L%d ---)", line_no);
+    if (!lc_write_line_to_file(buf, emit_ctx))
+        return 0;
+
+    if (tool && tool[0])
+    {
+        snprintf(buf, sizeof(buf), "(--- %.84s ---)", tool);
+        if (!lc_write_line_to_file(buf, emit_ctx))
+            return 0;
+    }
+
+    return 1;
+}
+
 static void lc_generate_selected_file_gcode(void)
 {
     char in_path[LC_FILE_PATH_MAX];
@@ -290,6 +365,7 @@ static void lc_generate_selected_file_gcode(void)
     int cnt;
     int i;
     int made = 0;
+    int fail_line = 0;
     lc_gcode_result_t r = LC_GCODE_OK;
     char err[64];
 
@@ -330,6 +406,22 @@ static void lc_generate_selected_file_gcode(void)
         return;
     }
 
+    lc_publish_msg("LC: checking cycles");
+    r = lc_preflight_program_gcode(&prog, &made, &fail_line, err, sizeof(err));
+    if (r != LC_GCODE_OK)
+    {
+        lc_set_msgf("LC: L%d %.36s", fail_line, err[0] ? err : lc_gcode_result_name(r));
+        ui_snapshot_build_live();
+        return;
+    }
+
+    if (made <= 0)
+    {
+        lc_set_msg("LC: no cycles");
+        ui_snapshot_build_live();
+        return;
+    }
+
     lc_publish_msg("LC: opening %s", lc_basename(out_path));
 
     cnc_set_file_io_critical(true);
@@ -343,32 +435,40 @@ static void lc_generate_selected_file_gcode(void)
     }
 
     emit_ctx.fp = fp;
+    made = 0;
     lc_publish_msg("LC: writing header");
-    (void)lc_write_line_to_file("(LeanCam generated)", &emit_ctx);
-    (void)lc_write_line_to_file("(Check setup and first motion before running)", &emit_ctx);
+    if (!leancam_gcode_emit_program_header(lc_write_line_to_file, &emit_ctx))
+        r = LC_GCODE_STREAM_REJECT;
 
-    for (i = 0; i < prog.count; ++i)
+    for (i = 0; r == LC_GCODE_OK && i < prog.count; ++i)
     {
         const char *line = prog.lines[i];
         const char *setup;
         const char *tool;
 
-        if (!line || !line[0])
-            continue;
-
-        if (strncmp(line, "SETUP|", 6) == 0 || strncmp(line, "TOOL|", 5) == 0)
+        if (!line || !line[0] || lc_is_context_line(line))
             continue;
 
         lc_publish_msg("LC: gen L%d %.32s", i + 1, line);
 
         setup = lc_find_setup_in_program(&prog, i);
         tool = lc_find_prefix_in_program(&prog, i, "TOOL|");
-        r = leancam_gcode_run_line_ex(line, setup, tool, lc_write_line_to_file, &emit_ctx, err, sizeof(err));
+
+        if (!lc_emit_program_cycle_banner(&emit_ctx, i + 1, tool))
+        {
+            r = LC_GCODE_STREAM_REJECT;
+            break;
+        }
+
+        r = leancam_gcode_run_program_line_ex(line, setup, tool, lc_write_line_to_file, &emit_ctx, err, sizeof(err));
         if (r != LC_GCODE_OK)
             break;
 
         made++;
     }
+
+    if (r == LC_GCODE_OK && !leancam_gcode_emit_program_footer(lc_write_line_to_file, &emit_ctx))
+        r = LC_GCODE_STREAM_REJECT;
 
     lc_publish_msg("LC: closing %s", lc_basename(out_path));
     fs_close(fp);
@@ -378,14 +478,6 @@ static void lc_generate_selected_file_gcode(void)
     {
         (void)fs_remove(out_path);
         lc_set_msgf("LC: L%d %.36s", i + 1, err[0] ? err : lc_gcode_result_name(r));
-        ui_snapshot_build_live();
-        return;
-    }
-
-    if (made <= 0)
-    {
-        (void)fs_remove(out_path);
-        lc_set_msg("LC: no cycles");
         ui_snapshot_build_live();
         return;
     }

@@ -19,6 +19,9 @@
 #include "../cnc.h"
 #include "softi2c.h"
 #include "softspi.h"
+#if defined(ESP32) || defined(ARDUINO_ARCH_ESP32) || defined(CONFIG_IDF_TARGET_ESP32)
+#include "driver/pcnt.h"
+#endif
 
 #if ENCODERS > 0
 
@@ -32,18 +35,36 @@ static int32_t encoders_pos[ENCODERS];
 static uint32_t encoders_tstamp[ENCODERS][2];
 
 #if ENCODERS > 0
+#ifndef ENC0_TYPE
+#define ENC0_TYPE ENC_TYPE_PULSE
+#endif
+#if ENC0_TYPE == ENC_TYPE_PULSE
 #if (!ASSERT_PIN(ENC0_PULSE))
 #error "The ENC0 pulse pin is not defined"
 #endif
 #if (!ASSERT_PIN(ENC0_DIR))
 #error "The ENC0 dir pin is not defined"
 #endif
-#ifndef ENC0_TYPE
-#define ENC0_TYPE ENC_TYPE_PULSE
-#endif
-#if ENC0_TYPE == ENC_TYPE_PULSE
 #define ENC0_IO_MASK (1 << (ENC0_PULSE - DIN_PINS_OFFSET))
+#elif ENC0_TYPE == ENC_TYPE_PCNT
+#define ENC0_IO_MASK 0
+#ifndef ENC0_PCNT_UNIT
+#define ENC0_PCNT_UNIT PCNT_UNIT_0
+#endif
+#ifndef ENC0_PULSE_GPIO
+#error "ENC0_PULSE_GPIO is not defined"
+#endif
+#ifndef ENC0_DIR_GPIO
+#error "ENC0_DIR_GPIO is not defined"
+#endif
+#ifndef ENC0_READ
+#define ENC0_READ read_encoder_esp32_pcnt(ENC0_PCNT_UNIT)
+#endif
+#ifndef ENC0_IS_INCREMENTAL
+#define ENC0_IS_INCREMENTAL
+#endif
 #elif ENC0_TYPE == ENC_TYPE_I2C
+#define ENC0_IO_MASK 0
 #ifndef ENC0_FREQ
 #define ENC0_FREQ 400000
 #endif
@@ -51,6 +72,7 @@ static uint32_t encoders_tstamp[ENCODERS][2];
 #define ENC0_READ read_encoder_mt6701_i2c(&enc0)
 #endif
 #elif ENC0_TYPE == ENC_TYPE_SSI
+#define ENC0_IO_MASK 0
 #ifndef ENC0_FREQ
 #define ENC0_FREQ 15000000
 #endif
@@ -58,6 +80,7 @@ static uint32_t encoders_tstamp[ENCODERS][2];
 #define ENC0_READ read_encoder_mt6701_ssi(&enc0)
 #endif
 #elif ENC0_TYPE == ENC_TYPE_CUSTOM
+#define ENC0_IO_MASK 0
 #ifndef ENC0_READ
 #define ENC0_READ enc_custom_read(ENC0)
 #endif
@@ -410,7 +433,8 @@ void __attribute__((weak)) enc7_pulse(void) {}
  * Additional read functions for other types of encoders can be added later
  * For now support for the MT6701 is added
  */
-static uint16_t encoder_last_read[ENCODERS] __attribute__((unused));
+static int32_t encoder_last_read[ENCODERS] __attribute__((unused));
+//static uint16_t encoder_last_read[ENCODERS] __attribute__((unused));
 uint16_t read_encoder_mt6701_i2c(softi2c_port_t *port)
 {
 	uint8_t reg = 0x03;
@@ -434,6 +458,58 @@ uint16_t read_encoder_mt6701_ssi(softspi_port_t *port)
 	softspi_stop(port);
 	return (uint16_t)((data >> 10) & 0x3fff);
 }
+
+#if defined(ENC0_READ) && (ENC0_TYPE == ENC_TYPE_PCNT)
+static void encoder_esp32_pcnt_init(uint8_t unit, int pulse_gpio, int dir_gpio)
+{
+	pcnt_config_t ch0 = {
+		.pulse_gpio_num = pulse_gpio,
+		.ctrl_gpio_num = dir_gpio,
+		.lctrl_mode = PCNT_MODE_REVERSE,
+		.hctrl_mode = PCNT_MODE_KEEP,
+		.pos_mode = PCNT_COUNT_INC,
+		.neg_mode = PCNT_COUNT_DEC,
+		.counter_h_lim = 32767,
+		.counter_l_lim = -32767,
+		.unit = (pcnt_unit_t)unit,
+		.channel = PCNT_CHANNEL_0,
+	};
+
+	pcnt_config_t ch1 = {
+		.pulse_gpio_num = dir_gpio,
+		.ctrl_gpio_num = pulse_gpio,
+		.lctrl_mode = PCNT_MODE_KEEP,
+		.hctrl_mode = PCNT_MODE_REVERSE,
+		.pos_mode = PCNT_COUNT_INC,
+		.neg_mode = PCNT_COUNT_DEC,
+		.counter_h_lim = 32767,
+		.counter_l_lim = -32767,
+		.unit = (pcnt_unit_t)unit,
+		.channel = PCNT_CHANNEL_1,
+	};
+
+	pcnt_unit_config(&ch0);
+	pcnt_unit_config(&ch1);
+
+#ifdef ENCODER_PCNT_FILTER
+	pcnt_set_filter_value((pcnt_unit_t)unit, ENCODER_PCNT_FILTER);
+	pcnt_filter_enable((pcnt_unit_t)unit);
+#else
+	pcnt_filter_disable((pcnt_unit_t)unit);
+#endif
+
+	pcnt_counter_pause((pcnt_unit_t)unit);
+	pcnt_counter_clear((pcnt_unit_t)unit);
+	pcnt_counter_resume((pcnt_unit_t)unit);
+}
+
+int32_t read_encoder_esp32_pcnt(uint8_t unit)
+{
+	int16_t value = 0;
+	pcnt_get_counter_value((pcnt_unit_t)unit, &value);
+	return (int32_t)value;
+}
+#endif
 
 uint32_t encoder_get_delta(uint8_t i)
 {
@@ -810,22 +886,21 @@ static void encoder_update(uint8_t i)
 	{
 		diff = (!(g_settings.encoders_dir_invert_mask & (1 << i))) ? (encoder_read - encoder_last_read[i]) : (encoder_last_read[i] - encoder_read);
 		encoder_last_read[i] = encoder_read;
-		if (g_settings.encoders_resolution[i])
-		{
-			if (diff < -(g_settings.encoders_resolution[i] >> 1))
+		if (g_settings.encoders_resolution[i] > 0)
 			{
-				return (diff + g_settings.encoders_resolution[i]);
+				float half_res = g_settings.encoders_resolution[i] * 0.5f;
+
+				if ((float)diff < -half_res)
+					diff += (int32_t)g_settings.encoders_resolution[i];
+
+				if ((float)diff > half_res)
+					diff -= (int32_t)g_settings.encoders_resolution[i];
 			}
-			if (diff > (g_settings.encoders_resolution[i] >> 1))
-			{
-				return (diff + g_settings.encoders_resolution[i]);
-			}
-		}
-		encoder_pos[i] += diff;
+		encoders_pos[i] += diff;
 	}
 	else
 	{
-		encoder_pos[i] = ENC0_READ;
+		encoders_pos[i] = encoder_read;
 	}
 }
 
@@ -835,26 +910,35 @@ bool encoders_dotasks(void *args)
 #ifdef ENC0_READ
 	encoder_update(ENC0);
 #endif
-#ifdef ENC0_READ
+#ifdef ENC1_READ
 	encoder_update(ENC1);
 #endif
-#ifdef ENC0_READ
+#ifdef ENC2_READ
 	encoder_update(ENC2);
 #endif
-#ifdef ENC0_READ
+#ifdef ENC3_READ
 	encoder_update(ENC3);
 #endif
-#ifdef ENC0_READ
+#ifdef ENC4_READ
 	encoder_update(ENC4);
 #endif
-#ifdef ENC0_READ
+#ifdef ENC5_READ
 	encoder_update(ENC5);
 #endif
-#ifdef ENC0_READ
+#ifdef ENC6_READ
 	encoder_update(ENC6);
 #endif
-#ifdef ENC0_READ
+#ifdef ENC7_READ
 	encoder_update(ENC7);
+#endif
+#ifdef ENCODER_DEBUG_PRINT_100MS
+	static uint32_t enc_dbg_ms = 0;
+	uint32_t now_ms = mcu_millis();
+	if ((now_ms - enc_dbg_ms) >= 100)
+	{
+		enc_dbg_ms = now_ms;
+		encoder_print_values();
+	}
 #endif
 
 	return EVENT_CONTINUE;
@@ -875,6 +959,9 @@ int32_t encoder_get_position(uint8_t i)
 
 void encoder_print_values(void)
 {
+	int16_t raw = 0;
+	pcnt_get_counter_value(PCNT_UNIT_0, &raw);
+	proto_printf("[RAW:%d EC:%ld]" MSG_FEEDBACK_END, raw, (long)encoders_pos[0]);
 	proto_printf("[EC:%" STRGIFY(ENCODERS) "lld" MSG_FEEDBACK_END, encoders_pos);
 }
 
@@ -937,6 +1024,9 @@ void encoders_itp_reset_rt_position(float *origin)
 
 DECL_MODULE(encoder)
 {
+#if ENC0_TYPE == ENC_TYPE_PCNT
+	encoder_esp32_pcnt_init(ENC0_PCNT_UNIT, ENC0_PULSE_GPIO, ENC0_DIR_GPIO);
+#endif
 #if ENC0_TYPE == ENC_TYPE_I2C
 	softi2c_config(&enc0, ENC0_FREQ);
 #endif

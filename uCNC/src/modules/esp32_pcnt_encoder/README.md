@@ -166,6 +166,7 @@ Modes:
 #define ENC0_INDEX_MODE_RMT_MARKER 2
 #define ENC0_INDEX_MODE_DFF_LATCH 3
 #define ENC0_INDEX_MODE_SOFTWARE_POLL 4
+#define ENC0_INDEX_MODE_GPIO_ISR 5
 ```
 
 `ENC0_INDEX_MODE` defaults to `ENC0_INDEX_MODE_LEGACY_ISR`. For the current
@@ -222,6 +223,35 @@ This can run alongside RMT marker testing. It reports:
 This is intentionally the simplest possible baseline: no hardware capture, just
 software edge polling in the module task loop. It is useful for comparing loop
 latency against the PCNT index mailbox and RMT marker diagnostics.
+
+An additional GPIO ISR diagnostic can snapshot the main PCNT count from a direct
+ESP32 GPIO ISR:
+
+```c
+#define ENC0_INDEX_ISR_HUNT_ENABLE 1
+```
+
+It reports:
+
+```text
+[IDXHUNT ISR] pcnt=... raw=... edges=... pend=... lvl=... us=... near=... far=... md=... cmp=... cmin=... cmax=... cn=... crj=...
+```
+
+This is still experimental. The ISR only captures a small mailbox: raw event
+count, pin level, timestamp, and the main PCNT count as close to the GPIO edge as
+possible. The normal task loop performs filtering and debug output.
+
+For comparison, the PCNT index mailbox can be configured to count both edges:
+
+```c
+pos_mode = PCNT_COUNT_INC
+neg_mode = PCNT_COUNT_INC
+```
+
+That confirms whether the mailbox sees one or both edges of the Z pulse, but it
+still does not timestamp the first edge. The mailbox is drained later from the
+module task loop, so a consistent one-to-two-edge region in the debug output is
+expected when the spindle moves during that drain latency.
 
 ## Notes
 

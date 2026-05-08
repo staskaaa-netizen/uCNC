@@ -57,13 +57,6 @@ extern "C"
 #define ENC0_INDEX_PCNT_UNIT PCNT_UNIT_1
 //#define ENC0_INDEX_PCNT_FILTER 5
 #define ENCODER_PCNT_FILTER 10
-#define ENC0_INDEX_MODE ENC0_INDEX_MODE_VIRTUAL_MOD
-
-#define ENC0_INDEX_HUNT_MIN_MARKER_DELTA 1000
-#define ENC0_INDEX_HUNT_COMPARE_MAX_DELTA 500
-#define ENC0_INDEX_SOFT_POLL_ENABLE 0
-#define ENC0_INDEX_ISR_HUNT_ENABLE 1
-#define ENC0_INDEX_VIRTUAL_MOD_ENABLE 1
 #define ENC0_INDEX_VIRTUAL_FIRE_HOOK 1
 
 #define ENC0_CPR 4000
@@ -72,7 +65,6 @@ extern "C"
 //#define ENC0_RESOLUTION 65536
 
 //#define ENCODER_DEBUG_PRINT_100MS   // optional test only
-//#define ENC0_INDEX_HUNT_DEBUG       // optional index-hunt serial diagnostics
 
 
 //Custom configurations

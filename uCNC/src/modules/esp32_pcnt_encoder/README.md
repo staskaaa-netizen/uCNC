@@ -282,13 +282,22 @@ configured encoder CPR:
 
 ```c
 #define ENC0_INDEX_VIRTUAL_MOD_ENABLE 1
-#define ENC0_INDEX_VIRTUAL_FIRE_HOOK 0
+#define ENC0_INDEX_ISR_HUNT_ENABLE 1
+#define ENC0_INDEX_VIRTUAL_FIRE_HOOK 1
 ```
 
 The virtual index locks its origin to the first accepted physical reference
-(PCNT index first, ISR reference second) and then reports every `$150`/`ENC0_CPR`
-counts from the main A/B counter. It can optionally fire the normal `enc0_index`
-hook, but this is disabled by default because it would affect G33 behavior.
+(GPIO ISR reference first, PCNT index second) and then reports every
+`$150`/`ENC0_CPR` counts from the main A/B counter. This matches the ELS/G33
+software follower model better than draining a separate index mailbox later:
+PCNT0 A/B remains the truth, the physical index names the phase/tooth, and the
+virtual modulo boundary is the software-visible index event.
+
+The standard encoder module fires index hooks on the logical rising edge. The
+GPIO ISR naming path follows that convention by default (`GPIO_INTR_POSEDGE`).
+When `ENC0_INDEX_VIRTUAL_FIRE_HOOK` is enabled, the delayed PCNT1 mailbox hook is
+suppressed and the normal `enc0_index` hook is fired from the virtual modulo
+crossing instead.
 
 Debug line:
 

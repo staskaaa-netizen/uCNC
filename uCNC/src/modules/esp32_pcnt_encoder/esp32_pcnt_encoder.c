@@ -74,6 +74,11 @@
 #define ENC0_INDEX_ISR_STATUS_MS 1000
 #endif
 
+#ifndef ENC0_INDEX_ISR_EDGE
+// The standard encoder module fires index hooks on the logical rising edge.
+#define ENC0_INDEX_ISR_EDGE GPIO_INTR_POSEDGE
+#endif
+
 #ifndef ENC0_INDEX_VIRTUAL_MOD_ENABLE
 #define ENC0_INDEX_VIRTUAL_MOD_ENABLE (ENC0_INDEX_MODE == ENC0_INDEX_MODE_VIRTUAL_MOD)
 #endif
@@ -535,21 +540,27 @@ static void enc0_index_hunt_virtual_mod(void)
 	now = encoder_get_position(ENC0);
 	if (!enc0_virtual_have_origin)
 	{
+#if ENC0_INDEX_ISR_HUNT_ENABLE
+		{
+			int32_t isr_pcnt;
+			if (enc0_index_hunt_isr_get_ref(&isr_pcnt))
+			{
+				enc0_virtual_origin_pcnt = isr_pcnt;
+			}
+			else if (esp32_pcnt_index_have_origin)
+			{
+				enc0_virtual_origin_pcnt = esp32_pcnt_index_last_position;
+			}
+			else
+			{
+				return;
+			}
+		}
+#else
 		if (esp32_pcnt_index_have_origin)
 		{
 			enc0_virtual_origin_pcnt = esp32_pcnt_index_last_position;
 		}
-#if ENC0_INDEX_ISR_HUNT_ENABLE
-		else
-		{
-			int32_t isr_pcnt;
-			if (!enc0_index_hunt_isr_get_ref(&isr_pcnt))
-			{
-				return;
-			}
-			enc0_virtual_origin_pcnt = isr_pcnt;
-		}
-#else
 		else
 		{
 			return;
@@ -816,11 +827,11 @@ static void enc0_index_hunt_isr_status(void)
 
 static void enc0_index_hunt_isr_init(void)
 {
-	gpio_set_intr_type((gpio_num_t)ENC0_INDEX_GPIO, GPIO_INTR_ANYEDGE);
+	gpio_set_intr_type((gpio_num_t)ENC0_INDEX_GPIO, ENC0_INDEX_ISR_EDGE);
 	gpio_isr_handler_add((gpio_num_t)ENC0_INDEX_GPIO, enc0_index_hunt_gpio_isr, NULL);
 
 #ifdef ENC0_INDEX_HUNT_DEBUG
-	proto_info("MSG:[IDXHUNT ISR init] gpio=%d edge=ANY", (int)ENC0_INDEX_GPIO);
+	proto_info("MSG:[IDXHUNT ISR init] gpio=%d edge=%d", (int)ENC0_INDEX_GPIO, (int)ENC0_INDEX_ISR_EDGE);
 #endif
 }
 #endif
@@ -1503,7 +1514,7 @@ static void esp32_pcnt_encoder_update_index_debug(void)
 
 static void esp32_pcnt_encoder_invoke_virtual_index(void)
 {
-#ifdef ENC0_INDEX_PCNT_ENABLED
+#if defined(ENC0_INDEX_PCNT_ENABLED) && !ENC0_INDEX_VIRTUAL_FIRE_HOOK
 	HOOK_INVOKE(enc0_index);
 #endif
 }

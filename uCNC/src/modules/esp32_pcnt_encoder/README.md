@@ -167,6 +167,7 @@ Modes:
 #define ENC0_INDEX_MODE_DFF_LATCH 3
 #define ENC0_INDEX_MODE_SOFTWARE_POLL 4
 #define ENC0_INDEX_MODE_GPIO_ISR 5
+#define ENC0_INDEX_MODE_VIRTUAL_MOD 6
 ```
 
 `ENC0_INDEX_MODE` defaults to `ENC0_INDEX_MODE_LEGACY_ISR`. For the current
@@ -254,6 +255,50 @@ That confirms whether the mailbox sees one or both edges of the Z pulse, but it
 still does not timestamp the first edge. The mailbox is drained later from the
 module task loop, so a consistent one-to-two-edge region in the debug output is
 expected when the spindle moves during that drain latency.
+
+The current test findings are:
+
+- PCNT unit 0 A/B quadrature is the main spindle position source and remains the
+  count truth.
+- The physical index should name the first/main pulse for phase, not drive motion
+  by itself.
+- PCNT unit 1 is a good hardware mailbox for "an index edge happened", but its
+  reported position is the PCNT0 value when the mailbox is drained later.
+- Counting both index edges on PCNT unit 1 confirms the pulse edges, but it still
+  cannot tell where the first edge was. In hand tests this showed a visible
+  one-to-two-edge/pulse region caused by drain latency.
+- Direct GPIO ISR capture is much better than software polling. In tests it saw
+  the index events reliably, rejected the opposite edge as `near`, and kept
+  compare values mostly within tens of encoder counts after startup.
+- Software polling from the task loop is only a baseline. It missed most short
+  index pulses unless rotation was very slow.
+- RMT Z single-pulse capture worked as an index detector, but the legacy RMT
+  ring buffer path still reports through task drain. Separate A/B/Z RMT streams
+  are useful to inspect signal activity, but they are not yet a unified absolute
+  timestamp reconstruction.
+
+One more diagnostic can derive a virtual index from PCNT unit 0 modulo the
+configured encoder CPR:
+
+```c
+#define ENC0_INDEX_VIRTUAL_MOD_ENABLE 1
+#define ENC0_INDEX_VIRTUAL_FIRE_HOOK 0
+```
+
+The virtual index locks its origin to the first accepted physical reference
+(PCNT index first, ISR reference second) and then reports every `$150`/`ENC0_CPR`
+counts from the main A/B counter. It can optionally fire the normal `enc0_index`
+hook, but this is disabled by default because it would affect G33 behavior.
+
+Debug line:
+
+```text
+[IDXHUNT VIRT] pcnt=... origin=... ev=... boundary=... md=... pcntcmp=... pcmin=... pcmax=... pcn=... pcrj=... isrcmp=... isrmin=... isrmax=... isrn=... isrrj=... hook=... fire=...
+```
+
+This answers a different question from the physical index tests: "If the main
+PCNT0 quadrature count is truth, how stable is a modulo-derived index once its
+phase is named by the real index pulse?"
 
 ## Notes
 

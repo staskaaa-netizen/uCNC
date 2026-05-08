@@ -52,6 +52,7 @@
 #define ENC0_INDEX_MODE_DFF_LATCH 3
 #define ENC0_INDEX_MODE_SOFTWARE_POLL 4
 #define ENC0_INDEX_MODE_GPIO_ISR 5
+#define ENC0_INDEX_MODE_VIRTUAL_MOD 6
 
 #ifndef ENC0_INDEX_MODE
 #define ENC0_INDEX_MODE ENC0_INDEX_MODE_LEGACY_ISR
@@ -71,6 +72,18 @@
 
 #ifndef ENC0_INDEX_ISR_STATUS_MS
 #define ENC0_INDEX_ISR_STATUS_MS 1000
+#endif
+
+#ifndef ENC0_INDEX_VIRTUAL_MOD_ENABLE
+#define ENC0_INDEX_VIRTUAL_MOD_ENABLE (ENC0_INDEX_MODE == ENC0_INDEX_MODE_VIRTUAL_MOD)
+#endif
+
+#ifndef ENC0_INDEX_VIRTUAL_STATUS_MS
+#define ENC0_INDEX_VIRTUAL_STATUS_MS 1000
+#endif
+
+#ifndef ENC0_INDEX_VIRTUAL_FIRE_HOOK
+#define ENC0_INDEX_VIRTUAL_FIRE_HOOK 0
 #endif
 
 #ifndef ENC0_INDEX_HUNT_COMPARE_MAX_DELTA
@@ -123,6 +136,9 @@ static uint32_t esp32_pcnt_index_debug_reported_missed_count;
 
 static uint32_t esp32_pcnt_encoder_index_min_delta(void);
 static uint32_t esp32_pcnt_encoder_index_max_delta(void);
+#if ENC0_INDEX_ISR_HUNT_ENABLE
+static bool enc0_index_hunt_isr_get_ref(int32_t *pcnt);
+#endif
 
 // ============================================================
 // EXPERIMENTAL INDEX POSITION HUNT
@@ -181,6 +197,18 @@ static int32_t enc0_wrap_add(int32_t base, int32_t add, int32_t wrap)
 	return v;
 }
 
+static int32_t enc0_floor_div_i32(int32_t value, int32_t divisor)
+{
+	int32_t q = value / divisor;
+	int32_t r = value % divisor;
+
+	if (r && ((r < 0) != (divisor < 0)))
+	{
+		q--;
+	}
+	return q;
+}
+
 #if ENC0_INDEX_MODE != ENC0_INDEX_MODE_LEGACY_ISR
 static float enc0_index_hunt_clampf(float value, float min_value, float max_value)
 {
@@ -209,6 +237,8 @@ static const char *enc0_index_hunt_mode_name(uint8_t mode)
 		return "SOFTWARE_POLL";
 	case ENC0_INDEX_MODE_GPIO_ISR:
 		return "GPIO_ISR";
+	case ENC0_INDEX_MODE_VIRTUAL_MOD:
+		return "VIRTUAL_MOD";
 	default:
 		return "LEGACY_ISR";
 	}
@@ -399,6 +429,195 @@ static void enc0_index_hunt_soft_poll_status(void)
 }
 #endif
 
+#if ENC0_INDEX_VIRTUAL_MOD_ENABLE
+static bool enc0_virtual_have_origin;
+static bool enc0_virtual_have_slot;
+static int32_t enc0_virtual_origin_pcnt;
+static int32_t enc0_virtual_last_slot;
+static int32_t enc0_virtual_last_boundary;
+static int32_t enc0_virtual_last_delta;
+static int32_t enc0_virtual_last_pcnt_compare_delta;
+static int32_t enc0_virtual_min_pcnt_compare_delta;
+static int32_t enc0_virtual_max_pcnt_compare_delta;
+static int32_t enc0_virtual_last_isr_compare_delta;
+static int32_t enc0_virtual_min_isr_compare_delta;
+static int32_t enc0_virtual_max_isr_compare_delta;
+static uint32_t enc0_virtual_event_count;
+static uint32_t enc0_virtual_pcnt_compare_count;
+static uint32_t enc0_virtual_pcnt_compare_reject_count;
+static uint32_t enc0_virtual_isr_compare_count;
+static uint32_t enc0_virtual_isr_compare_reject_count;
+static uint32_t enc0_virtual_hook_count;
+static uint32_t enc0_virtual_last_status_ms;
+
+static void enc0_index_hunt_virtual_update_stats(int32_t value, int32_t *min_value, int32_t *max_value, uint32_t count)
+{
+	if (!count)
+	{
+		*min_value = value;
+		*max_value = value;
+		return;
+	}
+	if (value < *min_value)
+	{
+		*min_value = value;
+	}
+	if (value > *max_value)
+	{
+		*max_value = value;
+	}
+}
+
+static void enc0_index_hunt_virtual_compare_pcnt(int32_t boundary)
+{
+	if (!esp32_pcnt_index_have_origin)
+	{
+		return;
+	}
+
+	enc0_virtual_last_pcnt_compare_delta = enc0_wrap_delta(enc0_wrap_add(0, boundary, (int32_t)ENC0_READ_WRAP),
+														   enc0_wrap_add(0, esp32_pcnt_index_last_position, (int32_t)ENC0_READ_WRAP),
+														   (int32_t)ENC0_READ_WRAP);
+	if ((uint32_t)ABS(enc0_virtual_last_pcnt_compare_delta) > ENC0_INDEX_HUNT_COMPARE_MAX_DELTA)
+	{
+		enc0_virtual_pcnt_compare_reject_count++;
+		return;
+	}
+
+	enc0_index_hunt_virtual_update_stats(enc0_virtual_last_pcnt_compare_delta,
+										 &enc0_virtual_min_pcnt_compare_delta,
+										 &enc0_virtual_max_pcnt_compare_delta,
+										 enc0_virtual_pcnt_compare_count);
+	enc0_virtual_pcnt_compare_count++;
+}
+
+static void enc0_index_hunt_virtual_compare_isr(int32_t boundary)
+{
+#if ENC0_INDEX_ISR_HUNT_ENABLE
+	int32_t isr_pcnt;
+
+	if (!enc0_index_hunt_isr_get_ref(&isr_pcnt))
+	{
+		return;
+	}
+
+	enc0_virtual_last_isr_compare_delta = enc0_wrap_delta(enc0_wrap_add(0, boundary, (int32_t)ENC0_READ_WRAP),
+														  enc0_wrap_add(0, isr_pcnt, (int32_t)ENC0_READ_WRAP),
+														  (int32_t)ENC0_READ_WRAP);
+	if ((uint32_t)ABS(enc0_virtual_last_isr_compare_delta) > ENC0_INDEX_HUNT_COMPARE_MAX_DELTA)
+	{
+		enc0_virtual_isr_compare_reject_count++;
+		return;
+	}
+
+	enc0_index_hunt_virtual_update_stats(enc0_virtual_last_isr_compare_delta,
+										 &enc0_virtual_min_isr_compare_delta,
+										 &enc0_virtual_max_isr_compare_delta,
+										 enc0_virtual_isr_compare_count);
+	enc0_virtual_isr_compare_count++;
+#endif
+}
+
+static void enc0_index_hunt_virtual_mod(void)
+{
+	uint32_t cpr = esp32_pcnt_encoder_index_resolution();
+	int32_t now;
+	int32_t rel;
+	int32_t slot;
+	int32_t boundary;
+
+	if (!cpr)
+	{
+		return;
+	}
+
+	now = encoder_get_position(ENC0);
+	if (!enc0_virtual_have_origin)
+	{
+		if (esp32_pcnt_index_have_origin)
+		{
+			enc0_virtual_origin_pcnt = esp32_pcnt_index_last_position;
+		}
+#if ENC0_INDEX_ISR_HUNT_ENABLE
+		else
+		{
+			int32_t isr_pcnt;
+			if (!enc0_index_hunt_isr_get_ref(&isr_pcnt))
+			{
+				return;
+			}
+			enc0_virtual_origin_pcnt = isr_pcnt;
+		}
+#else
+		else
+		{
+			return;
+		}
+#endif
+		enc0_virtual_have_origin = true;
+	}
+
+	rel = now - enc0_virtual_origin_pcnt;
+	slot = enc0_floor_div_i32(rel, (int32_t)cpr);
+	if (!enc0_virtual_have_slot)
+	{
+		enc0_virtual_last_slot = slot;
+		enc0_virtual_have_slot = true;
+		return;
+	}
+	if (slot == enc0_virtual_last_slot)
+	{
+		return;
+	}
+
+	boundary = enc0_virtual_origin_pcnt + ((slot > enc0_virtual_last_slot) ? slot : enc0_virtual_last_slot) * (int32_t)cpr;
+	enc0_virtual_last_delta = enc0_virtual_event_count ? (boundary - enc0_virtual_last_boundary) : 0;
+	enc0_virtual_last_boundary = boundary;
+	enc0_virtual_last_slot = slot;
+	enc0_virtual_event_count++;
+	enc0_index_hunt_virtual_compare_pcnt(boundary);
+	enc0_index_hunt_virtual_compare_isr(boundary);
+	enc0_index_hunt_store_sample(ENC0_INDEX_MODE_VIRTUAL_MOD, boundary, 0, 0, 0, 0, true);
+
+#if ENC0_INDEX_VIRTUAL_FIRE_HOOK
+	HOOK_INVOKE(enc0_index);
+	enc0_virtual_hook_count++;
+#endif
+}
+
+static void enc0_index_hunt_virtual_status(void)
+{
+#ifdef ENC0_INDEX_HUNT_DEBUG
+	uint32_t now_ms = mcu_millis();
+
+	if ((uint32_t)(now_ms - enc0_virtual_last_status_ms) < ENC0_INDEX_VIRTUAL_STATUS_MS)
+	{
+		return;
+	}
+	enc0_virtual_last_status_ms = now_ms;
+
+	proto_info("MSG:[IDXHUNT VIRT] pcnt=%ld origin=%ld ev=%lu boundary=%ld md=%ld pcntcmp=%ld pcmin=%ld pcmax=%ld pcn=%lu pcrj=%lu isrcmp=%ld isrmin=%ld isrmax=%ld isrn=%lu isrrj=%lu hook=%lu fire=%u",
+			   (long)encoder_get_position(ENC0),
+			   (long)enc0_virtual_origin_pcnt,
+			   (unsigned long)enc0_virtual_event_count,
+			   (long)enc0_virtual_last_boundary,
+			   (long)enc0_virtual_last_delta,
+			   (long)enc0_virtual_last_pcnt_compare_delta,
+			   (long)enc0_virtual_min_pcnt_compare_delta,
+			   (long)enc0_virtual_max_pcnt_compare_delta,
+			   (unsigned long)enc0_virtual_pcnt_compare_count,
+			   (unsigned long)enc0_virtual_pcnt_compare_reject_count,
+			   (long)enc0_virtual_last_isr_compare_delta,
+			   (long)enc0_virtual_min_isr_compare_delta,
+			   (long)enc0_virtual_max_isr_compare_delta,
+			   (unsigned long)enc0_virtual_isr_compare_count,
+			   (unsigned long)enc0_virtual_isr_compare_reject_count,
+			   (unsigned long)enc0_virtual_hook_count,
+			   (unsigned)ENC0_INDEX_VIRTUAL_FIRE_HOOK);
+#endif
+}
+#endif
+
 #if ENC0_INDEX_ISR_HUNT_ENABLE
 #ifndef ENC0_INDEX_ISR_RING_SIZE
 #define ENC0_INDEX_ISR_RING_SIZE 8
@@ -431,6 +650,19 @@ static uint32_t enc0_isr_hunt_far_count;
 static uint32_t enc0_isr_hunt_compare_count;
 static uint32_t enc0_isr_hunt_compare_reject_count;
 static uint32_t enc0_isr_hunt_last_status_ms;
+
+static bool enc0_index_hunt_isr_get_ref(int32_t *pcnt)
+{
+	if (!enc0_isr_hunt_have_ref)
+	{
+		return false;
+	}
+	if (pcnt)
+	{
+		*pcnt = enc0_isr_hunt_last_pcnt;
+	}
+	return true;
+}
 
 static void IRAM_ATTR enc0_index_hunt_gpio_isr(void *arg)
 {
@@ -1626,6 +1858,10 @@ static bool esp32_pcnt_encoder_dotasks(void *args)
 #if ENC0_INDEX_ISR_HUNT_ENABLE
 	enc0_index_hunt_isr_process();
 	enc0_index_hunt_isr_status();
+#endif
+#if ENC0_INDEX_VIRTUAL_MOD_ENABLE
+	enc0_index_hunt_virtual_mod();
+	enc0_index_hunt_virtual_status();
 #endif
 #if ENC0_INDEX_MODE == ENC0_INDEX_MODE_RMT_MARKER
 #if ENC0_RMT_ABZ_CAPTURE

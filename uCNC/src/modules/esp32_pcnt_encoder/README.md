@@ -277,8 +277,8 @@ The current test findings are:
   are useful to inspect signal activity, but they are not yet a unified absolute
   timestamp reconstruction.
 
-One more diagnostic can derive a virtual index from PCNT unit 0 modulo the
-configured encoder CPR:
+The current working index path derives a virtual index from PCNT unit 0 modulo
+the configured encoder CPR:
 
 ```c
 #define ENC0_INDEX_VIRTUAL_MOD_ENABLE 1
@@ -308,6 +308,9 @@ Debug line:
 This answers a different question from the physical index tests: "If the main
 PCNT0 quadrature count is truth, how stable is a modulo-derived index once its
 phase is named by the real index pulse?"
+
+For normal use, leave `ENC0_INDEX_HUNT_DEBUG` undefined. The diagnostics are
+kept in the module for future testing, but the working configuration is quiet.
 
 ## Notes
 

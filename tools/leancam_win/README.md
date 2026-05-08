@@ -21,15 +21,15 @@ mingw32-make
 * show typed draft input immediately in the active value cell and preview, before `Enter`/`End`
 * preserve an active field's negative sign while typing replacement digits, matching ESP32 draft entry behavior
 * show RA-style preview corner labels such as `Z1`, `D1`, `Z2`, and `D2`
-* insert new operations from the table view with the same style of number shortcuts: `0` tool, `1` OD, `2` ID, `3` FACE, `4` DRILL, `6` CUT
+* insert new operations from the table view with the same style of number shortcuts: `0` tool, `1` OD, `2` ID, `3` FACE, `4` DRILL, `6` CUT, `8` THR_OD, `9` THR_ID
 * create a starter program
 * open/save `.lcam`
 * generate G-code through the shared LeanCam converter
 * save generated `.nc` files, with optional Grbl filtering
-* draw stock, chuck length, cycle preview, and generated toolpath
+* draw stock, chuck length, cycle preview, OD/ID taper/chamfer/radius fields, and generated `G0`/`G1`/`G2`/`G3`/`G33` toolpath
 * stream generated G-code to a uCNC virtual COM port and animate from real uCNC status reports
 * stream Grbl-compatible sender output over COM when the `Grbl` checkbox is enabled
-* fall back to a local visual `G0`/`G1` runner when no uCNC COM bridge is connected
+* fall back to a local visual `G0`/`G1`/`G2`/`G3`/`G33` runner when no uCNC COM bridge is connected
 
 ## uCNC Virtual Core Run
 

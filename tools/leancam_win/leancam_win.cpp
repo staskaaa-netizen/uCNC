@@ -36,6 +36,7 @@ extern "C" {
 #define UCNC_TIMER      2
 #define RUN_TIMER_MS   24
 #define UCNC_TIMER_MS  40
+#define LC_WIN_PI      3.14159265358979323846
 
 static COLORREF ra565_color(unsigned short c)
 {
@@ -86,8 +87,10 @@ struct GMove {
     double x = NAN;
     double z = NAN;
     double feed = 0.0;
+    int gcodeLine = 0;
     bool rapid = false;
     bool motion = false;
+    std::string gcodeText;
 };
 
 struct SimRun {
@@ -114,6 +117,8 @@ struct UcncBridge {
     std::string rx;
     std::vector<std::string> txLines;
     size_t txIndex = 0;
+    size_t activeTxLine = 0;
+    std::string activeTxText;
     std::string state = "Disconnected";
 };
 
@@ -157,20 +162,20 @@ static const char *kStarter =
     "SETUP|L{100}|OD{50}|ID{0}|CLAMP{12}|EXTRA{5}|CLR{1}|MAT{ST45}|WOFF{G54}\r\n"
     "TOOL|T{1}|D{6}|S{800}|R_FEED{120}|FIN_FEED{60}|R_DOC{2.0}|FIN_DOC{0.5}\r\n"
     "FACE|D{50}|Z1{1}|Z{0}|DOC{1.0}|CLR{1}\r\n"
-    "OD|D1{50}|Z1{0}|Z2{-80}|D2{42}|CLR{1}\r\n"
+    "OD|D1{50}|Z1{0}|Z2{-80}|D2{42}|RND{0}|CHMF{0}|DT{42}|CLR{1}\r\n"
     "GROOVE|D1{42}|D2{34}|Z1{-30}|Z2{-36}|WIDTH{3}|CLR{1}\r\n";
 
 static const char *kCycleTemplates[] = {
     "TOOL|T{1}|D{6}|S{800}|R_FEED{120}|FIN_FEED{60}|R_DOC{2.0}|FIN_DOC{0.5}",
-    "OD|D1{50}|Z1{0}|Z2{-50}|D2{42}|CLR{1}",
-    "ID|D1{10}|Z1{0}|Z2{-50}|D2{20}|CLR{1}",
+    "OD|D1{50}|Z1{0}|Z2{-50}|D2{42}|RND{0}|CHMF{0}|DT{42}|CLR{1}",
+    "ID|D1{10}|Z1{0}|Z2{-50}|D2{20}|RND{0}|CHMF{0}|DT{20}|CLR{1}",
     "FACE|D{50}|Z1{1}|Z{0}|DOC{1.0}|CLR{1}",
     "DRILL|Z1{0}|DEPTH{-30}|PECK{0}|FEED{120}|S{800}",
     "TAP|Z1{0}|DEPTH{-20}|PITCH{1.0}|RPM{300}",
     "CUT|D{0}|Z{-50}|WIDTH{3}|DOC{1.0}|CLR{1}",
     "CHAMFER|D{42}|Z{-10}|SIZE{1.0}|CLR{1}",
-    "THREAD_OD|D{42}|Z2{-50}|PITCH{1.5}|THR_DEPTH{0.6}|Z1{0}|CLR{1}",
-    "THREAD_ID|D{20}|Z2{-50}|PITCH{1.5}|THR_DEPTH{0.6}|Z1{0}|CLR{1}",
+    "THR_OD|M{20}|P{1.5}|Z1{0}|Z2{-50}|DOC{0.3}|N{0}|ST{1}|CLR{1}",
+    "THR_ID|M{20}|P{1.5}|Z1{0}|Z2{-50}|DOC{0.3}|N{0}|ST{1}|CLR{1}",
 };
 
 static std::string get_text(HWND hwnd)
@@ -251,7 +256,8 @@ static bool is_cycle_line(const std::string &line)
 {
     std::string m = module_name(line);
     return m == "OD" || m == "ID" || m == "FACE" || m == "DRILL" ||
-           m == "CUT" || m == "PART" || m == "GROOVE";
+           m == "CUT" || m == "PART" || m == "GROOVE" ||
+           m == "THR_OD" || m == "THR_ID";
 }
 
 struct TableLine {
@@ -570,6 +576,8 @@ static void ucnc_close()
     g_ucnc.running = false;
     g_ucnc.waitingOk = false;
     g_ucnc.programDone = false;
+    g_ucnc.activeTxLine = 0;
+    g_ucnc.activeTxText.clear();
     g_ucnc.state = "Disconnected";
     KillTimer(g_main, UCNC_TIMER);
 }
@@ -636,6 +644,8 @@ static bool ucnc_connect(const std::string &portName)
     g_ucnc.running = false;
     g_ucnc.waitingOk = false;
     g_ucnc.programDone = false;
+    g_ucnc.activeTxLine = 0;
+    g_ucnc.activeTxText.clear();
     g_ucnc.rx.clear();
     g_ucnc.state = "Connected " + path;
     set_status(g_ucnc.state + " - real uCNC parser/planner mode");
@@ -712,9 +722,12 @@ static void parse_ucnc_status_line(const std::string &line)
 static void ucnc_send_next_line()
 {
     while (g_ucnc.running && !g_ucnc.waitingOk && g_ucnc.txIndex < g_ucnc.txLines.size()) {
-        std::string line = trim(g_ucnc.txLines[g_ucnc.txIndex++]);
+        size_t sourceIndex = g_ucnc.txIndex++;
+        std::string line = trim(g_ucnc.txLines[sourceIndex]);
         if (line.empty())
             continue;
+        g_ucnc.activeTxLine = sourceIndex + 1;
+        g_ucnc.activeTxText = line;
         line.push_back('\n');
         if (!ucnc_write_raw(line.c_str())) {
             g_error = "uCNC COM write failed";
@@ -832,13 +845,83 @@ static double word_value(const std::string &line, char word, bool &found)
     return 0.0;
 }
 
+static void push_linear_move(std::vector<GMove> &moves,
+                             double x,
+                             double z,
+                             double feed,
+                             bool rapid,
+                             int gcodeLine,
+                             const std::string &gcodeText)
+{
+    GMove m;
+    m.x = x;
+    m.z = z;
+    m.feed = feed;
+    m.gcodeLine = gcodeLine;
+    m.rapid = rapid;
+    m.motion = true;
+    m.gcodeText = gcodeText;
+    moves.push_back(m);
+}
+
+static void push_arc_moves(std::vector<GMove> &moves,
+                           double startX,
+                           double startZ,
+                           double endX,
+                           double endZ,
+                           double i,
+                           double k,
+                           double feed,
+                           bool clockwise,
+                           int gcodeLine,
+                           const std::string &gcodeText)
+{
+    double startR = startX * 0.5;
+    double endR = endX * 0.5;
+    double centerR = startR + i;
+    double centerZ = startZ + k;
+    double radius = std::hypot(startZ - centerZ, startR - centerR);
+    if (radius <= 0.0001) {
+        push_linear_move(moves, endX, endZ, feed, false, gcodeLine, gcodeText);
+        return;
+    }
+
+    double a0 = std::atan2(startR - centerR, startZ - centerZ);
+    double a1 = std::atan2(endR - centerR, endZ - centerZ);
+    double sweep = a1 - a0;
+
+    if (clockwise) {
+        while (sweep >= 0.0)
+            sweep -= 2.0 * LC_WIN_PI;
+    } else {
+        while (sweep <= 0.0)
+            sweep += 2.0 * LC_WIN_PI;
+    }
+
+    /* LeanCam uses small corner arcs; prefer the visible minor arc if the
+       controller direction normalization would otherwise draw the long way. */
+    if (std::fabs(sweep) > LC_WIN_PI)
+        sweep += clockwise ? 2.0 * LC_WIN_PI : -2.0 * LC_WIN_PI;
+
+    int segments = std::clamp((int)(std::fabs(sweep) * radius / 0.6) + 3, 6, 48);
+    for (int s = 1; s <= segments; ++s) {
+        double a = a0 + sweep * ((double)s / (double)segments);
+        double z = centerZ + std::cos(a) * radius;
+        double r = centerR + std::sin(a) * radius;
+        push_linear_move(moves, r * 2.0, z, feed, false, gcodeLine, gcodeText);
+    }
+}
+
 static std::vector<GMove> parse_gcode_moves(const std::string &gcode)
 {
     std::vector<GMove> moves;
     double curX = g_setup.od;
     double curZ = 5.0;
     double feed = 0.0;
-    for (std::string line : split_lines(gcode)) {
+    int lineNo = 0;
+    for (std::string rawLine : split_lines(gcode)) {
+        ++lineNo;
+        std::string line = rawLine;
         size_t comment = line.find('(');
         if (comment != std::string::npos)
             line = line.substr(0, comment);
@@ -846,23 +929,33 @@ static std::vector<GMove> parse_gcode_moves(const std::string &gcode)
         if (line.empty())
             continue;
 
-        bool hasG = false, hasX = false, hasZ = false, hasF = false;
+        bool hasG = false, hasX = false, hasZ = false, hasF = false, hasI = false, hasK = false;
         double g = word_value(line, 'G', hasG);
         double x = word_value(line, 'X', hasX);
         double z = word_value(line, 'Z', hasZ);
         double f = word_value(line, 'F', hasF);
+        double i = word_value(line, 'I', hasI);
+        double k = word_value(line, 'K', hasK);
         if (hasF)
             feed = f;
-        if (hasG && (std::fabs(g) < 0.01 || std::fabs(g - 1.0) < 0.01)) {
-            if (hasX) curX = x;
-            if (hasZ) curZ = z;
-            GMove m;
-            m.x = curX;
-            m.z = curZ;
-            m.feed = feed;
-            m.rapid = std::fabs(g) < 0.01;
-            m.motion = true;
-            moves.push_back(m);
+        if (!hasG)
+            continue;
+
+        if (std::fabs(g) < 0.01 || std::fabs(g - 1.0) < 0.01 || std::fabs(g - 33.0) < 0.01) {
+            double nextX = hasX ? x : curX;
+            double nextZ = hasZ ? z : curZ;
+            push_linear_move(moves, nextX, nextZ, feed, std::fabs(g) < 0.01, lineNo, trim(rawLine));
+            curX = nextX;
+            curZ = nextZ;
+        } else if (std::fabs(g - 2.0) < 0.01 || std::fabs(g - 3.0) < 0.01) {
+            double nextX = hasX ? x : curX;
+            double nextZ = hasZ ? z : curZ;
+            if (hasI && hasK)
+                push_arc_moves(moves, curX, curZ, nextX, nextZ, i, k, feed, std::fabs(g - 2.0) < 0.01, lineNo, trim(rawLine));
+            else
+                push_linear_move(moves, nextX, nextZ, feed, false, lineNo, trim(rawLine));
+            curX = nextX;
+            curZ = nextZ;
         }
     }
     return moves;
@@ -1106,7 +1199,7 @@ static void draw_program(HWND hwnd, HDC dc)
                   8,
                   helperY,
                   UI_WIN_TEXT,
-                  "0 tool | 1 OD | 2 ID | 3 FACE | 4 DRILL | 6 CUT/PART | 7/8/9 draft only");
+                  "0 tool | 1 OD | 2 ID | 3 FACE | 4 DRILL | 6 CUT/PART | 8 THR_OD | 9 THR_ID");
         draw_text(dc,
                   8,
                   helperY + 22,
@@ -1134,6 +1227,22 @@ static void draw_cycle_preview(HDC dc, const View &v, const std::string &line)
         field_num(f, "D2", "DIAMETER_2", d2) &&
         field_num(f, "Z1", "Z_1", z1) &&
         field_num(f, "Z2", "Z_2", z2)) {
+        double dt = d2;
+        double rnd = 0.0;
+        double chmf = 0.0;
+        bool hasDt = field_num(f, "DT", "D_TAPER", dt);
+        bool hasRnd = field_num(f, "RND", "ROUND", rnd) && rnd > 0.0;
+        bool hasChmf = field_num(f, "CHMF", "CHAMFER", chmf) && chmf > 0.0;
+        double amount = hasRnd ? rnd : (hasChmf ? chmf : 0.0);
+        double profileEndZ = z2;
+        double profileEndD = d2;
+
+        if (amount > 0.0) {
+            double dirD = (m == "OD") ? 1.0 : -1.0;
+            profileEndZ = z2 + amount;
+            profileEndD = d2 + dirD * amount * 2.0;
+        }
+
         int x1 = z_px(v, z1);
         int x2 = z_px(v, z2);
         int y1 = d_py(v, d1);
@@ -1146,13 +1255,37 @@ static void draw_cycle_preview(HDC dc, const View &v, const std::string &line)
         draw_dz_corner_labels(dc,
                               v,
                               x1,
-                              y1,
+                              d_py(v, hasDt ? dt : d1),
                               fmt_label("Z1", z1),
-                              fmt_label("D1", d1),
+                              hasDt ? fmt_label("DT", dt) : fmt_label("D1", d1),
                               x2,
                               y2,
                               fmt_label("Z2", z2),
                               fmt_label("D2", d2));
+
+        HPEN profilePen = CreatePen(PS_SOLID, 3, SIM_WIN_TOOL);
+        HPEN oldProfilePen = (HPEN)SelectObject(dc, profilePen);
+        MoveToEx(dc, z_px(v, z1), d_py(v, hasDt ? dt : d1), nullptr);
+        LineTo(dc, z_px(v, profileEndZ), d_py(v, profileEndD));
+        if (hasChmf) {
+            LineTo(dc, z_px(v, z2), d_py(v, d2));
+        } else if (hasRnd) {
+            POINT pts[13];
+            for (int i = 0; i < 13; ++i) {
+                double t = (double)i / 12.0;
+                double eased = 1.0 - std::sqrt(std::max(0.0, 1.0 - t * t));
+                double zz = profileEndZ + (z2 - profileEndZ) * t;
+                double dd = profileEndD + (d2 - profileEndD) * eased;
+                pts[i].x = z_px(v, zz);
+                pts[i].y = d_py(v, dd);
+            }
+            Polyline(dc, pts, 13);
+        }
+        SelectObject(dc, oldProfilePen);
+        DeleteObject(profilePen);
+
+        if (hasRnd || hasChmf)
+            draw_corner_label(dc, v, x2, y2, fmt_label(hasRnd ? "RND" : "CHMF", amount), 6, -18);
     } else if (m == "FACE" && field_num(f, "Z", "Z_2", z)) {
         field_num(f, "D", "OD", d);
         field_num(f, "Z1", "Z_1", z1);
@@ -1210,6 +1343,33 @@ static void draw_cycle_preview(HDC dc, const View &v, const std::string &line)
 static std::string first_preview_cycle()
 {
     return current_preview_line();
+}
+
+static std::string active_run_line_text()
+{
+    char buf[256];
+
+    if (g_run.realUcnc && !g_ucnc.activeTxText.empty()) {
+        std::snprintf(buf,
+                      sizeof(buf),
+                      "Sending %u/%u: %s",
+                      (unsigned)g_ucnc.activeTxLine,
+                      (unsigned)g_ucnc.txLines.size(),
+                      g_ucnc.activeTxText.c_str());
+        return buf;
+    }
+
+    if ((g_run.running || g_run.paused) && g_run.index < g_run.moves.size()) {
+        const GMove &m = g_run.moves[g_run.index];
+        std::snprintf(buf,
+                      sizeof(buf),
+                      "Running G-code line %d: %s",
+                      m.gcodeLine,
+                      m.gcodeText.c_str());
+        return buf;
+    }
+
+    return "";
 }
 
 static void draw_canvas(HWND hwnd, HDC dc)
@@ -1278,8 +1438,11 @@ static void draw_canvas(HWND hwnd, HDC dc)
               g_run.realUcnc ? "Preview and real uCNC virtual-core run" : "Preview and local visual fallback run");
     if (g_ucnc.connected)
         draw_text(dc, rc.left + 12, rc.top + 30, SIM_WIN_DIM, "uCNC: %s", g_ucnc.state.c_str());
+    std::string activeLine = active_run_line_text();
+    if (!activeLine.empty())
+        draw_text(dc, rc.left + 12, rc.top + 48, UI_WIN_WARN, "%s", activeLine.c_str());
     if (!g_error.empty())
-        draw_text(dc, rc.left + 12, rc.top + 48, UI_WIN_WARN, "%s", g_error.c_str());
+        draw_text(dc, rc.left + 12, rc.top + (activeLine.empty() ? 48 : 66), UI_WIN_WARN, "%s", g_error.c_str());
 }
 
 static void start_run()
@@ -1300,6 +1463,8 @@ static void start_run()
 
         g_ucnc.txLines = split_lines(sender_gcode());
         g_ucnc.txIndex = 0;
+        g_ucnc.activeTxLine = 0;
+        g_ucnc.activeTxText.clear();
         g_ucnc.waitingOk = false;
         g_ucnc.programDone = false;
         g_ucnc.running = true;
@@ -1325,7 +1490,7 @@ static void start_run()
     g_run.running = !g_run.moves.empty();
     g_run.paused = false;
     SetTimer(g_main, RUN_TIMER, RUN_TIMER_MS, nullptr);
-    set_status(g_run.running ? "Running local visual fallback - not real uCNC core" : "No G0/G1 moves to run");
+    set_status(g_run.running ? "Running local visual fallback - not real uCNC core" : "No G0/G1/G2/G3/G33 moves to run");
     InvalidateRect(g_canvas, nullptr, FALSE);
 }
 

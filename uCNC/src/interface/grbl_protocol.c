@@ -521,6 +521,28 @@ void proto_status(void)
 	proto_itoa(spindle);
 #endif
 
+#if ENCODERS > 0
+    int32_t enc_index_last = 0;
+    int32_t enc_index_min = 0;
+    int32_t enc_index_max = 0;
+    int32_t enc_index_live = 0;
+    uint32_t enc_index_count = 0;
+
+    proto_printf("|EC:%ld", encoder_get_position(0));
+    if (encoder_get_index_live_delta(0, &enc_index_live))
+    {
+        proto_printf("|ECB:%ld", (long)enc_index_live);
+    }
+    if (encoder_get_index_stats(0, &enc_index_last, &enc_index_min, &enc_index_max, &enc_index_count))
+    {
+        proto_printf("|ECI:%ld,%ld,%ld,%lu",
+                     (long)enc_index_last,
+                     (long)enc_index_min,
+                     (long)enc_index_max,
+                     (unsigned long)enc_index_count);
+    }
+#endif
+
 #ifdef GCODE_PROCESS_LINE_NUMBERS
 	proto_print(MSG_STATUS_LINE);
 	proto_itoa(itp_get_rt_line_number());

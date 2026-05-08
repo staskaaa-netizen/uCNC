@@ -338,12 +338,12 @@ extern "C"
 	/**
 	 * Enables RS274NGC expression parsing
 	 * **/
-// #define ENABLE_RS274NGC_EXPRESSIONS
+#define ENABLE_RS274NGC_EXPRESSIONS
 #ifdef ENABLE_RS274NGC_EXPRESSIONS
 	// Uncomment to enable named parameters
 #define ENABLE_NAMED_PARAMETERS
 // Uncomment to enable O codes
-#define ENABLE_O_CODES
+//#define ENABLE_O_CODES
 /**
  * uncomment this to allow commands results to be printed to the stream that called the O code
  * usually senders expect to receive and ok or error as response to a single code line
@@ -382,7 +382,7 @@ extern "C"
 	/**
 	 * Enable hooks that run on the step generation ISR and allow to modify the steps mask and direction in realtime (needed for some Gcode extensions like G33)
 	 * */
-	//  #define ENABLE_RT_SYNC_MOTIONS
+	  #define ENABLE_RT_SYNC_MOTIONS
 
 	/**
 	 * enable motion control and planner highjacking
@@ -395,7 +395,7 @@ extern "C"
 	 * Uncomment to enable module extensions
 	 * */
 	#define ENABLE_MAIN_LOOP_MODULES
-	// #define ENABLE_IO_MODULES
+	#define ENABLE_IO_MODULES
 	#define ENABLE_PARSER_MODULES
 	//#define ENABLE_MOTION_CONTROL_MODULES
 	// #define ENABLE_PLANNER_MODULES

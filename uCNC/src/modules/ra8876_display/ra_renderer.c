@@ -277,7 +277,32 @@ static void ui_draw_top_status(const ui_snapshot_frame_t *frame)
 
 static void ui_draw_runtime_status(const ui_snapshot_frame_t *frame)
 {
-    (void)frame;
+    static uint32_t last_seq = 0;
+    static char last_debug[UI_SNAPSHOT_ENCODER_DEBUG_LEN] = {0};
+
+    if (!frame)
+        return;
+
+    if (!frame->encoder_debug[0])
+    {
+        if (last_debug[0])
+        {
+            last_debug[0] = '\0';
+            last_seq = 0;
+            ra_fill_rect(0, UI_TOP_BAR_H, UI_SCREEN_W - 1, UI_TOP_BAR_H + 17, UI_COL_BG);
+        }
+        return;
+    }
+
+    if (last_seq == frame->encoder_debug_seq && strcmp(last_debug, frame->encoder_debug) == 0)
+        return;
+
+    last_seq = frame->encoder_debug_seq;
+    ui_snapshot_strcpy(last_debug, frame->encoder_debug, sizeof(last_debug));
+
+    ra_set_font_size(RA_FONT_SMALL);
+    ra_fill_rect(0, UI_TOP_BAR_H, UI_SCREEN_W - 1, UI_TOP_BAR_H + 17, UI_COL_BG);
+    ra_text(8, UI_TOP_BAR_H + 2, UI_COL_WARN, UI_COL_BG, last_debug);
 }
 
 static int ui_lc_cols_for_y(int y)
@@ -470,7 +495,9 @@ static void ra_renderer_draw_frame(const ui_snapshot_frame_t *frame)
         return;
 
     live_run_state = cnc_get_exec_state(EXEC_RUN) ||
-                     (live_sim_visible && cnc_get_exec_state(EXEC_HOLD));
+                     (live_sim_visible && cnc_get_exec_state(EXEC_HOLD)) ||
+                     frame->motion_active ||
+                     leancam_sim_live_should_hold(frame);
 
     if (frame->leancam_active && live_run_state)
     {
@@ -533,7 +560,7 @@ static void ra_renderer_task(void *arg)
     uint32_t now;
 
     (void)arg;
-     vTaskDelay(2000);
+     vTaskDelay(200);
     ra_renderer_hw_init();
     /* Core0 renderer init only. LeanCam/keypad live on core1 snapshot builder. */
 
@@ -547,7 +574,7 @@ static void ra_renderer_task(void *arg)
             ra_renderer_poll();
         }
 
-        vTaskDelay(50);
+        vTaskDelay(20);
     }
 }
 #endif

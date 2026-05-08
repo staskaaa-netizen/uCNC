@@ -80,6 +80,8 @@ extern "C"
 	bool fs_rmdir(const char *path);
 	bool fs_next_file(fs_file_t *fp, fs_file_info_t *finfo);
 	bool fs_finfo(const char *path, fs_file_info_t *finfo);
+	void fs_file_run(char *params);
+	bool fs_file_run_active(void);
 
 	static __attribute__((unused)) void fs_safe_free(void* fp){
 		if(fp){

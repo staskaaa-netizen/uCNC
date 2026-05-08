@@ -1886,7 +1886,10 @@ static uint8_t parser_exec_command(parser_state_t *new_state, parser_words_t *wo
 			}
 			else
 			{
-				// target points
+				
+				
+
+
 				x = target[a] - parser_last_pos[a];
 				y = target[b] - parser_last_pos[b];
 				float center_offset_a = words->ijk[offset_a];
@@ -2851,12 +2854,14 @@ void parser_reset(bool fullreset)
 
 	parser_state.groups.stopping = 0;					  // resets all stopping commands (M0,M1,M2,M30,M60)
 	parser_state.groups.coord_system = G54;				  // G54
-	parser_state.groups.plane = G17;					  // G17
+	parser_state.groups.plane = G18;					  // G18
 	parser_state.groups.feed_speed_override = M48;		  // M48
 	parser_state.groups.cutter_radius_compensation = G40; // G40
 	parser_state.groups.distance_mode = G90;			  // G90
 	parser_state.groups.feedrate_mode = G94;			  // G94
 	parser_state.groups.tlo_mode = G49;					  // G49
+	//parser_state.groups.cutter_radius_compensation = G41; 
+
 #if TOOL_COUNT > 0
 	parser_state.groups.coolant = M9;		  // M9
 	parser_state.groups.spindle_turning = M5; // M5

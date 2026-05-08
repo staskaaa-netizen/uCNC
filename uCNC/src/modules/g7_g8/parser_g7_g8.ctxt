@@ -16,7 +16,7 @@
 	See the	GNU General Public License for more details.
 */
 
-#include "parser_g7_g8.h"
+#include "../../cnc.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <float.h>
@@ -27,41 +27,25 @@
 #error "This module is not compatible with the current version of µCNC"
 #endif
 
-static uint8_t parser_lathe_diameter_mode;
+static uint8_t parser_lathe_radius_mode;
 
-#define LATHE_DIAMETER_MODE 1
-#define LATHE_RADIUS_MODE 0
+// this ID must be unique for each code
+#define G7 1
+#define G8 0
 
 bool g7_g8_parse(void *args);
-bool g7_g8_exec_modifier(void *args);
+bool g7_g8_before_motion(void *args);
+bool g7_g8_after_motion(void *args);
+bool g7_g8_reset(void *args);
+bool g7_g8_reset(void *args);
 bool g7_g8_reset(void *args);
 bool g7_g8_send_gcode_modes(void *args);
 
 CREATE_EVENT_LISTENER(gcode_parse, g7_g8_parse);
-CREATE_EVENT_LISTENER(gcode_exec_modifier, g7_g8_exec_modifier);
+CREATE_EVENT_LISTENER(gcode_before_motion, g7_g8_before_motion);
+CREATE_EVENT_LISTENER(gcode_after_motion, g7_g8_after_motion);
 CREATE_EVENT_LISTENER(parser_reset, g7_g8_reset);
 CREATE_EVENT_LISTENER(protocol_send_gcode_modes, g7_g8_send_gcode_modes);
-
-bool g7_g8_is_diameter_mode(void)
-{
-	return parser_lathe_diameter_mode != 0;
-}
-
-void g7_g8_program_words_to_motion(const parser_cmd_explicit_t *cmd, parser_words_t *words)
-{
-	if (g7_g8_is_diameter_mode() && cmd && words && CHECKFLAG(cmd->words, GCODE_WORD_X))
-	{
-		words->xyzabc[AXIS_X] = fast_flt_div2(words->xyzabc[AXIS_X]);
-	}
-}
-
-void g7_g8_motion_words_to_program(const parser_cmd_explicit_t *cmd, parser_words_t *words)
-{
-	if (g7_g8_is_diameter_mode() && cmd && words && CHECKFLAG(cmd->words, GCODE_WORD_X))
-	{
-		words->xyzabc[AXIS_X] = fast_flt_mul2(words->xyzabc[AXIS_X]);
-	}
-}
 
 // this just parses and accepts the code
 bool g7_g8_parse(void *args)
@@ -74,11 +58,12 @@ bool g7_g8_parse(void *args)
 
 		switch (ptr->code)
 		{
-		case 7:
-			parser_lathe_diameter_mode = LATHE_DIAMETER_MODE;
+		case G7:
+			parser_lathe_radius_mode = G7;
 			break;
-		case 8:
-			parser_lathe_diameter_mode = LATHE_RADIUS_MODE;
+		case G8:
+			/* code */
+			parser_lathe_radius_mode = G8;
 			break;
 		default:
 			// not able to catch this G code
@@ -98,12 +83,35 @@ bool g7_g8_parse(void *args)
 	return EVENT_CONTINUE;
 }
 
-// modifies parser words before core target calculation
-bool g7_g8_exec_modifier(void *args)
+// modifies motion block
+bool g7_g8_before_motion(void *args)
 {
 	gcode_exec_args_t *ptr = (gcode_exec_args_t *)args;
 
-	g7_g8_program_words_to_motion(ptr->cmd, ptr->words);
+	// G7 diameter mode: programmed X is diameter, internal machine X is radius.
+	// G8 radius mode: programmed X is already radius, leave it unchanged.
+	// Do NOT scale I/J/K arc offsets here. For lathe G18, I is a real
+	// radius-axis offset and K is Z offset. Only the X endpoint/target is
+	// diameter-coded in G8.
+	if (parser_lathe_radius_mode == G7)
+	{
+		ptr->target[AXIS_X] = fast_flt_div2(ptr->target[AXIS_X]);
+	}
+
+	*(ptr->error) = STATUS_OK;
+	return EVENT_CONTINUE;
+}
+
+// modifies motion block
+bool g7_g8_after_motion(void *args)
+{
+	gcode_exec_args_t *ptr = (gcode_exec_args_t *)args;
+
+	// Restore reported/visible target back to programmed diameter in G8.
+	if (parser_lathe_radius_mode == G8)
+	{
+		ptr->target[AXIS_X] = fast_flt_mul2(ptr->target[AXIS_X]);
+	}
 
 	*(ptr->error) = STATUS_OK;
 	return EVENT_CONTINUE;
@@ -111,20 +119,20 @@ bool g7_g8_exec_modifier(void *args)
 
 bool g7_g8_reset(void *args)
 {
-	parser_lathe_diameter_mode = LATHE_DIAMETER_MODE; // default
+	parser_lathe_radius_mode = G7; // default
 	return EVENT_CONTINUE;
 }
 
 bool g7_g8_send_gcode_modes(void *args)
 {
 	serial_putc('G');
-	if (parser_lathe_diameter_mode)
+	if (parser_lathe_radius_mode)
 	{
-		serial_putc('7');
+		serial_putc('8');
 	}
 	else
 	{
-		serial_putc('8');
+		serial_putc('7');
 	}
 	serial_putc(' ');
 	return EVENT_CONTINUE;
@@ -136,7 +144,8 @@ DECL_MODULE(g7_g8)
 {
 #ifdef ENABLE_PARSER_MODULES
 	ADD_EVENT_LISTENER(gcode_parse, g7_g8_parse);
-	ADD_EVENT_LISTENER(gcode_exec_modifier, g7_g8_exec_modifier);
+	ADD_EVENT_LISTENER(gcode_before_motion, g7_g8_before_motion);
+	ADD_EVENT_LISTENER(gcode_after_motion, g7_g8_after_motion);
 	ADD_EVENT_LISTENER(parser_reset, g7_g8_reset);
 	ADD_EVENT_LISTENER(protocol_send_gcode_modes, g7_g8_send_gcode_modes);
 #else

@@ -36,6 +36,7 @@ Example:
 
 * Diameter mode
 * `X = diameter`
+* `CLR`/safe X moves are emitted as diameter-mode X words under `G7`; the generator adds the clearance to the X diameter and does not double it as a radius value.
 
 ---
 
@@ -100,10 +101,87 @@ D1{(SETUP.OD)}
 ## 6. Cycle Set (Initial)
 
 * OD turn
+* ID bore
 * Face
 * Groove
 * Drill
-* Bore
+* Cut / part
+* Thread OD / ID
+
+---
+
+## 6.1 OD / ID Shape Extension
+
+OD and ID should stay as the main manual-lathe workhorse cycles. The normal
+minimum fields remain:
+
+```
+OD|D1{}|Z1{}|Z2{}|D2{}|CLR{}
+ID|D1{}|Z1{}|Z2{}|D2{}|CLR{}
+```
+
+Shape fields:
+
+* `DT` - taper/profile diameter at `Z1`, the start of the cut
+* `RND` - rounded corner radius
+* `CHMF` - chamfer size
+
+`DT` is optional. Without it, the cycle behaves as today: rough from stock
+diameter `D1` to final diameter `D2`. With `DT`, the finished profile becomes a
+line from `DT` at `Z1` to `D2` at `Z2`.
+
+Examples:
+
+```
+OD|D1{40}|DT{38}|Z1{0}|Z2{-50}|D2{30}|CLR{1}
+ID|D1{12}|DT{14}|Z1{0}|Z2{-40}|D2{22}|CLR{1}
+```
+
+Corner treatment is optional and belongs to the end of the profile unless a
+later UI need proves otherwise.
+
+Preferred stored format:
+
+```
+OD|D1{40}|DT{38}|Z1{0}|Z2{-50}|D2{30}|RND{3}|CLR{1}
+OD|D1{40}|DT{38}|Z1{0}|Z2{-50}|D2{30}|CHMF{3}|CLR{1}
+```
+
+`RND` and `CHMF` are mutually exclusive. This is easier to validate, easier to
+preview, and safer for the small embedded parser than a packed text field.
+
+Possible UI shorthand, not preferred as the saved format:
+
+```
+CRN{R3}  -> saved as RND{3}
+CRN{C3}  -> saved as CHMF{3}
+```
+
+This single extension covers the common shop-floor cases: straight turn,
+taper, shoulder radius, shoulder chamfer, and simple tapered profiles without
+adding separate one-off cycles.
+
+---
+
+## 6.2 Threading Cycles
+
+LeanCam supports compact outside and inside metric threading cycles:
+
+```
+THR_OD|M{}|P{}|Z1{(0)}|Z2{(-50)}|DOC{(TOOL.R_DOC)}|N{(0)}|ST{(1)}|CLR{(SETUP.CLR)}
+THR_ID|M{}|P{}|Z1{(0)}|Z2{(-50)}|DOC{(TOOL.R_DOC)}|N{(0)}|ST{(1)}|CLR{(SETUP.CLR)}
+```
+
+`M` and `P` describe the thread directly, for example `M20x1.5` becomes
+`M{20}|P{1.5}`. The converter calculates the ordinary 60 degree thread
+diameters automatically: OD cuts from nominal diameter toward the minor
+diameter, while ID starts from the bore/minor diameter and cuts toward nominal.
+
+`N{0}` uses automatic pass count from `DOC`. A positive `N` forces the exact
+pass count. `ST{1}` uses degressive pass depth; `ST{0}` uses linear pass depth.
+The output is plain multi-pass `G33`, so it follows the spindle encoder and G33
+synchronization layer instead of relying on an unsupported canned threading
+cycle.
 
 ---
 
@@ -238,10 +316,21 @@ This is deferred until the small-program workflow is stable.
 
 ### RA8876 live run simulation
 
-The RA8876 renderer now has two separate LeanCam visual modes:
+The RA8876 renderer has two separate LeanCam visual modes:
 
 * edit mode preview: compact right-side stock/cycle preview from `.lcam` lines
 * live run view: full-screen material-removal view driven by runtime X/Z position
+
+Edit mode preview:
+
+* the selected or draft cycle is previewed against the latest setup/tool context above it
+* cycle lines are rendered as a two-row field/value table where possible
+* in draft mode the active field value is highlighted in the table and matching preview callouts; field labels stay unhighlighted
+* labels are kept inside the preview bounds, including the stock length/OD and chuck labels near the lower edge
+* turning previews group labels into start, DT, and end callouts tied to the cycle geometry
+* RND/CHMF is the top line of the end callout, above Z2/D2, so it does not cover the chamfer/radius geometry
+* thread previews show Z1, Z2, pitch, thread diameter, and ELS reserve lane markers
+* ELS reserve lanes are read-only information calculated from current controller settings; they are not `.lcam` fields
 
 How to use:
 
@@ -260,6 +349,7 @@ Live run behavior:
 * removed material is clipped to the stock rectangle
 * the moving cutter marker is allowed to move outside the stock so approach and clearance are visible
 * live stock is placed from the left side of the screen with about 50 px padding
+* thread live view uses a thread-shaped marker and only removes material on pitch/phase-aligned Z positions
 
 Live run DRO overlay:
 
@@ -281,6 +371,7 @@ Important implementation lessons found on hardware:
 * runtime X from the machine snapshot is radius-side data for this view, so it is converted to diameter before mapping
 * coordinate helpers that clamp to stock are good for removal, but the moving cutter needs unclamped live mapping
 * removal needs slight rear-edge bias to avoid leftover pixels from integer rounding, but the front/cutting edge should stay exact
+* preview text near the lower stock/chuck area must be clamped to the RA8876 preview window before BTE/page composition, or labels can appear outside their intended region
 
 ### Live run simulation notes
 
@@ -392,8 +483,8 @@ D → edit (later)
 5 TAP
 6 CUT
 7 CHAMFER
-8 THREAD OD
-9 THREAD ID
+8 THR_OD
+9 THR_ID
 ## DRAFT MODE
 0–9 → input
 D → accept field

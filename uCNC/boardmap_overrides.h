@@ -53,21 +53,23 @@ extern "C"
 #define LIMIT_Y_BIT 32
 #define LIMIT_Z_BIT 22
 
-/*#define DIN4_BIT 34
+#define DIN4_BIT 34
 #define DIN4_ISR
-#define DIN5_BIT 35
-#define DIN5_ISR*/
+#define DIN5_BIT 2
+
 
 
 #define I2C_CLK_BIT 14
 #define I2C_DATA_BIT 12
-#define PROBE_BIT 2
-#define PROBE_PULLUP
-#define ESTOP_BIT 13
-#define ESTOP_PULLUP
-#define FHOLD_BIT 36
+//#define PROBE_BIT 2
+//#define PROBE_PULLUP
+/*#define ESTOP_BIT 13
+#define ESTOP_PULLUP*/
 
-#define CS_RES_BIT 34
+/*#define FHOLD_BIT 36 //red (black connector)
+#define FHOLD_ISR
+#define CS_RES_BIT 39 //green (white connector)
+#define CS_RES_ISR*/
 
 
 /*#define DIN16_BIT 13
@@ -77,6 +79,10 @@ extern "C"
 #define DIN18_BIT 14
 #define DIN18_PULLUP*/
 
+//#define ENABLE_ENCODER_MODULE
+
+
+
 #define TX_BIT 1
 #define RX_BIT 3
 #define SPI_CLK_BIT 18
@@ -85,9 +91,9 @@ extern "C"
 #define SPI_CS_BIT 5
 
 #define SPI2_CLK_BIT 21
-#define SPI2_SDI_BIT 15
+#define SPI2_SDI_BIT 13  //15
 #define SPI2_SDO_BIT 16
-#define SPI2_CS_BIT 17
+#define SPI2_CS_BIT 0 //17
 #define IC74HC595_CUSTOM_SHIFT_IO
 //Custom configurations
 #define RX_PULLUP 
@@ -95,7 +101,7 @@ extern "C"
 #define IC74HC595_I2S_CLK 25
 #define IC74HC595_I2S_DATA 27
 #define IC74HC595_COUNT 4
-#define SPI2_FREQ  6000000UL
+#define SPI2_FREQ  25000000UL
 
 #define DEFAULT_CONTROL_INV_MASK 12
 

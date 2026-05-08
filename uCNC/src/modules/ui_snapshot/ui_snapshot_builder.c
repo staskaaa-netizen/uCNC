@@ -16,6 +16,8 @@
 #include "ui_snapshot.h"
 #include "../cam_keyboard/cam_keyboard.h"
 #include "../cam_keyboard/ui_input_keypad.h"
+#include "../encoder.h"
+#include "../file_system.h"
 #include "../leanCam/leancam_bridge.h"
 
 
@@ -35,6 +37,27 @@ SemaphoreHandle_t g_ui_snapshot_mutex = NULL;
 #endif
 
 static char g_ui_popup_text[UI_SNAPSHOT_POPUP_LEN] = {0};
+
+bool __attribute__((weak)) encoder_get_index_debug_line(uint8_t i, char *line, uint32_t line_len, uint32_t *seq)
+{
+    (void)i;
+    (void)line;
+    (void)line_len;
+    (void)seq;
+    return false;
+}
+
+bool __attribute__((weak)) g33_els_is_active(void)
+{
+    return false;
+}
+
+bool __attribute__((weak)) g33_els_get_sync(int32_t *start_ec, uint32_t *cpr)
+{
+    (void)start_ec;
+    (void)cpr;
+    return false;
+}
 
 static uint8_t ui_builder_detect_screen_kind_simple(void)
 {
@@ -77,6 +100,13 @@ static void ui_builder_fill_runtime(ui_snapshot_frame_t *f)
 {
     int32_t steppos[STEPPER_COUNT] = {0};
     float axis[MAX(AXIS_COUNT, 3)] = {0};
+#ifdef G33_ENCODER
+    int32_t phase_delta = 0;
+    int32_t sync_ec = 0;
+    int32_t ec = 0;
+    uint32_t cpr = 0;
+    uint32_t sync_cpr = 0;
+#endif
 
     if (!f)
         return;
@@ -94,6 +124,31 @@ static void ui_builder_fill_runtime(ui_snapshot_frame_t *f)
     f->feed_valid = true;
     f->spindle = tool_get_speed();
     f->spindle_valid = true;
+    f->motion_active = !itp_is_empty() || !planner_buffer_is_empty() || fs_file_run_active();
+
+    f->g33_active = g33_els_is_active();
+#ifdef G33_ENCODER
+    cpr = (uint32_t)g_settings.encoders_resolution[G33_ENCODER];
+    ec = encoder_get_position(G33_ENCODER);
+    f->spindle_ec = ec;
+    f->spindle_ec_valid = true;
+    if (cpr > 0 && encoder_get_index_live_delta(G33_ENCODER, &phase_delta))
+    {
+        int32_t phase = phase_delta % (int32_t)cpr;
+        if (phase < 0)
+            phase += (int32_t)cpr;
+        f->spindle_phase = (uint32_t)phase;
+        f->spindle_cpr = cpr;
+        f->spindle_phase_valid = true;
+    }
+    if (g33_els_get_sync(&sync_ec, &sync_cpr))
+    {
+        f->g33_sync_ec = sync_ec;
+        f->g33_sync_valid = true;
+        if (!f->spindle_cpr && sync_cpr)
+            f->spindle_cpr = sync_cpr;
+    }
+#endif
 }
 
 static void ui_builder_poll_cam_keyboard(void)
@@ -139,6 +194,7 @@ void ui_snapshot_build_live(void)
     ui_builder_fill_header_footer(&f);
     ui_builder_fill_runtime(&f);
     leancam_bridge_fill_snapshot(&f);
+    encoder_get_index_debug_line(ENC0, f.encoder_debug, sizeof(f.encoder_debug), &f.encoder_debug_seq);
 
     raw = cam_keyboard_raw();
     keych = cam_keyboard_key_char();
@@ -170,6 +226,7 @@ static bool ui_snapshot_builder_update(void *args)
     last_ms = now;
 
     ui_builder_poll_cam_keyboard();
+    leancam_bridge_tick();
     ui_snapshot_build_live();
 
     return EVENT_CONTINUE;

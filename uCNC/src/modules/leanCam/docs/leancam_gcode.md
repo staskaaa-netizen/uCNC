@@ -15,6 +15,8 @@ The active converter supports:
 * `CUT`
 * `PART`
 * `GROOVE`
+* `THR_OD`
+* `THR_ID`
 
 Unsupported modules must fail clearly instead of emitting placeholder machining moves.
 
@@ -24,7 +26,9 @@ Unsupported modules must fail clearly instead of emitting placeholder machining 
 * Negative `Z` moves into stock.
 * Positive `Z` moves away from stock.
 * `X` values are emitted as diameters.
-* The converter emits `G8` so the local G7/G8 parser keeps X in diameter mode.
+* The converter emits `G7` so the local G7/G8 parser keeps X in diameter mode.
+* Safe/retract X words are also diameter-mode X words. `CLR` is added to the emitted X diameter value; it is not doubled again as a radius clearance.
+* Arc center offsets such as `I` stay in machine radius-space.
 
 ## Context
 
@@ -42,7 +46,8 @@ The single-line/run-now path emits a complete wrapper around one cycle:
 ```gcode
 G21
 G90
-G8
+G18
+G7
 S800 M3
 ```
 
@@ -75,6 +80,9 @@ Required fields:
 
 Optional:
 
+* `DT`, `D_TAPER`, or `TAPER_DIAMETER`
+* `RND`, `ROUND`, or `RADIUS`
+* `CHMF`, `CHAMFER`, or `C`
 * `CLR`, `CLEAR`, or `TOOL_CLEARANCE`
 * tool/feed/DOC overrides
 
@@ -83,8 +91,15 @@ Validation:
 * `D1 > 0`
 * `D2 > 0`
 * `D2 <= D1`
+* `DT <= D1` when present
 * `Z2 <= Z1`
 * `CLR >= 0`
+* `RND` and `CHMF` are mutually exclusive
+* corner amount must fit inside the Z span and the available diameter range
+
+Without `DT`, OD finishes as a straight profile at `D2`. With `DT`, the finish profile runs from `DT` at `Z1` to `D2` at `Z2`, or to the corner tangent point when `RND`/`CHMF` is used. `RND` emits a quarter-radius corner at the end of the profile; `CHMF` emits a straight chamfer.
+
+OD cornered rough passes use a pass-local retract diameter. After a chamfer/radius, the generator does not rapid X inward to the global safe diameter; it retracts to the current pass envelope plus clearance, then returns Z.
 
 ### `ID`
 
@@ -95,12 +110,28 @@ Required fields:
 * `Z2` or `Z_2`
 * `D2` or `DIAMETER_2`
 
+Optional:
+
+* `DT`, `D_TAPER`, or `TAPER_DIAMETER`
+* `RND`, `ROUND`, or `RADIUS`
+* `CHMF`, `CHAMFER`, or `C`
+* `CLR`, `CLEAR`, or `TOOL_CLEARANCE`
+
 Validation:
 
 * `D1 > 0`
 * `D2 >= D1`
+* `DT >= D1` when present
 * `Z2 <= Z1`
 * `CLR >= 0`
+* `RND` and `CHMF` are mutually exclusive
+* corner amount must fit inside the Z span and the available diameter range
+
+Without `DT`, ID finishes as a straight profile at `D2`. With `DT`, the finish profile runs from `DT` at `Z1` to `D2` at `Z2`, or to the corner tangent point when `RND`/`CHMF` is used.
+
+Tool `R_DOC` and `FIN_DOC` values are treated as magnitudes, matching the original conversational reference: negative entries are made positive before rough/finish pass planning.
+
+Straight ID passes feed X back inward before returning Z, matching the original conversational reference. ID `RND`/`CHMF` passes leave the corner in Z first, then move X after the tool is out of the corner zone.
 
 ### `FACE`
 
@@ -185,6 +216,32 @@ Validation:
 * `WIDTH >= 0`
 * `CLR >= 0`
 
+### `THR_OD` / `THR_ID`
+
+Threading emits multi-pass `G33` moves for a metric 60 degree thread. The compact form is preferred:
+
+```text
+THR_OD|M{20}|P{1.5}|Z1{0}|Z2{-20}|DOC{0.3}|N{0}|ST{1}|CLR{1}
+THR_ID|M{20}|P{1.5}|Z1{0}|Z2{-20}|DOC{0.3}|N{0}|ST{1}|CLR{1}
+```
+
+Fields:
+
+* `M` - nominal metric diameter, for example `20` in `M20x1.5`
+* `P` or `PITCH` - thread pitch, also used as the `G33 K` value
+* `Z1` / `Z2` - start and end Z
+* `DOC` - rough depth per pass when `N` is zero
+* `N` - pass count; `0` means auto-calculate from `DOC`
+* `ST` - pass strategy; `1` is degressive, `0` is linear
+* `CLR` - X clearance diameter
+
+Auto diameter rules:
+
+* `THR_OD` starts from `M` and cuts to `M - 1.22687 * P`
+* `THR_ID` starts from bore diameter `M - 1.08253 * P` and cuts to `M`
+
+Manual overrides are still accepted for special cases: `D`, `D1`, `D2`, `THR_DEPTH`, `TAPER`, and `LEAD`.
+
 ## Error Handling
 
 Generation stops on the first failing cycle. File generation preflights the whole `.lcam` before creating output, so bad geometry, unsupported cycles, malformed numbers, excessive pecks, or missing setup are reported with the LeanCam line number before a partial `.nc` is written. If storage rejects a write after the file is opened, the caller removes the incomplete `.nc` file.
@@ -201,8 +258,8 @@ gcc -std=c99 -Wall -Wextra -IuCNC/src/modules/leanCam `
 & $env:TEMP\leancam_gcode_host_test.exe
 ```
 
-The tests check that normal OD/ID/FACE/DRILL/CUT/PART/GROOVE cycles emit output, while malformed numbers, missing setup, impossible geometry, unsupported cycles, excessive pecks, and oversized values fail cleanly. They also check the program-file wrapper so the shared header/footer path does not drift away from the single-cycle path.
+The tests check that normal OD/ID/FACE/DRILL/CUT/PART/GROOVE/THR_OD/THR_ID cycles emit output, while malformed numbers, missing setup, impossible geometry, unsupported cycles, excessive pecks, and oversized values fail cleanly. They also check the program-file wrapper so the shared header/footer path does not drift away from the single-cycle path.
 
 ## Output Policy
 
-The current generator favors simple, readable, conservative G-code over advanced controller features. Threading, chamfers, radius cycles, CSS simulation, and cutter compensation are intentionally outside the current converter scope.
+The current generator favors simple, readable, conservative G-code over advanced controller features. OD/ID taper, chamfer, radius corners, and simple G33 threading are implemented. CSS simulation, cutter compensation, canned threading cycles, and dedicated radius-only cycles are intentionally outside the current converter scope.

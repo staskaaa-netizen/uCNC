@@ -29,6 +29,7 @@ int sim_d_to_py(const lcam_sim_view_t *view, float d);
 
 void leancam_sim_preview_draw(const ui_snapshot_frame_t *frame);
 void leancam_sim_live_draw(const ui_snapshot_frame_t *frame);
+bool leancam_sim_live_should_hold(const ui_snapshot_frame_t *frame);
 
 #ifdef __cplusplus
 }

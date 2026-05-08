@@ -2,11 +2,9 @@
 
 #include <stdarg.h>
 #include <float.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 
 #ifndef LC_GCODE_FEED_MM_MIN
 #define LC_GCODE_FEED_MM_MIN 120.0f
@@ -49,12 +47,7 @@ typedef struct
     float d_end;
     float z_start;
     float z_profile_end;
-    float d_profile_end;
     float z_end;
-    float d_corner_end;
-    float z_corner_end;
-    float arc_i;
-    float arc_k;
     float amount;
     lc_corner_kind_t kind;
 } lc_turn_profile_t;
@@ -135,32 +128,6 @@ static float lc_maxf(float a, float b)
 static float lc_minf(float a, float b)
 {
     return a < b ? a : b;
-}
-
-static float lc_profile_max_d(const lc_turn_profile_t *p)
-{
-    float m;
-
-    if (!p)
-        return 0.0f;
-
-    m = lc_maxf(p->d_start, p->d_end);
-    m = lc_maxf(m, p->d_profile_end);
-    m = lc_maxf(m, p->d_corner_end);
-    return m;
-}
-
-static float lc_profile_min_d(const lc_turn_profile_t *p)
-{
-    float m;
-
-    if (!p)
-        return 0.0f;
-
-    m = lc_minf(p->d_start, p->d_end);
-    m = lc_minf(m, p->d_profile_end);
-    m = lc_minf(m, p->d_corner_end);
-    return m;
 }
 
 static int lc_emit(lc_gcode_send_fn send, void *user, const char *fmt, ...)
@@ -281,9 +248,8 @@ static void lc_sanitize_cut_ctx(lc_cut_ctx_t *ctx)
 
     if (ctx->rough_feed <= 0.0f) ctx->rough_feed = LC_GCODE_FEED_MM_MIN;
     if (ctx->finish_feed <= 0.0f) ctx->finish_feed = ctx->rough_feed;
-    if (ctx->rough_doc < 0.0f) ctx->rough_doc = -ctx->rough_doc;
-    if (ctx->finish_doc < 0.0f) ctx->finish_doc = -ctx->finish_doc;
     if (ctx->rough_doc <= 0.0f) ctx->rough_doc = 2.0f;
+    if (ctx->finish_doc < 0.0f) ctx->finish_doc = 0.0f;
     if (ctx->spindle_rpm <= 0) ctx->spindle_rpm = LC_GCODE_SPINDLE_RPM;
 }
 
@@ -351,8 +317,7 @@ static int lc_emit_modal_header(lc_gcode_send_fn send, void *user)
 {
     if (!lc_emit(send, user, "G21")) return 0;
     if (!lc_emit(send, user, "G90")) return 0;
-    if (!lc_emit(send, user, "G18"))  return 0;
-    if (!lc_emit(send, user, "G7"))  return 0;
+    if (!lc_emit(send, user, "G8"))  return 0;
     return 1;
 }
 
@@ -429,8 +394,6 @@ static lc_gcode_result_t lc_build_turn_profile(const char *line,
     if (!profile)
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: no profile", cycle);
 
-    memset(profile, 0, sizeof(*profile));
-
     (void)lc_field_float3(line, "DT", "D_TAPER", "TAPER_DIAMETER", &dt);
 
     r = lc_read_corner(line, cycle, &corner, &corner_amount, err, err_len);
@@ -447,125 +410,31 @@ static lc_gcode_result_t lc_build_turn_profile(const char *line,
     profile->d_end = d2;
     profile->z_start = z1;
     profile->z_end = z2;
-    profile->z_corner_end = z2;
+    profile->z_profile_end = (corner_amount > 0.0f) ? (z2 + corner_amount) : z2;
     profile->amount = corner_amount;
     profile->kind = corner;
 
-    if (corner_amount > 0.0f)
-    {
-        /*
-         * Work in real lathe section geometry: Z plus radius, not diameter.
-         * The saved/programmed X value remains diameter, but all direction,
-         * trim and fillet math is done in radius-space so taper + corner is
-         * geometrically meaningful.
-         *
-         * Vertex P is the theoretical sharp intersection at (Z2, D2/2).
-         * Ray A goes backwards along the finished taper/profile.
-         * Ray B goes along the shoulder face: outward for OD, inward for ID.
-         *
-         * CHMF: amount is distance from P along both rays. For a straight
-         *       cylinder this gives the old Z+amount / X +/- 2*amount result.
-         * RND:  amount is fillet radius. Tangency distance is
-         *       R / tan(theta/2), then arc centre lies on the angle bisector.
-         */
-        const float eps = 0.000001f;
-        float r_start = dt * 0.5f;
-        float r_end = d2 * 0.5f;
-        float dz = z2 - z1;
-        float dr = r_end - r_start;
-        float len = sqrtf((dz * dz) + (dr * dr));
-        float ax, az;
-        float bx, bz;
-        float dot;
-        float trim;
-
-        if (len <= eps)
-            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: profile span too small", cycle);
-
-        /* A = direction from vertex back along taper/profile. */
-        az = -dz / len;
-        ax = -dr / len;
-
-        /* B = direction from vertex along the shoulder face. */
-        bz = 0.0f;
-        bx = is_od ? 1.0f : -1.0f;
-
-        dot = (az * bz) + (ax * bx);
-        if (dot >  0.999f) dot =  0.999f;
-        if (dot < -0.999f) dot = -0.999f;
-
-        if (corner == LC_CORNER_CHMF)
-        {
-            trim = corner_amount;
-            profile->z_profile_end = z2 + (az * trim);
-            profile->d_profile_end = 2.0f * (r_end + (ax * trim));
-            profile->d_corner_end = 2.0f * (r_end + (bx * trim));
-        }
-        else
-        {
-            float cot_half;
-            float inv_sin_half;
-            float bis_z;
-            float bis_x;
-            float bis_len;
-            float center_z;
-            float center_r;
-
-            cot_half = sqrtf((1.0f + dot) / (1.0f - dot));
-            trim = corner_amount * cot_half;
-
-            profile->z_profile_end = z2 + (az * trim);
-            profile->d_profile_end = 2.0f * (r_end + (ax * trim));
-            profile->d_corner_end = 2.0f * (r_end + (bx * trim));
-
-            bis_z = az + bz;
-            bis_x = ax + bx;
-            bis_len = sqrtf((bis_z * bis_z) + (bis_x * bis_x));
-            if (bis_len <= eps)
-                return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: bad corner angle", cycle);
-
-            inv_sin_half = sqrtf(2.0f / (1.0f - dot));
-            center_z = z2 + (bis_z / bis_len) * corner_amount * inv_sin_half;
-            center_r = r_end + (bis_x / bis_len) * corner_amount * inv_sin_half;
-
-            profile->arc_k = center_z - profile->z_profile_end;
-            profile->arc_i = center_r - (profile->d_profile_end * 0.5f);
-        }
-    }
-    else
-    {
-        profile->z_profile_end = z2;
-        profile->d_profile_end = d2;
-        profile->d_corner_end = d2;
-    }
-
-    if (profile->z_profile_end < lc_minf(z1, z2) - 0.001f ||
-        profile->z_profile_end > lc_maxf(z1, z2) + 0.001f)
-        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: corner too large for taper length", cycle);
-
     if (is_od)
     {
+        float corner_face_d = d2 + (2.0f * corner_amount);
         if (dt > d1)
             return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: DT must be <= D1", cycle);
-        /*
-         * Do not reject when the corner/fillet endpoint is outside stock OD.
-         * That is valid CNC air-cutting: the mathematical profile may extend
-         * beyond the available material, while the real stock/simulation is
-         * clipped by D1/setup OD. DOC planning is based on profile_min.
-         */
+        if (corner_face_d > d1)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: corner too large for D1", cycle);
     }
     else
     {
+        float corner_face_d = d2 - (2.0f * corner_amount);
         if (dt < d1)
             return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: DT must be >= D1", cycle);
-        /* Same rule for ID: profile may extend through air/empty bore. */
+        if (corner_face_d < d1)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: corner too large for D1", cycle);
     }
 
     return LC_GCODE_OK;
 }
 
 static lc_gcode_result_t lc_emit_od_corner(const lc_turn_profile_t *p,
-                                           float d_offset,
                                            lc_gcode_send_fn send,
                                            void *user,
                                            char *err,
@@ -576,12 +445,12 @@ static lc_gcode_result_t lc_emit_od_corner(const lc_turn_profile_t *p,
 
     if (p->kind == LC_CORNER_CHMF)
     {
-        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", p->d_corner_end + d_offset, p->z_corner_end))
+        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", p->d_end + (2.0f * p->amount), p->z_end))
             return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: chamfer write failed");
     }
     else
     {
-        if (!lc_emit(send, user, "G2 X%.3f Z%.3f I%.3f K%.3f", p->d_corner_end + d_offset, p->z_corner_end, p->arc_i, p->arc_k))
+        if (!lc_emit(send, user, "G2 X%.3f Z%.3f I%.3f K0.000", p->d_end + (2.0f * p->amount), p->z_end, p->amount))
             return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: radius write failed");
     }
 
@@ -589,7 +458,6 @@ static lc_gcode_result_t lc_emit_od_corner(const lc_turn_profile_t *p,
 }
 
 static lc_gcode_result_t lc_emit_id_corner(const lc_turn_profile_t *p,
-                                           float d_offset,
                                            lc_gcode_send_fn send,
                                            void *user,
                                            char *err,
@@ -600,71 +468,14 @@ static lc_gcode_result_t lc_emit_id_corner(const lc_turn_profile_t *p,
 
     if (p->kind == LC_CORNER_CHMF)
     {
-        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", p->d_corner_end + d_offset, p->z_corner_end))
+        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", p->d_end - (2.0f * p->amount), p->z_end))
             return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: chamfer write failed");
     }
     else
     {
-        if (!lc_emit(send, user, "G3 X%.3f Z%.3f I%.3f K%.3f", p->d_corner_end + d_offset, p->z_corner_end, p->arc_i, p->arc_k))
+        if (!lc_emit(send, user, "G3 X%.3f Z%.3f I%.3f K0.000", p->d_end - (2.0f * p->amount), p->z_end, -p->amount))
             return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: radius write failed");
     }
-
-    return LC_GCODE_OK;
-}
-
-static lc_gcode_result_t lc_emit_od_retract(float retract_x,
-                                            float zsafe,
-                                            lc_gcode_send_fn send,
-                                            void *user,
-                                            char *err,
-                                            unsigned err_len)
-{
-    /*
-     * OD rough passes, especially shoulder chamfers/radii, can end outside the
-     * nominal cycle safe-X.  Do not rapid X inward after a corner.  Retract to
-     * the pass-local clear diameter first, then return Z.
-     */
-    if (!lc_emit(send, user, "G0 X%.3f", retract_x))
-        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
-    if (!lc_emit(send, user, "G0 Z%.3f", zsafe))
-        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
-
-    return LC_GCODE_OK;
-}
-
-static lc_gcode_result_t lc_emit_id_retract(float retract_x,
-                                            float zsafe,
-                                            bool z_first,
-                                            lc_gcode_send_fn send,
-                                            void *user,
-                                            char *err,
-                                            unsigned err_len)
-{
-    if (retract_x < 0.0f)
-        retract_x = 0.0f;
-
-    if (z_first)
-    {
-        /*
-         * ID corner passes end at the shoulder/corner.  Leave the corner in Z
-         * first, then move X only after the tool is out of the cut zone.
-         */
-        if (!lc_emit(send, user, "G0 Z%.3f", zsafe))
-            return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
-        if (!lc_emit(send, user, "G0 X%.3f", retract_x))
-            return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
-        return LC_GCODE_OK;
-    }
-
-    /*
-     * Straight ID cycles cut by moving X outward into the bore wall.  Match
-     * the conversational reference: feed X back inward behind the current
-     * pass, then rapid Z back out.
-     */
-    if (!lc_emit(send, user, "G1 X%.3f", retract_x))
-        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
-    if (!lc_emit(send, user, "G0 Z%.3f", zsafe))
-        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
 
     return LC_GCODE_OK;
 }
@@ -684,8 +495,8 @@ static lc_gcode_result_t lc_run_od(const char *line,
     float zsafe;
     float profile_max;
     float profile_min;
-    float max_rough_offset;
-    float stock;
+    float rough_target;
+    float pass_max;
     int passes = 0;
     lc_cut_ctx_t ctx;
     lc_turn_profile_t profile;
@@ -721,26 +532,16 @@ static lc_gcode_result_t lc_run_od(const char *line,
     if (r != LC_GCODE_OK)
         return r;
 
-    profile_max = lc_profile_max_d(&profile);
-    profile_min = lc_profile_min_d(&profile);
+    profile_max = lc_maxf(profile.d_start, profile.d_end);
+    profile_min = lc_minf(profile.d_start, profile.d_end);
 
     lc_read_cut_ctx(tool, &ctx);
     lc_override_ctx_from_line(line, &ctx);
-    max_rough_offset = d1 - profile_min;
-    if (max_rough_offset < 0.0f)
-        max_rough_offset = 0.0f;
-    if (ctx.finish_doc >= max_rough_offset)
+    if (ctx.finish_doc >= (d1 - profile_min))
         ctx.finish_doc = 0.0f;
-    if (lc_too_many_steps(max_rough_offset - ctx.finish_doc, ctx.rough_doc))
+    rough_target = profile_max + ctx.finish_doc;
+    if (lc_too_many_steps(d1 - rough_target, ctx.rough_doc))
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "OD: too many rough passes");
-
-    /*
-     * Roughing follows the same final profile, offset outward in X by stock.
-     * Use profile_min to schedule DOC, not profile_max.  Keep retract X at
-     * the stock/profile envelope plus clearance; the roughing offset is a
-     * diameter stock allowance, not an extra radius-mode safe-X distance.
-     */
-    xsafe = lc_maxf(xsafe, profile_max + tc);
 
     if (!lc_emit(send, user, "(LC OD DT %.3f D2 %.3f RND %.3f CHMF %.3f)",
                  profile.d_start,
@@ -751,51 +552,42 @@ static lc_gcode_result_t lc_run_od(const char *line,
     if (!lc_emit_cycle_preamble(send, user, &ctx, options)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: preamble write failed");
     if (!lc_emit(send, user, "G0 X%.3f Z%.3f", xsafe, zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
 
-    stock = max_rough_offset;
-    while (stock - ctx.rough_doc > ctx.finish_doc)
+    pass_max = d1;
+    while (pass_max - ctx.rough_doc > rough_target)
     {
-        float retract_x;
+        float stock;
         if (++passes > LC_GCODE_MAX_PASSES)
             return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "OD: too many rough passes");
-        stock -= ctx.rough_doc;
-        retract_x = lc_maxf(xsafe, profile_max + stock + tc);
+        pass_max -= ctx.rough_doc;
+        stock = pass_max - profile_max;
         if (!lc_emit(send, user, "(OD rough stock %.3f)", stock)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
         if (!lc_emit(send, user, "G0 X%.3f Z%.3f", profile.d_start + stock + tc, z1 + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
         if (!lc_emit(send, user, "G1 X%.3f F%.3f", profile.d_start + stock, ctx.rough_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
-        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_profile_end + stock, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
-        r = lc_emit_od_corner(&profile, stock, send, user, err, err_len);
-        if (r != LC_GCODE_OK)
-            return r;
-        r = lc_emit_od_retract(retract_x, zsafe, send, user, err, err_len);
-        if (r != LC_GCODE_OK)
-            return r;
+        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_end + stock, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
+        if (!lc_emit(send, user, "G0 X%.3f", xsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
+        if (!lc_emit(send, user, "G0 Z%.3f", zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
     }
 
-    if (ctx.finish_doc > 0.0f && max_rough_offset > ctx.finish_doc)
+    if (rough_target > profile_max)
     {
-        stock = ctx.finish_doc;
+        float stock = ctx.finish_doc;
         if (!lc_emit(send, user, "(OD rough finish-stock %.3f)", stock)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
         if (!lc_emit(send, user, "G0 X%.3f Z%.3f", profile.d_start + stock + tc, z1 + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
         if (!lc_emit(send, user, "G1 X%.3f F%.3f", profile.d_start + stock, ctx.rough_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
-        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_profile_end + stock, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
-        r = lc_emit_od_corner(&profile, stock, send, user, err, err_len);
-        if (r != LC_GCODE_OK)
-            return r;
-        r = lc_emit_od_retract(lc_maxf(xsafe, profile_max + stock + tc), zsafe, send, user, err, err_len);
-        if (r != LC_GCODE_OK)
-            return r;
+        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_end + stock, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
+        if (!lc_emit(send, user, "G0 X%.3f", xsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
+        if (!lc_emit(send, user, "G0 Z%.3f", zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
     }
 
     if (!lc_emit(send, user, "(OD finish DT %.3f D2 %.3f)", profile.d_start, profile.d_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
     if (!lc_emit(send, user, "G0 X%.3f Z%.3f", profile.d_start + tc, z1 + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
     if (!lc_emit(send, user, "G1 X%.3f F%.3f", profile.d_start, ctx.finish_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
-    if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_profile_end, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
-    r = lc_emit_od_corner(&profile, 0.0f, send, user, err, err_len);
+    if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_end, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
+    r = lc_emit_od_corner(&profile, send, user, err, err_len);
     if (r != LC_GCODE_OK)
         return r;
-    r = lc_emit_od_retract(lc_maxf(xsafe, profile_max + tc), zsafe, send, user, err, err_len);
-    if (r != LC_GCODE_OK)
-        return r;
+    if (!lc_emit(send, user, "G0 X%.3f", xsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
+    if (!lc_emit(send, user, "G0 Z%.3f", zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
     if ((!options || options->emit_spindle_stop) && !lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "OD: write failed");
 
     return LC_GCODE_OK;
@@ -813,8 +605,9 @@ static lc_gcode_result_t lc_run_id(const char *line,
     float d1, z1, d2, z2, tc;
     float zsafe;
     float profile_max;
-    float max_rough_offset;
-    float stock;
+    float profile_min;
+    float rough_target;
+    float pass_min;
     int passes = 0;
     lc_cut_ctx_t ctx;
     lc_turn_profile_t profile;
@@ -840,16 +633,15 @@ static lc_gcode_result_t lc_run_id(const char *line,
     if (r != LC_GCODE_OK)
         return r;
 
-    profile_max = lc_profile_max_d(&profile);
+    profile_max = lc_maxf(profile.d_start, profile.d_end);
+    profile_min = lc_minf(profile.d_start, profile.d_end);
 
     lc_read_cut_ctx(tool, &ctx);
     lc_override_ctx_from_line(line, &ctx);
-    max_rough_offset = profile_max - d1;
-    if (max_rough_offset < 0.0f)
-        max_rough_offset = 0.0f;
-    if (ctx.finish_doc >= max_rough_offset)
+    if (ctx.finish_doc >= (profile_max - d1))
         ctx.finish_doc = 0.0f;
-    if (lc_too_many_steps(max_rough_offset - ctx.finish_doc, ctx.rough_doc))
+    rough_target = profile_min - ctx.finish_doc;
+    if (lc_too_many_steps(rough_target - d1, ctx.rough_doc))
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "ID: too many rough passes");
 
     zsafe = z1 + tc;
@@ -861,51 +653,39 @@ static lc_gcode_result_t lc_run_id(const char *line,
         return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
     if (!lc_emit_cycle_preamble(send, user, &ctx, options)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: preamble write failed");
 
-    stock = max_rough_offset;
-    while (stock - ctx.rough_doc > ctx.finish_doc)
+    pass_min = d1;
+    while (pass_min + ctx.rough_doc < rough_target)
     {
-        float retract_x;
+        float stock;
         if (++passes > LC_GCODE_MAX_PASSES)
             return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "ID: too many rough passes");
-        stock -= ctx.rough_doc;
-        retract_x = profile.d_start - stock - tc;
+        pass_min += ctx.rough_doc;
+        stock = profile_min - pass_min;
         if (!lc_emit(send, user, "(ID rough stock %.3f)", stock)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
         if (!lc_emit(send, user, "G0 X%.3f Z%.3f", profile.d_start - stock, zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
         if (!lc_emit(send, user, "G1 X%.3f F%.3f", profile.d_start - stock, ctx.rough_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
-        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_profile_end - stock, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
-        r = lc_emit_id_corner(&profile, -stock, send, user, err, err_len);
-        if (r != LC_GCODE_OK)
-            return r;
-        r = lc_emit_id_retract(retract_x, zsafe, profile.kind != LC_CORNER_NONE, send, user, err, err_len);
-        if (r != LC_GCODE_OK)
-            return r;
+        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_end - stock, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
+        if (!lc_emit(send, user, "G0 Z%.3f", zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
     }
 
-    if (ctx.finish_doc > 0.0f && max_rough_offset > ctx.finish_doc)
+    if (rough_target > d1)
     {
-        stock = ctx.finish_doc;
+        float stock = ctx.finish_doc;
         if (!lc_emit(send, user, "(ID rough finish-stock %.3f)", stock)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
         if (!lc_emit(send, user, "G0 X%.3f Z%.3f", profile.d_start - stock, zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
         if (!lc_emit(send, user, "G1 X%.3f F%.3f", profile.d_start - stock, ctx.rough_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
-        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_profile_end - stock, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
-        r = lc_emit_id_corner(&profile, -stock, send, user, err, err_len);
-        if (r != LC_GCODE_OK)
-            return r;
-        r = lc_emit_id_retract(profile.d_start - stock - tc, zsafe, profile.kind != LC_CORNER_NONE, send, user, err, err_len);
-        if (r != LC_GCODE_OK)
-            return r;
+        if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_end - stock, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
+        if (!lc_emit(send, user, "G0 Z%.3f", zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
     }
 
     if (!lc_emit(send, user, "(ID finish DT %.3f D2 %.3f)", profile.d_start, profile.d_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
     if (!lc_emit(send, user, "G0 X%.3f Z%.3f", profile.d_start, zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
     if (!lc_emit(send, user, "G1 X%.3f F%.3f", profile.d_start, ctx.finish_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
-    if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_profile_end, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
-    r = lc_emit_id_corner(&profile, 0.0f, send, user, err, err_len);
+    if (!lc_emit(send, user, "G1 X%.3f Z%.3f", profile.d_end, profile.z_profile_end)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
+    r = lc_emit_id_corner(&profile, send, user, err, err_len);
     if (r != LC_GCODE_OK)
         return r;
-    r = lc_emit_id_retract(profile.d_start - tc, zsafe, profile.kind != LC_CORNER_NONE, send, user, err, err_len);
-    if (r != LC_GCODE_OK)
-        return r;
+    if (!lc_emit(send, user, "G0 Z%.3f", zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
     if ((!options || options->emit_spindle_stop) && !lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "ID: write failed");
 
     return LC_GCODE_OK;
@@ -963,7 +743,6 @@ static lc_gcode_result_t lc_run_face(const char *line,
         if (!lc_emit(send, user, "G0 X%.3f Z%.3f", d + tc, pass_z + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
         if (!lc_emit(send, user, "G1 Z%.3f F%.3f", pass_z, ctx.rough_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
         if (!lc_emit(send, user, "G1 X%.3f", inner)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
-        if (!lc_emit(send, user, "G0 Z%.3f", pass_z + doc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
         if (!lc_emit(send, user, "G0 X%.3f", d + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
     }
 
@@ -971,8 +750,8 @@ static lc_gcode_result_t lc_run_face(const char *line,
     if (!lc_emit(send, user, "G0 X%.3f Z%.3f", d + tc, z + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
     if (!lc_emit(send, user, "G1 Z%.3f F%.3f", z, ctx.finish_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
     if (!lc_emit(send, user, "G1 X%.3f", inner)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
-    if (!lc_emit(send, user, "G0 Z%.3f", z + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
     if (!lc_emit(send, user, "G0 X%.3f", d + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
+    if (!lc_emit(send, user, "G0 Z%.3f", z + tc)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
     if ((!options || options->emit_spindle_stop) && !lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "FACE: write failed");
 
     return LC_GCODE_OK;
@@ -1142,165 +921,6 @@ static lc_gcode_result_t lc_run_groove(const char *line,
     return LC_GCODE_OK;
 }
 
-static lc_gcode_result_t lc_run_thread(const char *line,
-                                       const char *setup,
-                                       const char *tool,
-                                       int is_od,
-                                       const lc_gcode_line_options_t *options,
-                                       lc_gcode_send_fn send,
-                                       void *user,
-                                       char *err,
-                                       unsigned err_len)
-{
-    const char *cycle = is_od ? "THR_OD" : "THR_ID";
-    float d_start = 0.0f;
-    float d_end = 0.0f;
-    float z1;
-    float z2;
-    float pitch;
-    float nominal = 0.0f;
-    float depth = 0.0f;
-    float doc = 0.0f;
-    float tc;
-    float lead;
-    float taper = 0.0f;
-    float n_value = 0.0f;
-    float strategy_value = 1.0f;
-    float pass_depth;
-    float last_depth = -1.0f;
-    float xsafe;
-    float zsafe;
-    float z_span;
-    int pass = 0;
-    int pass_count = 0;
-    int strategy = 1;
-    int has_nominal;
-    lc_cut_ctx_t ctx;
-
-    if (!setup)
-        return lc_fail(LC_GCODE_NO_SETUP, err, err_len, "%s: no SETUP", cycle);
-
-    if (!lc_field_float3(line, "P", "PITCH", "K", &pitch))
-        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: missing/bad P", cycle);
-
-    has_nominal = lc_field_float2(line, "M", "NOM", &nominal);
-
-    if (is_od)
-    {
-        if (!lc_field_float3(line, "D", "MAJOR", "OD", &d_start) &&
-            !lc_field_float2(line, "D1", "OUTSIDE_DIAMETER", &d_start) &&
-            has_nominal)
-            d_start = nominal;
-        (void)lc_field_float3(line, "D2", "MINOR", "ID", &d_end);
-        if (d_end <= 0.0f && has_nominal)
-            d_end = nominal - (1.22687f * pitch);
-    }
-    else
-    {
-        if (!lc_field_float3(line, "D", "MINOR", "ID", &d_start) &&
-            !lc_field_float2(line, "D1", "INSIDE_DIAMETER", &d_start) &&
-            has_nominal)
-            d_start = nominal - (1.08253f * pitch);
-        (void)lc_field_float3(line, "D2", "MAJOR", "OD", &d_end);
-        if (d_end <= 0.0f && has_nominal)
-            d_end = nominal;
-    }
-
-    if (!lc_field_float2(line, "Z1", "Z_START", &z1)) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: missing/bad Z1", cycle);
-    if (!lc_field_float2(line, "Z2", "Z_END", &z2)) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: missing/bad Z2", cycle);
-
-    (void)lc_field_float3(line, "THR_DEPTH", "THREAD_DEPTH", "DEPTH", &depth);
-    if (d_end <= 0.0f && depth > 0.0f)
-        d_end = is_od ? (d_start - depth) : (d_start + depth);
-
-    if (!lc_field_float3(line, "CLR", "CLEAR", "TOOL_CLEARANCE", &tc))
-        lc_setup_float3(setup, "CLR", "CLEAR", "TOOL_CLEARANCE", 1.0f, &tc);
-    if (!lc_field_float3(line, "DOC", "J", "DEPTH_OF_CUT", &doc) &&
-        tool && !lc_field_float3(tool, "R_DOC", "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc))
-        doc = 0.2f;
-    if (!lc_field_float2(line, "LEAD", "LEAD_IN", &lead))
-        lead = pitch;
-    (void)lc_field_float3(line, "TAPER", "D_TAPER", "TAPER_DIAMETER", &taper);
-    if (lc_field_float3(line, "N", "PASS", "PASSES", &n_value) && n_value > 0.0f)
-        pass_count = (int)(n_value + 0.5f);
-    if (lc_field_float3(line, "ST", "STRAT", "STRATEGY", &strategy_value))
-        strategy = strategy_value > 0.5f ? 1 : 0;
-
-    if (d_start <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: M/D must be > 0", cycle);
-    if (d_end <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: need M or D2/depth", cycle);
-    if (is_od && d_end >= d_start) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "THR_OD: final diameter must be smaller than start");
-    if (!is_od && d_end <= d_start) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "THR_ID: final diameter must be larger than start");
-    if (z1 == z2) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: Z span must be nonzero", cycle);
-    if (pitch <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: P must be > 0", cycle);
-    if (doc <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: DOC must be > 0", cycle);
-    if (tc < 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: CLEAR must be >= 0", cycle);
-    if (lead < 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: LEAD must be >= 0", cycle);
-    if (pass_count < 0 || pass_count > LC_GCODE_MAX_PASSES) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: bad pass count", cycle);
-
-    depth = lc_absf(d_start - d_end);
-    if (pass_count == 0 && lc_too_many_steps(depth, doc))
-        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: too many passes", cycle);
-
-    lc_read_cut_ctx(tool, &ctx);
-    lc_override_ctx_from_line(line, &ctx);
-
-    z_span = z2 - z1;
-    zsafe = z1 + ((z_span < 0.0f) ? lead : -lead);
-    xsafe = is_od ? (lc_maxf(d_start, d_start + taper) + tc)
-                  : (lc_minf(d_start, d_start + taper) - tc);
-    if (xsafe < 0.0f)
-        xsafe = 0.0f;
-
-    if (!lc_emit(send, user, "(LC %s M %.3f D %.3f D2 %.3f P %.3f DOC %.3f N %d ST %d)",
-                 cycle, nominal, d_start, d_end, pitch, doc, pass_count, strategy))
-        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-    if (!lc_emit(send, user, "(ELS RAMP: lead-in and lead-out are reserve space, not finished thread)"))
-        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-    if (!lc_emit(send, user, "(ELS RAMP: add required start lane before Z1 and stop lane after Z2 per controller settings)"))
-        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-    if (!lc_emit_cycle_preamble(send, user, &ctx, options)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: preamble write failed", cycle);
-    if (!lc_emit(send, user, "G0 X%.3f Z%.3f", xsafe, zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-
-    while (last_depth < depth)
-    {
-        float pass_x1;
-        float pass_x2;
-
-        if (++pass > LC_GCODE_MAX_PASSES)
-            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: too many passes", cycle);
-
-        if (pass_count > 0)
-        {
-            float t = (float)pass / (float)pass_count;
-            pass_depth = depth * (strategy ? sqrtf(t) : t);
-        }
-        else
-        {
-            pass_depth = strategy ? (doc * sqrtf((float)pass)) : (doc * (float)pass);
-        }
-        if (pass_depth > depth)
-            pass_depth = depth;
-        if (pass_depth <= last_depth)
-            pass_depth = depth;
-
-        pass_x1 = is_od ? (d_start - pass_depth) : (d_start + pass_depth);
-        pass_x2 = pass_x1 + taper;
-
-        if (!lc_emit(send, user, "(THREAD pass %d X%.3f)", pass, pass_x1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-        if (!lc_emit(send, user, "G0 X%.3f Z%.3f", xsafe, zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-        if (!lc_emit(send, user, "G0 X%.3f", pass_x1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-        if (!lc_emit(send, user, "G33 X%.3f Z%.3f K%.3f", pass_x2, z2, pitch)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-        if (!lc_emit(send, user, "G0 X%.3f", xsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-
-        last_depth = pass_depth;
-    }
-
-    if (!lc_emit(send, user, "G0 Z%.3f", zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-    if ((!options || options->emit_spindle_stop) && !lc_emit(send, user, "M5")) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-
-    return LC_GCODE_OK;
-}
-
 lc_gcode_result_t leancam_gcode_run_line_with_options(const char *line,
                                                       const char *setup_line,
                                                       const char *tool_line,
@@ -1333,10 +953,6 @@ lc_gcode_result_t leancam_gcode_run_line_with_options(const char *line,
         return lc_run_cut(line, setup_line, tool_line, options, send, user, err, err_len);
     if (lc_starts_with(line, "GROOVE|"))
         return lc_run_groove(line, setup_line, tool_line, options, send, user, err, err_len);
-    if (lc_starts_with(line, "THR_OD|"))
-        return lc_run_thread(line, setup_line, tool_line, 1, options, send, user, err, err_len);
-    if (lc_starts_with(line, "THR_ID|"))
-        return lc_run_thread(line, setup_line, tool_line, 0, options, send, user, err, err_len);
 
     return lc_fail(LC_GCODE_UNSUPPORTED, err, err_len, "unsupported cycle");
 }

@@ -26,6 +26,10 @@ extern "C" {
 #define UI_SNAPSHOT_GCODE_LEN 96
 #endif
 
+#ifndef UI_SNAPSHOT_ENCODER_DEBUG_LEN
+#define UI_SNAPSHOT_ENCODER_DEBUG_LEN 128
+#endif
+
 typedef enum
 {
     UI_SCREEN_NONE = 0,
@@ -99,6 +103,16 @@ typedef struct
     char leancam_setup_line[UI_LC_LINE_LEN];
     char leancam_preview_line[UI_LC_LINE_LEN];
     char leancam_tool_line[UI_LC_LINE_LEN];
+    char leancam_active_field[12];
+    bool leancam_thread_lane_valid;
+    float leancam_thread_start_lane;
+    float leancam_thread_stop_lane;
+    float leancam_thread_ramp_lane;
+    float leancam_thread_lock_lane;
+    float leancam_thread_z_speed;
+
+    uint32_t encoder_debug_seq;
+    char encoder_debug[UI_SNAPSHOT_ENCODER_DEBUG_LEN];
 
     /* Optional field-only highlight. Bridge owns these spans.
      * Span is [start, end) in characters inside leancam_lines[row].
@@ -117,6 +131,19 @@ typedef struct
     uint32_t  spindle;
     bool feed_valid;
     float  feed;
+    bool motion_active;
+
+    /* Threading/live-sim hints. Built on core1; renderer must not poll motion
+     * modules directly.
+     */
+    bool g33_active;
+    bool spindle_phase_valid;
+    uint32_t spindle_phase;
+    uint32_t spindle_cpr;
+    bool spindle_ec_valid;
+    int32_t spindle_ec;
+    bool g33_sync_valid;
+    int32_t g33_sync_ec;
    
 } ui_snapshot_frame_t;
 

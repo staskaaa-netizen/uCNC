@@ -269,6 +269,15 @@ static void running_file_clear()
 	}
 }
 
+bool fs_file_run_active(void)
+{
+#ifdef ENABLE_MAIN_LOOP_MODULES
+	return fs_running_file || BUFFER_READ_AVAILABLE(fs_file_buffer);
+#else
+	return fs_running_file != NULL;
+#endif
+}
+
 #ifdef ENABLE_PARSER_MODULES
 
 #ifdef ENABLE_MAIN_LOOP_MODULES
@@ -422,6 +431,7 @@ void fs_file_run(char *params)
 		startline = MAX(1, startline);
 		proto_info("Running file from line - %lu", startline);
 #ifdef DECL_SERIAL_STREAM
+		fs_running_file = fp;
 #ifdef ENABLE_MAIN_LOOP_MODULES
 		// prefill buffer
 		BUFFER_CLEAR(fs_file_buffer);
@@ -439,7 +449,6 @@ void fs_file_run(char *params)
 #endif
 		// open a readonly stream
 		// the output is sent to the current holding interface
-		fs_running_file = fp;
 		serial_stream_readonly(&running_file_getc, &running_file_available, &running_file_clear);
 		while (--startline)
 		{

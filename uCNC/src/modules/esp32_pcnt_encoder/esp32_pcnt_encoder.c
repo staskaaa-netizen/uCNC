@@ -136,6 +136,7 @@ static uint32_t esp32_pcnt_index_debug_reported_missed_count;
 
 static uint32_t esp32_pcnt_encoder_index_min_delta(void);
 static uint32_t esp32_pcnt_encoder_index_max_delta(void);
+static uint32_t esp32_pcnt_encoder_index_resolution(void);
 #if ENC0_INDEX_ISR_HUNT_ENABLE
 static bool enc0_index_hunt_isr_get_ref(int32_t *pcnt);
 #endif

@@ -35,7 +35,6 @@ Example for encoder 0:
 #define ENC0_CPR 4000
 
 #define ENC0_INDEX_GPIO DIN5_BIT
-#define ENC0_INDEX_PCNT_UNIT PCNT_UNIT_1
 
 #define SPINDLE_PWM_RPM_ENCODER ENC0
 #define G33_ENCODER ENC0
@@ -49,8 +48,8 @@ Set `$150` to the encoder count per revolution used by PCNT0.
 
 ## Filters
 
-`ENCODER_PCNT_FILTER` and `ENC0_INDEX_PCNT_FILTER` are PCNT APB clock ticks, not
-microseconds. On classic ESP32 the APB clock is normally 80 MHz:
+`ENCODER_PCNT_FILTER` is in PCNT APB clock ticks, not microseconds. On classic
+ESP32 the APB clock is normally 80 MHz:
 
 ```text
 80 ticks ~= 1 us
@@ -77,9 +76,9 @@ The working index path is:
 The standard encoder module fires index hooks on the logical rising edge. This
 module follows that convention with `GPIO_INTR_POSEDGE`.
 
-The optional second PCNT unit is kept as a hardware mailbox for the index pin. It
-is useful for counting raw index pulses and as a fallback origin if no ISR sample
-has arrived yet, but it no longer drives the G33 hook directly.
+No second PCNT unit is used for index anymore. The index pin is handled only by
+the GPIO ISR, and the G33 hook is fired only from the virtual PCNT0 modulo
+crossing.
 
 ## Status Helpers
 
@@ -95,7 +94,7 @@ the encoder task loop.
 Example debug line:
 
 ```text
-ENCIDX EC:-5269 ECB:0 LAST:-4000 AVG:4000.0 MIN:-4000 MAX:4000 N:34 HW:35 IGN:0 MISS:0 ISR:35
+ENCIDX EC:-5269 ECB:0 LAST:-4000 AVG:4000.0 MIN:-4000 MAX:4000 N:34 IGN:0 ISR:35
 ```
 
 Fields:
@@ -106,9 +105,7 @@ Fields:
 - `AVG`: average absolute count between virtual indexes
 - `MIN`/`MAX`: observed virtual index interval range
 - `N`: accepted virtual index intervals
-- `HW`: raw index pulses counted by the optional index PCNT unit
 - `IGN`: reserved for ignored index events
-- `MISS`: extra raw index mailbox pulses drained at once
 - `ISR`: physical index edges captured by GPIO ISR
 
 ## Notes

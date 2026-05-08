@@ -46,19 +46,6 @@
 #define ENC0_INDEX_VIRTUAL_FIRE_HOOK 1
 #endif
 
-#if defined(ENC0_INDEX_PCNT_UNIT) && defined(ENC0_INDEX_GPIO)
-#define ENC0_INDEX_PCNT_ENABLED 1
-#endif
-
-#if defined(ENC0_INDEX_PCNT_FILTER_US) && !defined(ENC0_INDEX_PCNT_FILTER)
-#define ENC0_INDEX_PCNT_FILTER ((ENC0_INDEX_PCNT_FILTER_US) * 80)
-#endif
-
-#if defined(ENC0_INDEX_PCNT_FILTER) && (ENC0_INDEX_PCNT_FILTER > 1023)
-#undef ENC0_INDEX_PCNT_FILTER
-#define ENC0_INDEX_PCNT_FILTER 1023
-#endif
-
 static bool esp32_pcnt_encoder_ready;
 static int32_t esp32_pcnt_encoder_offset;
 
@@ -73,16 +60,12 @@ static int32_t enc0_index_min_delta;
 static int32_t enc0_index_max_delta;
 static uint32_t enc0_index_count;
 static uint32_t enc0_index_abs_delta_sum;
-static uint32_t enc0_index_hw_count;
 static uint32_t enc0_index_ignored_count;
-static uint32_t enc0_index_missed_count;
 
 static char enc0_index_debug_line[128];
 static uint32_t enc0_index_debug_seq;
 static uint32_t enc0_index_debug_reported_count;
-static uint32_t enc0_index_debug_reported_hw_count;
 static uint32_t enc0_index_debug_reported_ignored_count;
-static uint32_t enc0_index_debug_reported_missed_count;
 
 static volatile uint8_t enc0_isr_have_ref;
 static volatile int32_t enc0_isr_ref_pcnt;
@@ -125,24 +108,20 @@ static void esp32_pcnt_encoder_update_index_debug(void)
 	}
 
 	if (enc0_index_debug_reported_count == enc0_index_count &&
-		enc0_index_debug_reported_hw_count == enc0_index_hw_count &&
-		enc0_index_debug_reported_ignored_count == enc0_index_ignored_count &&
-		enc0_index_debug_reported_missed_count == enc0_index_missed_count)
+		enc0_index_debug_reported_ignored_count == enc0_index_ignored_count)
 	{
 		return;
 	}
 
 	enc0_index_debug_reported_count = enc0_index_count;
-	enc0_index_debug_reported_hw_count = enc0_index_hw_count;
 	enc0_index_debug_reported_ignored_count = enc0_index_ignored_count;
-	enc0_index_debug_reported_missed_count = enc0_index_missed_count;
 
 	live_delta = encoder_get_position(ENC0) - enc0_index_last_position;
 	avg10 = (enc0_index_count) ? (uint32_t)(((uint64_t)enc0_index_abs_delta_sum * 10ULL + (enc0_index_count / 2U)) / enc0_index_count) : 0;
 
 	snprintf(enc0_index_debug_line,
 			 sizeof(enc0_index_debug_line),
-			 "ENCIDX EC:%ld ECB:%ld LAST:%ld AVG:%lu.%lu MIN:%ld MAX:%ld N:%lu HW:%lu IGN:%lu MISS:%lu ISR:%lu",
+			 "ENCIDX EC:%ld ECB:%ld LAST:%ld AVG:%lu.%lu MIN:%ld MAX:%ld N:%lu IGN:%lu ISR:%lu",
 			 (long)encoder_get_position(ENC0),
 			 (long)live_delta,
 			 (long)enc0_index_last_delta,
@@ -151,9 +130,7 @@ static void esp32_pcnt_encoder_update_index_debug(void)
 			 (long)enc0_index_min_delta,
 			 (long)enc0_index_max_delta,
 			 (unsigned long)enc0_index_count,
-			 (unsigned long)enc0_index_hw_count,
 			 (unsigned long)enc0_index_ignored_count,
-			 (unsigned long)enc0_index_missed_count,
 			 (unsigned long)enc0_isr_count);
 
 	enc0_index_debug_seq++;
@@ -255,72 +232,6 @@ static void enc0_index_gpio_isr_init(void)
 {
 	gpio_set_intr_type((gpio_num_t)ENC0_INDEX_GPIO, ENC0_INDEX_ISR_EDGE);
 	gpio_isr_handler_add((gpio_num_t)ENC0_INDEX_GPIO, enc0_index_gpio_isr, NULL);
-}
-#endif
-
-#ifdef ENC0_INDEX_PCNT_ENABLED
-static void encoder_esp32_index_pcnt_init(uint8_t unit, int index_gpio)
-{
-	pcnt_config_t index_ch = {
-		.pulse_gpio_num = index_gpio,
-		.ctrl_gpio_num = PCNT_PIN_NOT_USED,
-		.lctrl_mode = PCNT_MODE_KEEP,
-		.hctrl_mode = PCNT_MODE_KEEP,
-		.pos_mode = PCNT_COUNT_INC,
-		.neg_mode = PCNT_COUNT_DIS,
-		.counter_h_lim = 32767,
-		.counter_l_lim = 0,
-		.unit = (pcnt_unit_t)unit,
-		.channel = PCNT_CHANNEL_0,
-	};
-
-	pcnt_unit_config(&index_ch);
-
-#ifdef ENC0_INDEX_PCNT_FILTER
-	pcnt_set_filter_value((pcnt_unit_t)unit, ENC0_INDEX_PCNT_FILTER);
-	pcnt_filter_enable((pcnt_unit_t)unit);
-#else
-	pcnt_filter_disable((pcnt_unit_t)unit);
-#endif
-
-	pcnt_counter_pause((pcnt_unit_t)unit);
-	pcnt_counter_clear((pcnt_unit_t)unit);
-	pcnt_counter_resume((pcnt_unit_t)unit);
-}
-
-static void esp32_pcnt_encoder_drain_index_pcnt(void)
-{
-	int16_t index_count = 0;
-
-	if (!esp32_pcnt_encoder_ready)
-	{
-		return;
-	}
-
-	pcnt_get_counter_value((pcnt_unit_t)ENC0_INDEX_PCNT_UNIT, &index_count);
-	if (index_count <= 0)
-	{
-		return;
-	}
-
-	pcnt_counter_pause((pcnt_unit_t)ENC0_INDEX_PCNT_UNIT);
-	pcnt_counter_clear((pcnt_unit_t)ENC0_INDEX_PCNT_UNIT);
-	pcnt_counter_resume((pcnt_unit_t)ENC0_INDEX_PCNT_UNIT);
-
-	enc0_index_hw_count += (uint32_t)index_count;
-	if (index_count > 1)
-	{
-		enc0_index_missed_count += (uint32_t)(index_count - 1);
-	}
-
-	if (!enc0_isr_have_ref && !enc0_index_have_origin)
-	{
-		enc0_index_origin = encoder_get_position(ENC0);
-		enc0_index_last_position = enc0_index_origin;
-		enc0_index_have_origin = true;
-	}
-
-	esp32_pcnt_encoder_update_index_debug();
 }
 #endif
 
@@ -459,9 +370,6 @@ bool encoder_get_index_debug_line(uint8_t i, char *line, uint32_t line_len, uint
 static bool esp32_pcnt_encoder_dotasks(void *args)
 {
 	(void)args;
-#ifdef ENC0_INDEX_PCNT_ENABLED
-	esp32_pcnt_encoder_drain_index_pcnt();
-#endif
 	enc0_virtual_index_task();
 	esp32_pcnt_encoder_update_index_debug();
 	return EVENT_CONTINUE;
@@ -472,9 +380,6 @@ CREATE_EVENT_LISTENER(cnc_dotasks, esp32_pcnt_encoder_dotasks);
 DECL_MODULE(esp32_pcnt_encoder)
 {
 	encoder_esp32_pcnt_init(ENC0_PCNT_UNIT, ENC0_PULSE_GPIO, ENC0_DIR_GPIO);
-#ifdef ENC0_INDEX_PCNT_ENABLED
-	encoder_esp32_index_pcnt_init(ENC0_INDEX_PCNT_UNIT, ENC0_INDEX_GPIO);
-#endif
 #ifdef ENC0_INDEX_GPIO
 	gpio_install_isr_service(0);
 	enc0_index_gpio_isr_init();

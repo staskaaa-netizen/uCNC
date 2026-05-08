@@ -49,9 +49,22 @@
 #define ENC0_INDEX_MODE_PCNT_INDEX 1
 #define ENC0_INDEX_MODE_RMT_MARKER 2
 #define ENC0_INDEX_MODE_DFF_LATCH 3
+#define ENC0_INDEX_MODE_SOFTWARE_POLL 4
 
 #ifndef ENC0_INDEX_MODE
 #define ENC0_INDEX_MODE ENC0_INDEX_MODE_LEGACY_ISR
+#endif
+
+#ifndef ENC0_INDEX_SOFT_POLL_ENABLE
+#define ENC0_INDEX_SOFT_POLL_ENABLE (ENC0_INDEX_MODE == ENC0_INDEX_MODE_SOFTWARE_POLL)
+#endif
+
+#ifndef ENC0_INDEX_SOFT_POLL_STATUS_MS
+#define ENC0_INDEX_SOFT_POLL_STATUS_MS 1000
+#endif
+
+#ifndef ENC0_INDEX_HUNT_COMPARE_MAX_DELTA
+#define ENC0_INDEX_HUNT_COMPARE_MAX_DELTA 500
 #endif
 
 #ifndef ENC0_RMT_SHORT_LIMIT_PCT
@@ -182,6 +195,8 @@ static const char *enc0_index_hunt_mode_name(uint8_t mode)
 		return "RMT_MARKER";
 	case ENC0_INDEX_MODE_DFF_LATCH:
 		return "DFF_LATCH";
+	case ENC0_INDEX_MODE_SOFTWARE_POLL:
+		return "SOFTWARE_POLL";
 	default:
 		return "LEGACY_ISR";
 	}
@@ -231,6 +246,143 @@ static void enc0_index_hunt_store_sample(uint8_t mode, int32_t ref, int32_t mark
 			   (unsigned long)enc0_index_hunt_latest.long_ticks,
 			   enc0_index_hunt_latest.phase_fraction,
 			   enc0_index_hunt_latest.valid);
+#endif
+}
+#endif
+
+#if ENC0_INDEX_SOFT_POLL_ENABLE
+static uint8_t enc0_soft_poll_last_state;
+static uint8_t enc0_soft_poll_have_state;
+static bool enc0_soft_poll_have_ref;
+static int32_t enc0_soft_poll_last_pcnt;
+static int32_t enc0_soft_poll_last_delta;
+static int32_t enc0_soft_poll_last_pcnt_compare_delta;
+static int32_t enc0_soft_poll_min_pcnt_compare_delta;
+static int32_t enc0_soft_poll_max_pcnt_compare_delta;
+static uint32_t enc0_soft_poll_edge_count;
+static uint32_t enc0_soft_poll_near_count;
+static uint32_t enc0_soft_poll_far_count;
+static uint32_t enc0_soft_poll_compare_count;
+static uint32_t enc0_soft_poll_compare_reject_count;
+static uint32_t enc0_soft_poll_last_status_ms;
+
+static void enc0_index_hunt_soft_poll_compare_to_pcnt_index(int32_t pcnt_now)
+{
+	int32_t compare_delta;
+
+	if (!esp32_pcnt_index_have_origin)
+	{
+		return;
+	}
+
+	compare_delta = enc0_wrap_delta(enc0_wrap_add(0, pcnt_now, (int32_t)ENC0_READ_WRAP),
+									enc0_wrap_add(0, esp32_pcnt_index_last_position, (int32_t)ENC0_READ_WRAP),
+									(int32_t)ENC0_READ_WRAP);
+	enc0_soft_poll_last_pcnt_compare_delta = compare_delta;
+	if ((uint32_t)ABS(compare_delta) > ENC0_INDEX_HUNT_COMPARE_MAX_DELTA)
+	{
+		enc0_soft_poll_compare_reject_count++;
+		return;
+	}
+
+	if (!enc0_soft_poll_compare_count)
+	{
+		enc0_soft_poll_min_pcnt_compare_delta = compare_delta;
+		enc0_soft_poll_max_pcnt_compare_delta = compare_delta;
+	}
+	else
+	{
+		if (compare_delta < enc0_soft_poll_min_pcnt_compare_delta)
+		{
+			enc0_soft_poll_min_pcnt_compare_delta = compare_delta;
+		}
+		if (compare_delta > enc0_soft_poll_max_pcnt_compare_delta)
+		{
+			enc0_soft_poll_max_pcnt_compare_delta = compare_delta;
+		}
+	}
+	enc0_soft_poll_compare_count++;
+}
+
+static void enc0_index_hunt_soft_poll(void)
+{
+	uint8_t state = io_get_input(ENC0_INDEX) ? 1U : 0U;
+	int32_t pcnt_now;
+	int32_t marker_delta = 0;
+	uint32_t abs_marker_delta;
+	uint32_t min_delta;
+	uint32_t max_delta;
+
+	if (!enc0_soft_poll_have_state)
+	{
+		enc0_soft_poll_last_state = state;
+		enc0_soft_poll_have_state = 1;
+		return;
+	}
+
+	if (!state || enc0_soft_poll_last_state)
+	{
+		enc0_soft_poll_last_state = state;
+		return;
+	}
+	enc0_soft_poll_last_state = state;
+
+	pcnt_now = encoder_get_position(ENC0);
+	if (enc0_soft_poll_have_ref)
+	{
+		marker_delta = enc0_wrap_delta(enc0_wrap_add(0, pcnt_now, (int32_t)ENC0_READ_WRAP),
+									   enc0_wrap_add(0, enc0_soft_poll_last_pcnt, (int32_t)ENC0_READ_WRAP),
+									   (int32_t)ENC0_READ_WRAP);
+	}
+
+	abs_marker_delta = (uint32_t)ABS(marker_delta);
+	min_delta = esp32_pcnt_encoder_index_min_delta();
+	max_delta = esp32_pcnt_encoder_index_max_delta();
+	if (enc0_soft_poll_have_ref && abs_marker_delta < ENC0_INDEX_HUNT_MIN_MARKER_DELTA)
+	{
+		enc0_soft_poll_near_count++;
+		return;
+	}
+	if (enc0_soft_poll_have_ref && (abs_marker_delta < min_delta || abs_marker_delta > max_delta))
+	{
+		enc0_soft_poll_far_count++;
+		enc0_soft_poll_last_pcnt = pcnt_now;
+		enc0_soft_poll_last_delta = marker_delta;
+		return;
+	}
+
+	enc0_soft_poll_have_ref = true;
+	enc0_soft_poll_last_pcnt = pcnt_now;
+	enc0_soft_poll_last_delta = marker_delta;
+	enc0_soft_poll_edge_count++;
+	enc0_index_hunt_soft_poll_compare_to_pcnt_index(pcnt_now);
+	enc0_index_hunt_store_sample(ENC0_INDEX_MODE_SOFTWARE_POLL, pcnt_now - marker_delta, 0, 0, 0, 0, true);
+}
+
+static void enc0_index_hunt_soft_poll_status(void)
+{
+#ifdef ENC0_INDEX_HUNT_DEBUG
+	uint32_t now_ms = mcu_millis();
+
+	if ((uint32_t)(now_ms - enc0_soft_poll_last_status_ms) < ENC0_INDEX_SOFT_POLL_STATUS_MS)
+	{
+		return;
+	}
+	enc0_soft_poll_last_status_ms = now_ms;
+
+	proto_info("MSG:[IDXHUNT SOFT] pcnt=%ld edges=%lu near=%lu far=%lu md=%ld cmp=%ld cmin=%ld cmax=%ld cn=%lu crj=%lu cwin=%lu pin=%u",
+			   (long)encoder_get_position(ENC0),
+			   (unsigned long)enc0_soft_poll_edge_count,
+			   (unsigned long)enc0_soft_poll_near_count,
+			   (unsigned long)enc0_soft_poll_far_count,
+			   (long)enc0_soft_poll_last_delta,
+			   (long)enc0_soft_poll_last_pcnt_compare_delta,
+			   (long)enc0_soft_poll_min_pcnt_compare_delta,
+			   (long)enc0_soft_poll_max_pcnt_compare_delta,
+			   (unsigned long)enc0_soft_poll_compare_count,
+			   (unsigned long)enc0_soft_poll_compare_reject_count,
+			   (unsigned long)ENC0_INDEX_HUNT_COMPARE_MAX_DELTA,
+			   (unsigned)enc0_soft_poll_last_state);
 #endif
 }
 #endif
@@ -1219,6 +1371,10 @@ static bool esp32_pcnt_encoder_dotasks(void *args)
 	esp32_pcnt_encoder_drain_index_pcnt();
 #endif
 	esp32_pcnt_encoder_process_index();
+#if ENC0_INDEX_SOFT_POLL_ENABLE
+	enc0_index_hunt_soft_poll();
+	enc0_index_hunt_soft_poll_status();
+#endif
 #if ENC0_INDEX_MODE == ENC0_INDEX_MODE_RMT_MARKER
 #if ENC0_RMT_ABZ_CAPTURE
 	enc0_index_hunt_rmt_abz_drain();

@@ -165,6 +165,7 @@ Modes:
 #define ENC0_INDEX_MODE_PCNT_INDEX 1
 #define ENC0_INDEX_MODE_RMT_MARKER 2
 #define ENC0_INDEX_MODE_DFF_LATCH 3
+#define ENC0_INDEX_MODE_SOFTWARE_POLL 4
 ```
 
 `ENC0_INDEX_MODE` defaults to `ENC0_INDEX_MODE_LEGACY_ISR`. For the current
@@ -204,6 +205,23 @@ The ABZ debug stream reports packet, symbol, edge, duration, timestamp, and PCNT
 snapshots for A and B. This is intended to inspect signal timing and compare RMT
 capture behavior against the existing PCNT path. It is not yet a motion sync
 source.
+
+A fifth diagnostic path can poll the normal `ENC0_INDEX` input directly from
+`cnc_io_dotasks`:
+
+```c
+#define ENC0_INDEX_SOFT_POLL_ENABLE 1
+```
+
+This can run alongside RMT marker testing. It reports:
+
+```text
+[IDXHUNT SOFT] pcnt=... edges=... near=... far=... md=... cmp=... cmin=... cmax=... cn=... crj=...
+```
+
+This is intentionally the simplest possible baseline: no hardware capture, just
+software edge polling in the module task loop. It is useful for comparing loop
+latency against the PCNT index mailbox and RMT marker diagnostics.
 
 ## Notes
 

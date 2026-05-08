@@ -234,12 +234,14 @@ ESP32 GPIO ISR:
 It reports:
 
 ```text
-[IDXHUNT ISR] pcnt=... raw=... edges=... pend=... lvl=... us=... near=... far=... md=... cmp=... cmin=... cmax=... cn=... crj=...
+[IDXHUNT ISR] pcnt=... raw=... edges=... pend=... ovf=... lvl=... us=... near=... far=... md=... cmp=... cmin=... cmax=... cn=... crj=... ring=...
 ```
 
 This is still experimental. The ISR only captures a small mailbox: raw event
 count, pin level, timestamp, and the main PCNT count as close to the GPIO edge as
-possible. The normal task loop performs filtering and debug output.
+possible. The normal task loop performs filtering and debug output. The mailbox
+is a small ring so the diagnostic can classify multiple ISR edges between task
+passes; `ovf` reports if that ring overflows.
 
 For comparison, the PCNT index mailbox can be configured to count both edges:
 

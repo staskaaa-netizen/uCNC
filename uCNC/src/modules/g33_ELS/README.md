@@ -174,7 +174,7 @@ The current ELS generator emits pulses directly with:
 
 ```c
 io_set_steps(active);
-mcu_delay_us(G33_ELS_STEP_PULSE_US);
+mcu_delay_us(g33_els_step_pulse_us());
 io_set_steps(idle);
 ```
 
@@ -206,15 +206,17 @@ This module uses:
 g_settings.max_step_rate
 ```
 
-as a safety cap for direct step pulse emission. In the current tested uCNC
-configuration this is reported as `$0` and behaves as kHz. For example:
+as a safety cap for direct step pulse emission. In uCNC this is reported as
+`$0` and is the maximum step period in microseconds. For example:
 
 ```text
 $0 = 8.000
 ```
 
-caps direct G33 output at about 8 kHz, or roughly 125 us between emitted step
-pulses.
+caps direct G33 output at about 125 kHz, or roughly 8 us between emitted step
+pulses. With the default `G33_ELS_STEP_PULSE_US = 0`, the ELS pulse high time is
+derived from `$0 / 2`, matching the normal ESP32 interpolator's max-rate
+step/reset half-period.
 
 This cap only limits the direct ELS pulse generator. Normal planner moves and
 jogs still use uCNC's normal planner/interpolator path.
@@ -225,10 +227,12 @@ If your uCNC build or branch documents `$0` differently, confirm the units for
 ## Options
 
 ```c
-#define G33_ELS_STEP_PULSE_US 5
+#define G33_ELS_STEP_PULSE_US 0
 ```
 
-Sets the direct step pulse width in microseconds.
+Sets the direct step pulse width in microseconds. The default `0` means
+automatic: use half of `$0`, rounded to at least 1 us. Set a non-zero value to
+force a fixed direct pulse width.
 
 ```c
 #define G33_ELS_DIR_SETUP_US 5

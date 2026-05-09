@@ -27,7 +27,7 @@
 #endif
 
 #ifndef G33_ELS_STEP_PULSE_US
-#define G33_ELS_STEP_PULSE_US 5UL
+#define G33_ELS_STEP_PULSE_US 0UL
 #endif
 
 #ifndef G33_ELS_DIR_SETUP_US
@@ -126,10 +126,21 @@ static uint8_t g33_els_stepper_io_mask(uint8_t stepper)
 	}
 }
 
+static uint32_t g33_els_step_pulse_us(void)
+{
+#if G33_ELS_STEP_PULSE_US > 0
+	return G33_ELS_STEP_PULSE_US;
+#else
+	// µCNC $0 is the maximum step period in microseconds. At the max rate
+	// the normal ESP32 interpolator alternates step/reset on half-period ticks.
+	return (uint32_t)MAX(1.0f, floorf((g_settings.max_step_rate * 0.5f) + 0.5f));
+#endif
+}
+
 static void g33_els_emit_step(uint8_t stepbits)
 {
 	io_set_steps(g_settings.step_invert_mask ^ stepbits);
-	mcu_delay_us(G33_ELS_STEP_PULSE_US);
+	mcu_delay_us(g33_els_step_pulse_us());
 	io_set_steps(g_settings.step_invert_mask);
 }
 
@@ -224,7 +235,7 @@ static uint8_t g33_els_direct_motion(int32_t *prev_step_pos, int32_t *next_step_
 	uint8_t forward_dirbits = 0;
 	uint8_t reverse_dirbits = 0;
 	int32_t emitted_master_steps = 0;
-	uint32_t min_step_us = G33_ELS_STEP_PULSE_US * 2;
+	uint32_t min_step_us = g33_els_step_pulse_us() * 2;
 	uint32_t last_step_us = 0;
 	int32_t encoder_start = 0;
 	int8_t encoder_dir = 0;
@@ -251,8 +262,7 @@ static uint8_t g33_els_direct_motion(int32_t *prev_step_pos, int32_t *next_step_
 
 	if (g_settings.max_step_rate > 1)
 	{
-		uint32_t max_rate_us = (uint32_t)(1000.0f / g_settings.max_step_rate);
-		min_step_us = MAX(min_step_us, max_rate_us);
+		min_step_us = MAX(min_step_us, (uint32_t)ceilf(g_settings.max_step_rate));
 	}
 
 #if G33_ELS_RAMP_ENABLE
@@ -260,7 +270,7 @@ static uint8_t g33_els_direct_motion(int32_t *prev_step_pos, int32_t *next_step_
 	ramp_max_rate = g33_els_axis_setting_to_step_rate(AXIS_Z, g_settings.max_feed_rate[AXIS_Z]);
 	if (g_settings.max_step_rate > 1)
 	{
-		ramp_max_rate = MIN(ramp_max_rate, g_settings.max_step_rate * 1000.0f);
+		ramp_max_rate = MIN(ramp_max_rate, 1000000.0f / g_settings.max_step_rate);
 	}
 	if (ramp_accel <= 0 || ramp_max_rate <= 0)
 	{

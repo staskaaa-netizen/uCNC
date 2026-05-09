@@ -47,7 +47,7 @@
 #endif
 
 #ifndef G33_ELS_SHADOW_PLANNER_ENABLE
-#define G33_ELS_SHADOW_PLANNER_ENABLE 1
+#define G33_ELS_SHADOW_PLANNER_ENABLE 0
 #endif
 
 static volatile int32_t g33_els_index_counter;

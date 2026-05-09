@@ -38,6 +38,36 @@ LOAD_MODULE(g33);
 #define G33_ENCODER ENC0
 ```
 
+### Virtual Index Updates
+
+On ESP32 builds using the `esp32_pcnt_encoder` module, G33 can run from the
+encoder module's virtual index hook instead of a dedicated `G33_INDEX_PIN`.
+PCNT0 A/B remains the spindle position source, and the encoder module fires the
+normal `enc0_index` hook whenever the PCNT count crosses a configurable modulo
+boundary.
+
+```c
+#define G33_ENCODER ENC0
+#define ENC0_INDEX_VIRTUAL_FIRE_HOOK 1
+#define ENC0_VIRTUAL_INDEXES_PER_REV 5
+#define ENC0_INDEX_AUTO_ORIGIN 1
+```
+
+`ENC0_VIRTUAL_INDEXES_PER_REV` sets how many synthetic index updates are fired
+per spindle revolution. `1` gives one update per revolution. Higher values, such
+as `5`, update G33's RPM/feed correction more often, which can make the synced
+planner move track spindle speed changes more smoothly.
+
+When `ENC0_INDEX_AUTO_ORIGIN` is enabled, no physical G33 index pin is required:
+the current PCNT count becomes the modulo origin. A physical encoder Z/index pin
+may still be used by the encoder module as an optional phase/tooth reference, but
+G33 itself only needs the `enc0_index` hook.
+
+`G33_INDEXES_PER_REV` defaults to `ENC0_VIRTUAL_INDEXES_PER_REV` when G33 uses
+`ENC0`; define it explicitly only if another encoder backend provides virtual
+index hooks at a different rate. For multiple updates per revolution,
+`G33_CORRECTION_GAIN` defaults to `0.25f` so each small correction is damped.
+
 Inside the index ISR a floating point math operation is performed. If this causes issues on a specific architecture you can enable an option to replace it by a fixed point operation.
 
 `#define G33_REPLACE_FP_OPERATION_IN_ISR`

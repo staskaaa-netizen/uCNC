@@ -46,6 +46,22 @@
 #define ENC0_INDEX_VIRTUAL_FIRE_HOOK 1
 #endif
 
+#ifndef ENC0_VIRTUAL_INDEXES_PER_REV
+#define ENC0_VIRTUAL_INDEXES_PER_REV 1U
+#endif
+
+#if (ENC0_VIRTUAL_INDEXES_PER_REV < 1)
+#error "ENC0_VIRTUAL_INDEXES_PER_REV must be >= 1"
+#endif
+
+#ifndef ENC0_INDEX_AUTO_ORIGIN
+#ifdef ENC0_INDEX_GPIO
+#define ENC0_INDEX_AUTO_ORIGIN 0
+#else
+#define ENC0_INDEX_AUTO_ORIGIN 1
+#endif
+#endif
+
 static bool esp32_pcnt_encoder_ready;
 static int32_t esp32_pcnt_encoder_offset;
 
@@ -182,6 +198,18 @@ static void enc0_virtual_index_task(void)
 		return;
 	}
 
+	/*
+	 * Virtual index mode.
+	 * ENC0_VIRTUAL_INDEXES_PER_REV = 1 gives the old behavior: one synthetic
+	 * index per encoder revolution. 10, 32, 50, etc. give more frequent
+	 * G33 feed correction points without generating any real GPIO pulse.
+	 */
+	cpr = (cpr + (ENC0_VIRTUAL_INDEXES_PER_REV / 2U)) / ENC0_VIRTUAL_INDEXES_PER_REV;
+	if (!cpr)
+	{
+		cpr = 1;
+	}
+
 	now = encoder_get_position(ENC0);
 	if (!enc0_index_have_origin)
 	{
@@ -191,7 +219,11 @@ static void enc0_virtual_index_task(void)
 		}
 		else
 		{
+#if ENC0_INDEX_AUTO_ORIGIN
+			enc0_index_origin = now;
+#else
 			return;
+#endif
 		}
 		enc0_index_last_position = enc0_index_origin;
 		enc0_index_have_origin = true;

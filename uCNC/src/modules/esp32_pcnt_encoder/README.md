@@ -9,8 +9,10 @@ threading.
 - Uses PCNT unit 0 for encoder A/B quadrature.
 - Extends the signed 16-bit PCNT value in software with an offset.
 - Recenters the hardware PCNT counter before it reaches the 16-bit edge.
-- Uses the physical Z/index pulse only to name the spindle phase/tooth.
+- Uses the physical Z/index pulse only to name the spindle phase/tooth when one
+  is available.
 - Publishes the normal `enc0_index` hook from a PCNT0 modulo virtual index.
+- Can emit more than one virtual index per revolution for faster G33 correction.
 - Uses Grbl/µCNC encoder resolution setting `$150` as the modulo CPR.
 - Reports index interval statistics through the normal encoder status helpers.
 
@@ -35,6 +37,9 @@ Example for encoder 0:
 #define ENC0_CPR 4000
 
 #define ENC0_INDEX_GPIO DIN5_BIT
+#define ENC0_INDEX_VIRTUAL_FIRE_HOOK 1
+#define ENC0_VIRTUAL_INDEXES_PER_REV 5
+#define ENC0_INDEX_AUTO_ORIGIN 1
 
 #define SPINDLE_PWM_RPM_ENCODER ENC0
 #define G33_ENCODER ENC0
@@ -64,21 +69,30 @@ Example:
 Keep the A/B filter shorter than the real A/B high or low pulse width at maximum
 spindle RPM, or real encoder pulses can be filtered out.
 
-## Index Path
+## Virtual Index Path
 
 The working index path is:
 
-1. GPIO ISR captures the physical Z/index rising edge and snapshots PCNT0.
-2. That snapshot becomes the modulo origin.
-3. The task loop watches PCNT0 and emits one virtual index at every `$150` counts.
-4. The virtual index fires the normal `enc0_index` hook used by G33/G33 ELS.
+1. PCNT0 A/B counts spindle position continuously.
+2. If a physical Z/index GPIO is configured and seen, its ISR snapshots PCNT0 and
+   names the modulo origin.
+3. If `ENC0_INDEX_AUTO_ORIGIN` is enabled, the current PCNT0 count can become the
+   origin even without a physical Z/index pulse.
+4. The task loop watches PCNT0 and emits a virtual index at every modulo
+   boundary.
+5. The virtual index fires the normal `enc0_index` hook used by G33.
 
 The standard encoder module fires index hooks on the logical rising edge. This
 module follows that convention with `GPIO_INTR_POSEDGE`.
 
-No second PCNT unit is used for index anymore. The index pin is handled only by
-the GPIO ISR, and the G33 hook is fired only from the virtual PCNT0 modulo
-crossing.
+No second PCNT unit is used for index anymore. A physical index pin is optional:
+it only names phase. The G33 hook is fired from the virtual PCNT0 modulo crossing.
+
+`ENC0_VIRTUAL_INDEXES_PER_REV` splits the `$150` encoder resolution into several
+virtual index periods. For example, with `$150 = 4000` and
+`ENC0_VIRTUAL_INDEXES_PER_REV = 5`, the module fires `enc0_index` every 800 PCNT
+counts. G33 then measures RPM and corrects feed five times per spindle revolution
+while the spindle position truth remains PCNT0.
 
 ## Status Helpers
 
@@ -111,9 +125,12 @@ Fields:
 ## Notes
 
 - PCNT0 A/B is the spindle truth.
-- The physical index names phase; it does not drive motion directly.
-- Virtual modulo index is the active G33/G33 ELS hook source.
+- The physical index is optional and only names phase; it does not drive motion
+  directly.
+- Virtual modulo index is the active G33 hook source.
 - `$150` must match the PCNT0 counts per spindle revolution.
+- `ENC0_VIRTUAL_INDEXES_PER_REV` must match the correction rate expected by G33
+  through `G33_INDEXES_PER_REV`.
 - `ENC0_PCNT_RECENTER_THRESHOLD` defaults to `20000`, keeping the raw PCNT value
   away from the signed 16-bit boundary.
 - GPIO34-GPIO39 on classic ESP32 are input-only and have no internal pullups or

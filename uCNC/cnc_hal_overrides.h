@@ -51,11 +51,13 @@ extern "C"
 
 #define G33_ENCODER ENC0
 
-#define G33_INDEX_PIN  DIN5
-#define ENC0_INDEX G33_INDEX_PIN
+#define G33_INDEX_PIN  255
+#define ENC0_INDEX DIN5
 #define ENC0_INDEX_GPIO DIN5_BIT
 #define ENCODER_PCNT_FILTER 10
 #define ENC0_INDEX_VIRTUAL_FIRE_HOOK 1
+#define ENC0_VIRTUAL_INDEXES_PER_REV 5
+#define ENC0_INDEX_AUTO_ORIGIN 1
 
 #define ENC0_CPR 4000
 
@@ -74,7 +76,7 @@ extern "C"
 //#define DISABLE_RTC_CODE
 
 
-#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(esp32_pcnt_encoder);LOAD_MODULE(sd_card_v2);LOAD_MODULE(ui_snapshot_builder);LOAD_MODULE(ra_renderer);LOAD_MODULE(g7_g8);LOAD_MODULE(g33_ELS);}) 
+#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(esp32_pcnt_encoder);LOAD_MODULE(sd_card_v2);LOAD_MODULE(ui_snapshot_builder);LOAD_MODULE(ra_renderer);LOAD_MODULE(g7_g8);LOAD_MODULE(g33);})
 
 #ifdef __cplusplus
 }

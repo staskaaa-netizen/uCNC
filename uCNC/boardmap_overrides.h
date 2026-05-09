@@ -56,7 +56,7 @@ extern "C"
 #define DIN4_BIT 34
 #define DIN4_ISR
 #define DIN5_BIT 2
-#define DIN5_ISR
+//#define DIN5_ISR
 
 
 #define I2C_CLK_BIT 14

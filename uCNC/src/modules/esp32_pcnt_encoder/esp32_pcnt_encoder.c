@@ -54,12 +54,10 @@
 #error "ENC0_VIRTUAL_INDEXES_PER_REV must be >= 1"
 #endif
 
-#ifndef ENC0_INDEX_AUTO_ORIGIN
-#ifdef ENC0_INDEX_GPIO
-#define ENC0_INDEX_AUTO_ORIGIN 0
-#else
-#define ENC0_INDEX_AUTO_ORIGIN 1
-#endif
+#ifndef ENC0_VIRTUAL_MAX_CATCHUP_SLOTS
+// Do not emit many hooks in one cnc_io_dotasks pass. G33 uses actual PCNT
+// phase, so one current-position hook is enough and avoids dt=0 storms.
+#define ENC0_VIRTUAL_MAX_CATCHUP_SLOTS 1U
 #endif
 
 static bool esp32_pcnt_encoder_ready;
@@ -182,56 +180,68 @@ static void enc0_accept_virtual_index(int32_t boundary)
 #if ENC0_INDEX_VIRTUAL_FIRE_HOOK
 	HOOK_INVOKE(enc0_index);
 #endif
+#if ENCODER_DEBUG_PRINT_100MS
 	esp32_pcnt_encoder_update_index_debug();
+#endif
 }
+
+void enc0_virtual_index_unarm(void)
+{
+    enc0_index_have_origin = false;
+    enc0_index_have_slot = false;
+    enc0_index_last_position = 0;
+
+    // Force next G33 to wait for fresh physical index.
+    enc0_isr_have_ref = false;
+}
+
 
 static void enc0_virtual_index_task(void)
 {
-	uint32_t cpr = esp32_pcnt_encoder_index_resolution();
+	uint32_t enc_res = esp32_pcnt_encoder_index_resolution();
+	int32_t slot_size;
 	int32_t now;
 	int32_t rel;
 	int32_t slot;
+	int32_t slot_delta;
 	int32_t boundary;
 
-	if (!cpr)
+	if (!enc_res)
 	{
 		return;
 	}
 
-	/*
-	 * Virtual index mode.
-	 * ENC0_VIRTUAL_INDEXES_PER_REV = 1 gives the old behavior: one synthetic
-	 * index per encoder revolution. 10, 32, 50, etc. give more frequent
-	 * G33 feed correction points without generating any real GPIO pulse.
-	 */
-	cpr = (cpr + (ENC0_VIRTUAL_INDEXES_PER_REV / 2U)) / ENC0_VIRTUAL_INDEXES_PER_REV;
-	if (!cpr)
+	// Slot size is encoder counts per *virtual* index, not per physical rev.
+	// Example: 4000 counts/rev and 10 virtual indexes => 400 counts/slot.
+	slot_size = (int32_t)((enc_res + (ENC0_VIRTUAL_INDEXES_PER_REV / 2U)) / ENC0_VIRTUAL_INDEXES_PER_REV);
+	if (slot_size < 1)
 	{
-		cpr = 1;
+		slot_size = 1;
 	}
 
 	now = encoder_get_position(ENC0);
 	if (!enc0_index_have_origin)
 	{
+		// Physical index is the phase starter. Do not auto-origin here, because then
+		// G33 may start at any arbitrary virtual slot.
 		if (enc0_isr_have_ref)
 		{
 			enc0_index_origin = enc0_isr_ref_pcnt;
 		}
 		else
 		{
-#if ENC0_INDEX_AUTO_ORIGIN
-			enc0_index_origin = now;
-#else
 			return;
-#endif
 		}
 		enc0_index_last_position = enc0_index_origin;
 		enc0_index_have_origin = true;
-		esp32_pcnt_encoder_update_index_debug();
+		enc0_index_have_slot = false;
+		#if ENCODER_DEBUG_PRINT_100MS
+	esp32_pcnt_encoder_update_index_debug();
+#endif
 	}
 
 	rel = now - enc0_index_origin;
-	slot = enc0_floor_div_i32(rel, (int32_t)cpr);
+	slot = enc0_floor_div_i32(rel, slot_size);
 	if (!enc0_index_have_slot)
 	{
 		enc0_index_last_slot = slot;
@@ -243,7 +253,29 @@ static void enc0_virtual_index_task(void)
 		return;
 	}
 
-	boundary = enc0_index_origin + ((slot > enc0_index_last_slot) ? slot : enc0_index_last_slot) * (int32_t)cpr;
+	slot_delta = slot - enc0_index_last_slot;
+
+	// If cnc_io_dotasks was late and several virtual slots were crossed, do not
+	// call the G33 hook multiple times with nearly identical timestamps. Emit one
+	// hook at the latest crossed boundary. PCNT-mode G33 reads actual PCNT count
+	// for phase, so it only needs a fresh update trigger.
+	if (slot_delta > 0)
+	{
+		if (slot_delta > (int32_t)ENC0_VIRTUAL_MAX_CATCHUP_SLOTS)
+		{
+			enc0_index_ignored_count += (uint32_t)(slot_delta - 1);
+		}
+		boundary = enc0_index_origin + slot * slot_size;
+	}
+	else
+	{
+		if ((-slot_delta) > (int32_t)ENC0_VIRTUAL_MAX_CATCHUP_SLOTS)
+		{
+			enc0_index_ignored_count += (uint32_t)((-slot_delta) - 1);
+		}
+		boundary = enc0_index_origin + slot * slot_size;
+	}
+
 	enc0_index_last_slot = slot;
 	enc0_accept_virtual_index(boundary);
 }
@@ -403,11 +435,13 @@ static bool esp32_pcnt_encoder_dotasks(void *args)
 {
 	(void)args;
 	enc0_virtual_index_task();
+	#if ENCODER_DEBUG_PRINT_100MS
 	esp32_pcnt_encoder_update_index_debug();
+#endif
 	return EVENT_CONTINUE;
 }
 
-CREATE_EVENT_LISTENER(cnc_dotasks, esp32_pcnt_encoder_dotasks);
+CREATE_EVENT_LISTENER(cnc_io_dotasks, esp32_pcnt_encoder_dotasks);
 
 DECL_MODULE(esp32_pcnt_encoder)
 {
@@ -416,7 +450,7 @@ DECL_MODULE(esp32_pcnt_encoder)
 	gpio_install_isr_service(0);
 	enc0_index_gpio_isr_init();
 #endif
-	ADD_EVENT_LISTENER(cnc_dotasks, esp32_pcnt_encoder_dotasks);
+	ADD_EVENT_LISTENER(cnc_io_dotasks, esp32_pcnt_encoder_dotasks);
 	esp32_pcnt_encoder_ready = true;
 }
 

@@ -14,6 +14,7 @@
 #include <stdbool.h>
 #include <math.h>
 #include <string.h>
+#include <float.h>
 
 #ifdef ENABLE_PARSER_MODULES
 
@@ -43,6 +44,10 @@
 
 #ifndef G33_ELS_LOCK_REV_MIN
 #define G33_ELS_LOCK_REV_MIN 2
+#endif
+
+#ifndef G33_ELS_SHADOW_PLANNER_ENABLE
+#define G33_ELS_SHADOW_PLANNER_ENABLE 1
 #endif
 
 static volatile int32_t g33_els_index_counter;
@@ -490,6 +495,37 @@ static uint8_t g33_els_direct_motion(int32_t *prev_step_pos, int32_t *next_step_
 	return STATUS_OK;
 }
 
+#if G33_ELS_SHADOW_PLANNER_ENABLE
+static uint8_t g33_els_enqueue_shadow_motion(float *target, motion_data_t *block_data)
+{
+	motion_data_t shadow_block;
+
+	// Queue the same target through the normal planner as a synced shadow move.
+	// The synced segment keeps µCNC's planner/interlock state aware of the move,
+	// but itp_start(true) will not start the timer. Real step emission still
+	// happens only in the spindle-driven ELS follower below.
+	memcpy(&shadow_block, block_data, sizeof(shadow_block));
+	shadow_block.motion_flags.bit.synched = 1;
+	if (shadow_block.feed <= 0)
+	{
+		shadow_block.feed = FLT_MAX;
+	}
+
+	return mc_line(target, &shadow_block);
+}
+
+static void g33_els_clear_shadow_motion(void)
+{
+	itp_clear();
+	// Keep the planner/tool side data intact, matching µCNC's probe/hold flushes.
+	while (!planner_buffer_is_empty())
+	{
+		planner_discard_block();
+	}
+	mc_sync_position();
+}
+#endif
+
 #define G33 33
 
 static bool g33_els_parse(void *args);
@@ -615,10 +651,23 @@ static bool g33_els_exec(void *args)
 	g33_els_steps_per_rev = lroundf(steps_per_rev);
 	g33_els_steps_per_encoder_count = g33_els_encoder_cpr ? fast_flt_div(steps_per_rev, (float)g33_els_encoder_cpr) : 0;
 
+#if G33_ELS_SHADOW_PLANNER_ENABLE
+	uint8_t shadow_error = g33_els_enqueue_shadow_motion(ptr->target, ptr->block_data);
+	if (shadow_error != STATUS_OK)
+	{
+		g33_els_release_index_hook();
+		*(ptr->error) = shadow_error;
+		return EVENT_HANDLED;
+	}
+#endif
+
 	g33_els_active = true;
 	uint8_t exec_error = g33_els_direct_motion(prev_step_pos, next_step_pos, total_steps);
 	g33_els_active = false;
 	g33_els_release_index_hook();
+#if G33_ELS_SHADOW_PLANNER_ENABLE
+	g33_els_clear_shadow_motion();
+#endif
 
 	if (exec_error != STATUS_OK)
 	{

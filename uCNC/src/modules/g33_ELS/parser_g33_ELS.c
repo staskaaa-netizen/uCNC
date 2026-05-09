@@ -232,6 +232,7 @@ static uint8_t g33_els_direct_motion(int32_t *prev_step_pos, int32_t *next_step_
 	float ramp_accel = 0;
 	float ramp_max_rate = 0;
 	float ramp_rate = 0;
+	float ramp_allowed_rate = 0;
 	uint32_t ramp_last_us = 0;
 	bool ramp_decel = false;
 	bool ramp_locked = false;
@@ -364,18 +365,17 @@ static uint8_t g33_els_direct_motion(int32_t *prev_step_pos, int32_t *next_step_
 		if (ramp_accel > 0 && ramp_max_rate > 0)
 		{
 			float rate_delta = ramp_accel * ramp_dt;
+			ramp_rate = MIN(ramp_max_rate, ramp_rate + rate_delta);
+			ramp_allowed_rate = ramp_rate;
 			if (ramp_decel)
 			{
-				ramp_rate = MAX(0, ramp_rate - rate_delta);
-			}
-			else
-			{
-				ramp_rate = MIN(ramp_max_rate, ramp_rate + rate_delta);
+				float brake_rate = sqrtf(2.0f * ramp_accel * (float)remaining_steps);
+				ramp_allowed_rate = MIN(ramp_allowed_rate, brake_rate);
 			}
 
-			if (wanted_master_steps != emitted_master_steps && ramp_rate < 1.0f)
+			if (wanted_master_steps != emitted_master_steps && ramp_allowed_rate < 1.0f)
 			{
-				ramp_rate = 1.0f;
+				ramp_allowed_rate = 1.0f;
 			}
 
 			if (!ramp_locked && spindle_counts >= ramp_lock_counts && ABS(wanted_master_steps - emitted_master_steps) <= 1)
@@ -392,7 +392,7 @@ static uint8_t g33_els_direct_motion(int32_t *prev_step_pos, int32_t *next_step_
 			int32_t debug_error = wanted_master_steps - emitted_master_steps;
 			uint32_t debug_remaining = total_steps - (uint32_t)emitted_master_steps;
 			uint32_t debug_brake = (ramp_accel > 0 && ramp_rate > 0) ? (uint32_t)ceilf((ramp_rate * ramp_rate) / (2.0f * ramp_accel)) : 0;
-			proto_info("MSG:G33ELS ramp:rate:%f err:%ld brake:%lu rem:%lu phase:%u", ramp_rate, debug_error, debug_brake, debug_remaining, ramp_locked ? 2 : (ramp_decel ? 4 : 3));
+			proto_info("MSG:G33ELS ramp:rate:%f allow:%f err:%ld brake:%lu rem:%lu phase:%u", ramp_rate, ramp_allowed_rate, debug_error, debug_brake, debug_remaining, ramp_locked ? 2 : (ramp_decel ? 4 : 3));
 #else
 			proto_info("MSG:G33ELS EC:%ld d:%ld c:%ld want:%ld sent:%ld", encoder_get_position(G33_ENCODER), encoder_delta, spindle_counts, wanted_master_steps, emitted_master_steps);
 #endif
@@ -408,23 +408,23 @@ static uint8_t g33_els_direct_motion(int32_t *prev_step_pos, int32_t *next_step_
 			if (ramp_accel > 0 && ramp_max_rate > 0)
 			{
 				float rate_delta = ramp_accel * (float)((uint32_t)(now - ramp_last_us)) * 0.000001f;
+				uint32_t inner_remaining_steps = total_steps - (uint32_t)emitted_master_steps;
 				ramp_last_us = now;
+				ramp_rate = MIN(ramp_max_rate, ramp_rate + rate_delta);
+				ramp_allowed_rate = ramp_rate;
 				if (ramp_decel)
 				{
-					ramp_rate = MAX(0, ramp_rate - rate_delta);
+					float brake_rate = sqrtf(2.0f * ramp_accel * (float)inner_remaining_steps);
+					ramp_allowed_rate = MIN(ramp_allowed_rate, brake_rate);
 				}
-				else
+				if (ramp_allowed_rate < 1.0f)
 				{
-					ramp_rate = MIN(ramp_max_rate, ramp_rate + rate_delta);
-				}
-				if (ramp_rate < 1.0f)
-				{
-					ramp_rate = 1.0f;
+					ramp_allowed_rate = 1.0f;
 				}
 			}
-			if (ramp_accel > 0 && ramp_max_rate > 0 && ramp_rate > 0)
+			if (ramp_accel > 0 && ramp_max_rate > 0 && ramp_allowed_rate > 0)
 			{
-				uint32_t ramp_step_us = (uint32_t)ceilf(1000000.0f / ramp_rate);
+				uint32_t ramp_step_us = (uint32_t)ceilf(1000000.0f / ramp_allowed_rate);
 				step_wait_us = MAX(step_wait_us, ramp_step_us);
 			}
 #endif

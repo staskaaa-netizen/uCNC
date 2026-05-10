@@ -354,9 +354,6 @@ static void encoder_esp32_pcnt_init(uint8_t unit, int pulse_gpio, int dir_gpio)
 
 #elif ENC0_PCNT_COUNT_MODE == 4
 
-
-#elif ENC0_PCNT_COUNT_MODE == 4
-
    pcnt_config_t ch0 = {
 		.pulse_gpio_num = pulse_gpio,
 		.ctrl_gpio_num = dir_gpio,

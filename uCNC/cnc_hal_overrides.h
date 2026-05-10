@@ -45,7 +45,7 @@ extern "C"
 // PCNT count mode:
 // 1 = A/Z only, one count per A pulse. For 1000 PPR AZ test set $150=1000.
 // 4 = ABZ quadrature x4. For 1000 PPR ABZ set $150=4000.
-#define ENC0_PCNT_COUNT_MODE 2
+#define ENC0_PCNT_COUNT_MODE 4
 
 #define ENC0_PCNT_UNIT PCNT_UNIT_0
 #define ENC0_PCNT_RECENTER_THRESHOLD 20000

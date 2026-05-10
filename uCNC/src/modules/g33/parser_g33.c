@@ -76,13 +76,6 @@
 #define G33_DEBUG_EVERY_N 10U
 #endif
 
-#ifndef G33_PCNT_COUNTER_SIGN
-// Your current ESP32 PCNT direction log shows PCNT counts going negative while
-// Z sync steps go positive, so default is -1. Set to 1 if your encoder direction
-// already matches the G33 sync-step direction.
-#define G33_PCNT_COUNTER_SIGN (1)
-#endif
-
 // enable this to use the encoder pulse as the feedback loop marker/trigger
 //  #define G33_FEEDBACK_LOOP_USE_ENC_PULSE
 
@@ -496,10 +489,10 @@ bool g33_exec(void *args)
 #ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
 		steps_per_pcnt_count_q16 = (enc_res) ? (int32_t)lroundf((steps_per_rev * 65536.0f) / (float)enc_res) : 0;
 #ifdef G33_DEBUG
-		proto_info("MSG:G33 init total_steps=%lu total_revs=%f steps_rev=%f enc_res=%lu idx_rev=%lu spi=%lu q16=%ld rpm_const=%f feed=%f pcnt_sign=%d",
+		proto_info("MSG:G33 init total_steps=%lu total_revs=%f steps_rev=%f enc_res=%lu idx_rev=%lu spi=%lu q16=%ld rpm_const=%f feed=%f",
 		           (unsigned long)total_steps, total_revs, steps_per_rev, (unsigned long)enc_res,
 		           (unsigned long)G33_INDEXES_PER_REV, (unsigned long)steps_per_index,
-		           steps_per_pcnt_count_q16, rpm_to_stepfeed_constant, feed, (int)G33_PCNT_COUNTER_SIGN);
+		           steps_per_pcnt_count_q16, rpm_to_stepfeed_constant, feed);
 #endif
 #endif
 
@@ -717,7 +710,12 @@ bool spindle_sync_update_loop(void *ptr)
 			//     offset = raw_expected_steps - actual_steps
 			// Later updates subtract only this constant and correct only drift.
 			int32_t pcnt_delta = pcnt_counter_snapshot - pcnt_origin_snapshot;
-			int64_t expected_q16 = ((int64_t)pcnt_delta * (int64_t)steps_per_pcnt_count_q16 * (int64_t)G33_PCNT_COUNTER_SIGN);
+
+			
+			if (pcnt_delta < 0)
+				pcnt_delta = -pcnt_delta;
+
+			int64_t expected_q16 = ((int64_t)pcnt_delta * (int64_t)steps_per_pcnt_count_q16);
 			int32_t raw_expected_position;
 
 			// Round signed Q16.16 to integer steps and add the step origin captured at start.
@@ -796,9 +794,9 @@ bool spindle_sync_update_loop(void *ptr)
 			{
 				debug_div = 0;
 #ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-				proto_info("MSG:G33 pcnt=%ld org=%ld sorg=%ld dt=%lu rpm=%f base=%f corr=%f q16=%ld sign=%d off=%ld exp=%ld real=%ld err=%ld",
+				proto_info("MSG:G33 pcnt=%ld org=%ld sorg=%ld dt=%lu rpm=%f base=%f corr=%f q16=%ld off=%ld exp=%ld real=%ld err=%ld",
 			           pcnt_counter_snapshot, pcnt_origin_snapshot, step_origin_snapshot, (unsigned long)delta_t, index_rpm, base_step_rate, correction_step_rate,
-			           steps_per_pcnt_count_q16, (int)G33_PCNT_COUNTER_SIGN, pcnt_phase_offset_steps, expected_position, index_step_counter, error);
+			           steps_per_pcnt_count_q16, pcnt_phase_offset_steps, expected_position, index_step_counter, error);
 #else
 				proto_info("MSG:G33 idx=%ld dt=%lu rpm=%f base=%f corr=%f exp=%ld real=%ld err=%ld",
 				           index_counter, (unsigned long)delta_t, index_rpm, base_step_rate, correction_step_rate, expected_position, index_step_counter, error);

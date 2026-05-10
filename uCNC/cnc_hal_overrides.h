@@ -40,7 +40,13 @@ extern "C"
 #define ENC0_TYPE ENC_TYPE_CUSTOM
 
 #define ENC0_PULSE_GPIO 15  //36   // A
-#define ENC0_DIR_GPIO   17 // 39   // B
+#define ENC0_DIR_GPIO   17 // 39   // B; ignored in ENC0_PCNT_COUNT_MODE 1
+
+// PCNT count mode:
+// 1 = A/Z only, one count per A pulse. For 1000 PPR AZ test set $150=1000.
+// 4 = ABZ quadrature x4. For 1000 PPR ABZ set $150=4000.
+#define ENC0_PCNT_COUNT_MODE 2
+
 #define ENC0_PCNT_UNIT PCNT_UNIT_0
 #define ENC0_PCNT_RECENTER_THRESHOLD 20000
 
@@ -76,7 +82,7 @@ extern "C"
 //#define G33_DEBUG 1
 //#define ENC0_RESOLUTION 65536
 
-//#define ENCODER_DEBUG_PRINT_100MS   // optional test only
+//#define ENCODER_DEBUG_PRINT_100MS  1 // optional test only
 
 
 //Custom configurations

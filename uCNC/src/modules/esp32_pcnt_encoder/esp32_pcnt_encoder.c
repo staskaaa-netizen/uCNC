@@ -301,7 +301,63 @@ static void enc0_index_gpio_isr_init(void)
 
 static void encoder_esp32_pcnt_init(uint8_t unit, int pulse_gpio, int dir_gpio)
 {
+	#if ENC0_PCNT_COUNT_MODE == 1
+
+
 	pcnt_config_t ch0 = {
+		.pulse_gpio_num = pulse_gpio,
+		.ctrl_gpio_num  = PCNT_PIN_NOT_USED,
+
+		.lctrl_mode = PCNT_MODE_KEEP,
+		.hctrl_mode = PCNT_MODE_KEEP,
+
+		.pos_mode = PCNT_COUNT_INC,
+		.neg_mode = PCNT_COUNT_DIS,
+
+		.counter_h_lim = 32767,
+		.counter_l_lim = -32768,
+
+		.unit = (pcnt_unit_t)unit,
+		.channel = PCNT_CHANNEL_0,
+	};
+
+	
+	pcnt_unit_config(&ch0);
+
+	#elif ENC0_PCNT_COUNT_MODE == 2
+
+	// ------------------------------------------------------------
+	// 2x A-only mode (AZ wiring)
+	// Count rising + falling edges
+	// Example:
+	//   1000 PPR encoder -> $150 = 2000
+	// ------------------------------------------------------------
+
+	pcnt_config_t ch0 = {
+		.pulse_gpio_num = pulse_gpio,
+		.ctrl_gpio_num  = PCNT_PIN_NOT_USED,
+
+		.lctrl_mode = PCNT_MODE_KEEP,
+		.hctrl_mode = PCNT_MODE_KEEP,
+
+		.pos_mode = PCNT_COUNT_INC,
+		.neg_mode = PCNT_COUNT_INC,
+
+		.counter_h_lim = 32767,
+		.counter_l_lim = -32768,
+
+		.unit = (pcnt_unit_t)unit,
+		.channel = PCNT_CHANNEL_0,
+	};
+
+	pcnt_unit_config(&ch0);
+
+#elif ENC0_PCNT_COUNT_MODE == 4
+
+
+#elif ENC0_PCNT_COUNT_MODE == 4
+
+   pcnt_config_t ch0 = {
 		.pulse_gpio_num = pulse_gpio,
 		.ctrl_gpio_num = dir_gpio,
 		.lctrl_mode = PCNT_MODE_REVERSE,
@@ -329,6 +385,10 @@ static void encoder_esp32_pcnt_init(uint8_t unit, int pulse_gpio, int dir_gpio)
 
 	pcnt_unit_config(&ch0);
 	pcnt_unit_config(&ch1);
+
+#endif
+	
+
 
 #ifdef ENCODER_PCNT_FILTER
 	pcnt_set_filter_value((pcnt_unit_t)unit, ENCODER_PCNT_FILTER);
@@ -436,8 +496,8 @@ static bool esp32_pcnt_encoder_dotasks(void *args)
 	(void)args;
 	enc0_virtual_index_task();
 	#if ENCODER_DEBUG_PRINT_100MS
-	esp32_pcnt_encoder_update_index_debug();
-#endif
+		esp32_pcnt_encoder_update_index_debug();
+	#endif
 	return EVENT_CONTINUE;
 }
 

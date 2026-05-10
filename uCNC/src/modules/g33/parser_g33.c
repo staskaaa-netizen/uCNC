@@ -61,10 +61,10 @@
 #endif
 #endif
 
-// PCNT step-domain debug/test controls.
-// Enable G33_PCNT_COUNTER_FEED_ONLY_TEST to prove that the RPM/virtual-index
+// HW counter step-domain debug/test controls.
+// Enable G33_HW_COUNTER_FEED_ONLY_TEST to prove that the RPM/virtual-index
 // feed update alone is sane before adding phase-error correction.
-// #define G33_PCNT_COUNTER_FEED_ONLY_TEST
+// #define G33_HW_COUNTER_FEED_ONLY_TEST
 
 #ifndef G33_CORRECTION_MAX_FRAC
 // Clamp correction so a bad phase sample cannot collapse the feed to near zero.
@@ -80,11 +80,11 @@
 //  #define G33_FEEDBACK_LOOP_USE_ENC_PULSE
 
 // third mode: keep index/virtual-index hook only as update trigger,
-// but calculate phase error from raw PCNT encoder counts using a fixed
-// steps-per-PCNT-count slope calculated once before G33 motion starts.
-//  #define G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
+// but calculate phase error from raw hardware counter encoder counts using a fixed
+// steps-per-hardware-counter-count slope calculated once before G33 motion starts.
+//  #define G33_FEEDBACK_LOOP_USE_HW_COUNTER
 
-#if defined(G33_FEEDBACK_LOOP_USE_ENC_PULSE) && defined(G33_FEEDBACK_LOOP_USE_PCNT_COUNTER)
+#if defined(G33_FEEDBACK_LOOP_USE_ENC_PULSE) && defined(G33_FEEDBACK_LOOP_USE_HW_COUNTER)
 #error "Use only one G33 feedback loop mode"
 #endif
 
@@ -110,14 +110,14 @@ static uint32_t steps_per_index;					// motion steps per index pulse
 #ifdef G33_FEEDBACK_LOOP_USE_ENC_PULSE
 static uint32_t update_loop_index_counter; // keeps the last update loop index counter
 #endif
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-static volatile int32_t spindle_pcnt_counter;          // raw PCNT/encoder count at the current virtual index event
-static volatile int32_t spindle_pcnt_last_counter;     // raw PCNT/encoder count at the previous virtual index event
-static volatile int32_t spindle_pcnt_motion_origin;    // raw PCNT/encoder count at the real G33 start/index phase
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+static volatile int32_t spindle_hw_counter;          // raw HW counter/encoder count at the current virtual index event
+static volatile int32_t spindle_hw_last_counter;     // raw HW counter/encoder count at the previous virtual index event
+static volatile int32_t spindle_hw_motion_origin;    // raw HW counter/encoder count at the real G33 start/index phase
 static volatile int32_t spindle_step_motion_origin;    // sync step counter at the same real G33 start/index phase
-static int32_t steps_per_pcnt_count_q16;               // fixed motion slope: Z steps per one encoder/PCNT count, Q16.16
-static int32_t pcnt_phase_offset_steps;                  // learned fixed start delay: raw_expected - actual_step
-static uint8_t pcnt_phase_offset_valid;                  // 0 until first real running virtual-index sample
+static int32_t steps_per_hw_count_q16;               // fixed motion slope: Z steps per one encoder/hardware counter count, Q16.16
+static int32_t hw_phase_offset_steps;                  // learned fixed start delay: raw_expected - actual_step
+static uint8_t hw_phase_offset_valid;                  // 0 until first real running virtual-index sample
 static float g33_last_good_index_rpm;                    // protects feed from one late/early virtual poll
 #endif
 static uint32_t motion_total_steps;
@@ -183,16 +183,16 @@ void g33_enc_pulse(G33_ENCODER)
 
 void spindle_index_cb_handler(void)
 {
-	// This hook may be fired by a physical index, by the ESP32 PCNT virtual-index
-	// generator, or by another encoder backend. In PCNT counter mode the hook is
+	// This hook may be fired by a physical index, by an ESP32 hardware counter virtual-index
+	// generator, or by another encoder backend. In hardware counter mode the hook is
 	// only a timing/update trigger; spindle phase itself comes from raw encoder counts.
 	uint32_t now = mcu_micros();
 	int32_t index = spindle_index_counter;
 
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-	int32_t pcnt_now = encoder_get_position(G33_ENCODER);
-	spindle_pcnt_last_counter = spindle_pcnt_counter;
-	spindle_pcnt_counter = pcnt_now;
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+	int32_t hw_now = encoder_get_position(G33_ENCODER);
+	spindle_hw_last_counter = spindle_hw_counter;
+	spindle_hw_counter = hw_now;
 #endif
 
 	spindle_index_last_time = spindle_index_time;
@@ -203,15 +203,15 @@ void spindle_index_cb_handler(void)
 	{
 	case SYNC_READY:
 		// The aligned index/virtual-index starts synchronized motion.
-		// For PCNT mode this is also the zero phase of this G33 move.
+		// For HW counter mode this is also the zero phase of this G33 move.
 		itp_start(false);
 		synched_motion_status = SYNC_STARTING;
 		index = spindle_index_counter_start;
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-		spindle_pcnt_motion_origin = pcnt_now;
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+		spindle_hw_motion_origin = hw_now;
 		spindle_step_motion_origin = itp_sync_step_counter;
-		spindle_pcnt_last_counter = pcnt_now;
-		spindle_pcnt_counter = pcnt_now;
+		spindle_hw_last_counter = hw_now;
+		spindle_hw_counter = hw_now;
 #endif
 #ifdef G33_FEEDBACK_LOOP_USE_ENC_PULSE
 		encoder_reset_position(G33_ENCODER, index * enc_res); // syncs the pulse counter with the index counter
@@ -325,14 +325,21 @@ bool g33_exec(void *args)
 			spindle_index_step_counter = 0;
 			spindle_index_time = 0;
 			spindle_index_last_time = 0;
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-			spindle_pcnt_counter = encoder_get_position(G33_ENCODER);
-			spindle_pcnt_last_counter = spindle_pcnt_counter;
-			spindle_pcnt_motion_origin = spindle_pcnt_counter;
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+			spindle_hw_counter = encoder_get_position(G33_ENCODER);
+			spindle_hw_last_counter = spindle_hw_counter;
+			spindle_hw_motion_origin = spindle_hw_counter;
 			spindle_step_motion_origin = itp_sync_step_counter;
-			pcnt_phase_offset_steps = 0;
-			pcnt_phase_offset_valid = 0;
+			hw_phase_offset_steps = 0;
+			hw_phase_offset_valid = 0;
 			g33_last_good_index_rpm = 0.0f;
+			// Reset smooth RPM tracking
+			static int32_t rpm_hw_last = 0;
+			static uint32_t rpm_time_last = 0;
+			static float g33_hw_rpm = 0.0f;
+			rpm_hw_last = encoder_get_position(G33_ENCODER);
+			rpm_time_last = mcu_micros();
+			g33_hw_rpm = 0.0f; // Will be set after first RPM measurement
 #endif
 		}
 
@@ -486,13 +493,13 @@ bool g33_exec(void *args)
 		// calculates the expected number of steps per revolution
 		float steps_per_rev = (float)total_steps / total_revs;
 		steps_per_index = lroundf(steps_per_rev / (float)G33_INDEXES_PER_REV);
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-		steps_per_pcnt_count_q16 = (enc_res) ? (int32_t)lroundf((steps_per_rev * 65536.0f) / (float)enc_res) : 0;
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+		steps_per_hw_count_q16 = (enc_res) ? (int32_t)lroundf((steps_per_rev * 65536.0f) / (float)enc_res) : 0;
 #ifdef G33_DEBUG
 		proto_info("MSG:G33 init total_steps=%lu total_revs=%f steps_rev=%f enc_res=%lu idx_rev=%lu spi=%lu q16=%ld rpm_const=%f feed=%f",
 		           (unsigned long)total_steps, total_revs, steps_per_rev, (unsigned long)enc_res,
 		           (unsigned long)G33_INDEXES_PER_REV, (unsigned long)steps_per_index,
-		           steps_per_pcnt_count_q16, rpm_to_stepfeed_constant, feed);
+		           steps_per_hw_count_q16, rpm_to_stepfeed_constant, feed);
 #endif
 #endif
 
@@ -539,14 +546,23 @@ bool g33_exec(void *args)
 
 		// resets indexes
 		spindle_index_counter = 0;
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-		spindle_pcnt_counter = encoder_get_position(G33_ENCODER);
-		spindle_pcnt_last_counter = spindle_pcnt_counter;
-		spindle_pcnt_motion_origin = spindle_pcnt_counter;
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+		spindle_hw_counter = encoder_get_position(G33_ENCODER);
+		spindle_hw_last_counter = spindle_hw_counter;
+		spindle_hw_motion_origin = spindle_hw_counter;
 		spindle_step_motion_origin = itp_sync_step_counter;
-		pcnt_phase_offset_steps = 0;
-		pcnt_phase_offset_valid = 0;
+		hw_phase_offset_steps = 0;
+		hw_phase_offset_valid = 0;
 		g33_last_good_index_rpm = 0.0f;
+		// Reset smooth RPM tracking
+		{
+			static int32_t rpm_hw_last = 0;
+			static uint32_t rpm_time_last = 0;
+			static float g33_hw_rpm = 0.0f;
+			rpm_hw_last = encoder_get_position(G33_ENCODER);
+			rpm_time_last = mcu_micros();
+			g33_hw_rpm = index_rpm; // Initialize with current RPM
+		}
 #endif
 		spindle_index_time = 0;
 		spindle_index_last_time = 0;
@@ -631,14 +647,14 @@ bool spindle_sync_update_loop(void *ptr)
 
 		int32_t error, index_step_counter, index_counter;
 		uint32_t t = 0, delta_t = 0;
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-		int32_t pcnt_counter_snapshot = 0;
-		int32_t pcnt_origin_snapshot = 0;
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+		int32_t hw_counter_snapshot = 0;
+		int32_t hw_origin_snapshot = 0;
 		int32_t step_origin_snapshot = 0;
 #endif
 		// Get one coherent snapshot of the update event.
 		// In normal/virtual-index mode index_counter is the software virtual slot.
-		// In PCNT mode the software slot only triggers update timing; raw PCNT count is the phase ruler.
+		// In HW counter mode the software slot only triggers update timing; raw HW count is the phase ruler.
 		ATOMIC_CODEBLOCK
 		{
 #ifdef G33_FEEDBACK_LOOP_USE_ENC_PULSE
@@ -646,9 +662,9 @@ bool spindle_sync_update_loop(void *ptr)
 #else
 			index_counter = spindle_index_counter;
 #endif
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-			pcnt_counter_snapshot = spindle_pcnt_counter;
-			pcnt_origin_snapshot = spindle_pcnt_motion_origin;
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+			hw_counter_snapshot = spindle_hw_counter;
+			hw_origin_snapshot = spindle_hw_motion_origin;
 			step_origin_snapshot = spindle_step_motion_origin;
 #endif
 			synched_motion_status &= ~SYNC_UPDATED;
@@ -656,6 +672,32 @@ bool spindle_sync_update_loop(void *ptr)
 			delta_t = spindle_index_time;
 			t = spindle_index_last_time;
 		}
+
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+		// Calculate smooth RPM from PCNT position deltas
+		static int32_t rpm_hw_last = 0;
+		static uint32_t rpm_time_last = 0;
+		static float g33_hw_rpm = 0.0f;
+
+		int32_t hw_now = encoder_get_position(G33_ENCODER);
+		uint32_t time_now = mcu_micros();
+
+		int32_t hw_dt = hw_now - rpm_hw_last;
+		uint32_t time_dt = time_now - rpm_time_last;
+
+		if (hw_dt < 0)
+			hw_dt = -hw_dt;
+
+		if (rpm_time_last && time_dt > 0 && hw_dt >= (g_settings.encoders_resolution[G33_ENCODER] / 10))
+		{
+			g33_hw_rpm =
+				((float)hw_dt * 60000000.0f) /
+				((float)time_dt * g_settings.encoders_resolution[G33_ENCODER]);
+		}
+
+		rpm_hw_last = hw_now;
+		rpm_time_last = time_now;
+#endif
 
 #ifdef G33_FEEDBACK_LOOP_USE_ENC_PULSE
 		delta_t = encoder_get_delta(G33_ENCODER) * g_settings.encoders_resolution[G33_ENCODER];
@@ -666,9 +708,13 @@ bool spindle_sync_update_loop(void *ptr)
 		{
 			return EVENT_CONTINUE;
 		}
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+		float index_rpm = g33_hw_rpm;
+#else
 		float index_rpm = 1000000.0f / ((float)delta_t * MIN_SEC_MULT * (float)G33_INDEXES_PER_REV);
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-		// cnc_io_dotasks can occasionally poll late/early. PCNT phase correction can
+#endif
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+		// cnc_io_dotasks can occasionally poll late/early. hardware counter phase correction can
 		// tolerate this, but the RPM-derived base feed should not jump violently.
 		// Clamp a single bad timing sample to +/-25% around the previous good RPM
 		// and then apply a light low-pass.
@@ -696,26 +742,26 @@ bool spindle_sync_update_loop(void *ptr)
 
 		// Calculate the expected motion position.
 		// Normal virtual-index mode: expected = virtual_slot * steps_per_virtual_slot.
-		// PCNT step-domain mode: expected sync steps are derived directly from
-		// raw PCNT delta using a fixed Q16.16 slope calculated before motion.
+		// hardware counter step-domain mode: expected sync steps are derived directly from
+		// raw hardware counter delta using a fixed Q16.16 slope calculated before motion.
 		// No mm coordinates, no kinematics conversion, no float in this loop.
 		int32_t expected_position;
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
 		{
-			// Fixed-origin PCNT phase mode.
-			// PCNT origin is captured when G33 is armed/started. This gives a stable
+			// Fixed-origin hardware counter phase mode.
+			// hardware counter origin is captured when G33 is armed/started. This gives a stable
 			// spindle ruler, but the actual synced step stream starts later because the
 			// planner waits for the aligned physical/virtual index and acceleration path.
 			// Therefore the first real running sample learns one fixed phase offset:
 			//     offset = raw_expected_steps - actual_steps
 			// Later updates subtract only this constant and correct only drift.
-			int32_t pcnt_delta = pcnt_counter_snapshot - pcnt_origin_snapshot;
+			int32_t hw_delta = hw_counter_snapshot - hw_origin_snapshot;
 
 			
-			if (pcnt_delta < 0)
-				pcnt_delta = -pcnt_delta;
+			if (hw_delta < 0)
+				hw_delta = -hw_delta;
 
-			int64_t expected_q16 = ((int64_t)pcnt_delta * (int64_t)steps_per_pcnt_count_q16);
+			int64_t expected_q16 = ((int64_t)hw_delta * (int64_t)steps_per_hw_count_q16);
 			int32_t raw_expected_position;
 
 			// Round signed Q16.16 to integer steps and add the step origin captured at start.
@@ -728,13 +774,13 @@ bool spindle_sync_update_loop(void *ptr)
 				raw_expected_position = step_origin_snapshot - (int32_t)(((-expected_q16) + 32768) >> 16);
 			}
 
-			if (!pcnt_phase_offset_valid)
+			if (!hw_phase_offset_valid)
 			{
-				pcnt_phase_offset_steps = raw_expected_position - index_step_counter;
-				pcnt_phase_offset_valid = 1;
+				hw_phase_offset_steps = raw_expected_position - index_step_counter;
+				hw_phase_offset_valid = 1;
 			}
 
-			expected_position = raw_expected_position - pcnt_phase_offset_steps;
+			expected_position = raw_expected_position - hw_phase_offset_steps;
 		}
 #else
 		expected_position = index_counter * steps_per_index;
@@ -755,8 +801,8 @@ bool spindle_sync_update_loop(void *ptr)
 		float base_step_rate = rpm_to_stepfeed_constant * index_rpm;
 		float correction_step_rate = 0.0f;
 
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-#ifndef G33_PCNT_COUNTER_FEED_ONLY_TEST
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+#ifndef G33_HW_COUNTER_FEED_ONLY_TEST
 		correction_step_rate = ((float)error * G33_CORRECTION_GAIN);
 		{
 			float max_correction = base_step_rate * G33_CORRECTION_MAX_FRAC;
@@ -770,7 +816,7 @@ bool spindle_sync_update_loop(void *ptr)
 			}
 		}
 #endif
-		// In PCNT counter mode always update from the measured virtual-index period.
+		// In hardware counter mode always update from the measured virtual-index period.
 		// The phase correction is optional/clamped; the RPM feed part must first prove sane.
 		itp_update_feed(base_step_rate + correction_step_rate);
 #else
@@ -793,10 +839,10 @@ bool spindle_sync_update_loop(void *ptr)
 			if (debug_div >= G33_DEBUG_EVERY_N)
 			{
 				debug_div = 0;
-#ifdef G33_FEEDBACK_LOOP_USE_PCNT_COUNTER
-				proto_info("MSG:G33 pcnt=%ld org=%ld sorg=%ld dt=%lu rpm=%f base=%f corr=%f q16=%ld off=%ld exp=%ld real=%ld err=%ld",
-			           pcnt_counter_snapshot, pcnt_origin_snapshot, step_origin_snapshot, (unsigned long)delta_t, index_rpm, base_step_rate, correction_step_rate,
-			           steps_per_pcnt_count_q16, pcnt_phase_offset_steps, expected_position, index_step_counter, error);
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+				proto_info("MSG:G33 hw=%ld org=%ld sorg=%ld dt=%lu rpm=%f base=%f corr=%f q16=%ld off=%ld exp=%ld real=%ld err=%ld",
+			           hw_counter_snapshot, hw_origin_snapshot, step_origin_snapshot, (unsigned long)delta_t, index_rpm, base_step_rate, correction_step_rate,
+			           steps_per_hw_count_q16, hw_phase_offset_steps, expected_position, index_step_counter, error);
 #else
 				proto_info("MSG:G33 idx=%ld dt=%lu rpm=%f base=%f corr=%f exp=%ld real=%ld err=%ld",
 				           index_counter, (unsigned long)delta_t, index_rpm, base_step_rate, correction_step_rate, expected_position, index_step_counter, error);

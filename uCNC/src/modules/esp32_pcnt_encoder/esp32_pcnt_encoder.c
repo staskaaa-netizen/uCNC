@@ -85,11 +85,6 @@ static volatile uint8_t enc0_isr_have_ref;
 static volatile int32_t enc0_isr_ref_pcnt;
 static volatile uint32_t enc0_isr_count;
 
-// Position-based RPM tracking for PCNT encoders
-static int32_t enc0_rpm_pcnt_last;
-static uint32_t enc0_rpm_time_last;
-static float enc0_rpm_value;
-
 static uint32_t esp32_pcnt_encoder_index_resolution(void)
 {
 	float resolution = g_settings.encoders_resolution[ENC0];
@@ -402,11 +397,6 @@ static void encoder_esp32_pcnt_init(uint8_t unit, int pulse_gpio, int dir_gpio)
 	pcnt_counter_pause((pcnt_unit_t)unit);
 	pcnt_counter_clear((pcnt_unit_t)unit);
 	pcnt_counter_resume((pcnt_unit_t)unit);
-
-	// Initialize RPM tracking variables
-	enc0_rpm_pcnt_last = 0;
-	enc0_rpm_time_last = 0;
-	enc0_rpm_value = 0;
 }
 
 int32_t read_encoder_esp32_pcnt(uint8_t unit)
@@ -496,37 +486,6 @@ bool encoder_get_index_debug_line(uint8_t i, char *line, uint32_t line_len, uint
 		*seq = enc0_index_debug_seq;
 	}
 	return true;
-}
-
-uint16_t encoder_get_rpm(uint8_t i)
-{
-	if (i == ENC0)
-	{
-		// Position-based RPM calculation for PCNT encoders
-		int32_t pcnt_now = encoder_get_position(ENC0);
-		uint32_t time_now = mcu_micros();
-
-		int32_t pcnt_dt = pcnt_now - enc0_rpm_pcnt_last;
-		uint32_t time_dt = time_now - enc0_rpm_time_last;
-
-		if (pcnt_dt < 0)
-			pcnt_dt = -pcnt_dt;
-
-		if (enc0_rpm_time_last && time_dt > 0 && pcnt_dt >= (g_settings.encoders_resolution[ENC0] / 10))
-		{
-			enc0_rpm_value =
-				((float)pcnt_dt * 60000000.0f) /
-				((float)time_dt * g_settings.encoders_resolution[ENC0]);
-		}
-
-		enc0_rpm_pcnt_last = pcnt_now;
-		enc0_rpm_time_last = time_now;
-
-		return (uint16_t)enc0_rpm_value;
-	}
-
-	// Fall back to default pulse-based RPM for other encoders
-	return 0;
 }
 
 static bool esp32_pcnt_encoder_dotasks(void *args)

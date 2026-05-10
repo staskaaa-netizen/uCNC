@@ -333,6 +333,13 @@ bool g33_exec(void *args)
 			hw_phase_offset_steps = 0;
 			hw_phase_offset_valid = 0;
 			g33_last_good_index_rpm = 0.0f;
+			// Reset smooth RPM tracking
+			static int32_t rpm_hw_last = 0;
+			static uint32_t rpm_time_last = 0;
+			static float g33_hw_rpm = 0.0f;
+			rpm_hw_last = encoder_get_position(G33_ENCODER);
+			rpm_time_last = mcu_micros();
+			g33_hw_rpm = 0.0f; // Will be set after first RPM measurement
 #endif
 		}
 
@@ -547,6 +554,15 @@ bool g33_exec(void *args)
 		hw_phase_offset_steps = 0;
 		hw_phase_offset_valid = 0;
 		g33_last_good_index_rpm = 0.0f;
+		// Reset smooth RPM tracking
+		{
+			static int32_t rpm_hw_last = 0;
+			static uint32_t rpm_time_last = 0;
+			static float g33_hw_rpm = 0.0f;
+			rpm_hw_last = encoder_get_position(G33_ENCODER);
+			rpm_time_last = mcu_micros();
+			g33_hw_rpm = index_rpm; // Initialize with current RPM
+		}
 #endif
 		spindle_index_time = 0;
 		spindle_index_last_time = 0;
@@ -657,6 +673,32 @@ bool spindle_sync_update_loop(void *ptr)
 			t = spindle_index_last_time;
 		}
 
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+		// Calculate smooth RPM from PCNT position deltas
+		static int32_t rpm_hw_last = 0;
+		static uint32_t rpm_time_last = 0;
+		static float g33_hw_rpm = 0.0f;
+
+		int32_t hw_now = encoder_get_position(G33_ENCODER);
+		uint32_t time_now = mcu_micros();
+
+		int32_t hw_dt = hw_now - rpm_hw_last;
+		uint32_t time_dt = time_now - rpm_time_last;
+
+		if (hw_dt < 0)
+			hw_dt = -hw_dt;
+
+		if (rpm_time_last && time_dt > 0 && hw_dt >= (g_settings.encoders_resolution[G33_ENCODER] / 10))
+		{
+			g33_hw_rpm =
+				((float)hw_dt * 60000000.0f) /
+				((float)time_dt * g_settings.encoders_resolution[G33_ENCODER]);
+		}
+
+		rpm_hw_last = hw_now;
+		rpm_time_last = time_now;
+#endif
+
 #ifdef G33_FEEDBACK_LOOP_USE_ENC_PULSE
 		delta_t = encoder_get_delta(G33_ENCODER) * g_settings.encoders_resolution[G33_ENCODER];
 #else
@@ -666,11 +708,10 @@ bool spindle_sync_update_loop(void *ptr)
 		{
 			return EVENT_CONTINUE;
 		}
-		float index_rpm;
 #ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
-		index_rpm = encoder_get_rpm(G33_ENCODER);
+		float index_rpm = g33_hw_rpm;
 #else
-		index_rpm = 1000000.0f / ((float)delta_t * MIN_SEC_MULT * (float)G33_INDEXES_PER_REV);
+		float index_rpm = 1000000.0f / ((float)delta_t * MIN_SEC_MULT * (float)G33_INDEXES_PER_REV);
 #endif
 #ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
 		// cnc_io_dotasks can occasionally poll late/early. hardware counter phase correction can

@@ -21,12 +21,20 @@
 #define ENC0_PCNT_UNIT PCNT_UNIT_0
 #endif
 
+#ifndef ENC0_PCNT_COUNT_MODE
+#define ENC0_PCNT_COUNT_MODE 4
+#endif
+
 #ifndef ENC0_PULSE_GPIO
 #error "ENC0_PULSE_GPIO is not defined"
 #endif
 
-#ifndef ENC0_DIR_GPIO
-#error "ENC0_DIR_GPIO is not defined"
+#if (ENC0_PCNT_COUNT_MODE == 4) && !defined(ENC0_DIR_GPIO)
+#error "ENC0_DIR_GPIO is required for ENC0_PCNT_COUNT_MODE == 4"
+#endif
+
+#if (ENC0_PCNT_COUNT_MODE != 4) && !defined(ENC0_DIR_GPIO)
+#define ENC0_DIR_GPIO PCNT_PIN_NOT_USED
 #endif
 
 #ifndef ENC0_PCNT_RECENTER_THRESHOLD

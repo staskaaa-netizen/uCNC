@@ -76,6 +76,12 @@
 #define G33_DEBUG_EVERY_N 10U
 #endif
 
+#ifndef G33_MIN_INDEX_DELTA_US
+// Ignore impossible index/virtual-index timing samples. A first virtual update can
+// arrive very close to a physical index; using that tiny dt gives fake huge RPM.
+#define G33_MIN_INDEX_DELTA_US 1000U
+#endif
+
 // enable this to use the encoder pulse as the feedback loop marker/trigger
 //  #define G33_FEEDBACK_LOOP_USE_ENC_PULSE
 
@@ -119,6 +125,9 @@ static int32_t steps_per_hw_count_q16;               // fixed motion slope: Z st
 static int32_t hw_phase_offset_steps;                  // learned fixed start delay: raw_expected - actual_step
 static uint8_t hw_phase_offset_valid;                  // 0 until first real running virtual-index sample
 static float g33_last_good_index_rpm;                    // protects feed from one late/early virtual poll
+static int32_t g33_rpm_hw_last;                         // last HW counter sample used for smoothed RPM
+static uint32_t g33_rpm_time_last;                      // timestamp of last HW counter RPM sample
+static float g33_hw_rpm;                                // smoothed RPM derived from large HW counter deltas
 #endif
 static uint32_t motion_total_steps;
 static float motion_total_distance;
@@ -333,13 +342,11 @@ bool g33_exec(void *args)
 			hw_phase_offset_steps = 0;
 			hw_phase_offset_valid = 0;
 			g33_last_good_index_rpm = 0.0f;
-			// Reset smooth RPM tracking
-			static int32_t rpm_hw_last = 0;
-			static uint32_t rpm_time_last = 0;
-			static float g33_hw_rpm = 0.0f;
-			rpm_hw_last = encoder_get_position(G33_ENCODER);
-			rpm_time_last = mcu_micros();
-			g33_hw_rpm = 0.0f; // Will be set after first RPM measurement
+			// Reset smooth HW-counter RPM tracking. These are file-scope globals used by
+			// spindle_sync_update_loop(); local statics here would not reset the loop state.
+			g33_rpm_hw_last = encoder_get_position(G33_ENCODER);
+			g33_rpm_time_last = mcu_micros();
+			g33_hw_rpm = 0.0f; // will be seeded after the initial index RPM measurement
 #endif
 		}
 
@@ -400,12 +407,16 @@ bool g33_exec(void *args)
 			}
 			if (t)
 			{
-				break;
+				uint32_t sample_dt = delta_t - t;
+				if (sample_dt >= G33_MIN_INDEX_DELTA_US)
+				{
+					delta_t = sample_dt;
+					break;
+				}
 			}
 			cnc_dotasks();
 		}
 
-		delta_t -= t;
 		float index_rpm = 1000000.0f / ((float)delta_t * MIN_SEC_MULT * (float)G33_INDEXES_PER_REV);
 
 		// spindle speed ins not valid
@@ -553,16 +564,11 @@ bool g33_exec(void *args)
 		spindle_step_motion_origin = itp_sync_step_counter;
 		hw_phase_offset_steps = 0;
 		hw_phase_offset_valid = 0;
-		g33_last_good_index_rpm = 0.0f;
-		// Reset smooth RPM tracking
-		{
-			static int32_t rpm_hw_last = 0;
-			static uint32_t rpm_time_last = 0;
-			static float g33_hw_rpm = 0.0f;
-			rpm_hw_last = encoder_get_position(G33_ENCODER);
-			rpm_time_last = mcu_micros();
-			g33_hw_rpm = index_rpm; // Initialize with current RPM
-		}
+		g33_last_good_index_rpm = index_rpm;
+		// Seed smooth HW-counter RPM tracking with the already validated initial RPM.
+		g33_rpm_hw_last = encoder_get_position(G33_ENCODER);
+		g33_rpm_time_last = mcu_micros();
+		g33_hw_rpm = index_rpm;
 #endif
 		spindle_index_time = 0;
 		spindle_index_last_time = 0;
@@ -674,29 +680,27 @@ bool spindle_sync_update_loop(void *ptr)
 		}
 
 #ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
-		// Calculate smooth RPM from PCNT position deltas
-		static int32_t rpm_hw_last = 0;
-		static uint32_t rpm_time_last = 0;
-		static float g33_hw_rpm = 0.0f;
-
+		// Calculate smooth RPM from HW counter position deltas. State is file-scope
+		// so G33 start can reset/seed it; otherwise the first sample after index can
+		// compare against stale/zero values and report absurd RPM.
 		int32_t hw_now = encoder_get_position(G33_ENCODER);
 		uint32_t time_now = mcu_micros();
 
-		int32_t hw_dt = hw_now - rpm_hw_last;
-		uint32_t time_dt = time_now - rpm_time_last;
+		int32_t hw_dt = hw_now - g33_rpm_hw_last;
+		uint32_t time_dt = time_now - g33_rpm_time_last;
 
 		if (hw_dt < 0)
 			hw_dt = -hw_dt;
 
-		if (rpm_time_last && time_dt > 0 && hw_dt >= (g_settings.encoders_resolution[G33_ENCODER] / 10))
+		if (g33_rpm_time_last && time_dt > 0 && hw_dt >= (g_settings.encoders_resolution[G33_ENCODER] / 10))
 		{
 			g33_hw_rpm =
 				((float)hw_dt * 60000000.0f) /
 				((float)time_dt * g_settings.encoders_resolution[G33_ENCODER]);
 		}
 
-		rpm_hw_last = hw_now;
-		rpm_time_last = time_now;
+		g33_rpm_hw_last = hw_now;
+		g33_rpm_time_last = time_now;
 #endif
 
 #ifdef G33_FEEDBACK_LOOP_USE_ENC_PULSE
@@ -704,6 +708,10 @@ bool spindle_sync_update_loop(void *ptr)
 #else
 		delta_t -= t;
 #endif
+		if (delta_t < G33_MIN_INDEX_DELTA_US)
+		{
+			return EVENT_CONTINUE;
+		}
 		if (!delta_t)
 		{
 			return EVENT_CONTINUE;
@@ -867,7 +875,11 @@ bool spindle_sync_update_loop(void *ptr)
 			delta_t -= t;
 			if (delta_t)
 			{
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+				float index_rpm = g33_hw_rpm;
+#else
 				float index_rpm = 1000000.0f / ((float)delta_t * MIN_SEC_MULT * (float)G33_INDEXES_PER_REV);
+#endif
 				proto_info("MSG:G33 TOOL RPM %f", index_rpm);
 			}
 			prev_print = mcu_millis();

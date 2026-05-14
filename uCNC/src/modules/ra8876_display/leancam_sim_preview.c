@@ -502,7 +502,7 @@ static void sim_draw_chuck(const lcam_sim_view_t *view, const sim_setup_t *setup
         return;
 
     chuck_w = (int)(setup->clamp * view->z_scale + 0.5f);
-    chuck_w = sim_clampi(chuck_w, 10, 70);
+    //chuck_w = sim_clampi(chuck_w, 10, 70);
     jaw_h = SIM_CHUCK_H;
     x1 = view->stock_left;
 
@@ -2094,7 +2094,7 @@ static void sim_live_draw_marker(uint32_t dst_base, const ui_snapshot_frame_t *f
     {
         int chuck_w = (int)(g_live_sim.setup.clamp * view->z_scale + 0.5f);
         int c = ((mcu_millis() / 250U) & 1U) ? SIM_COL_WARN : RA_RED;
-        chuck_w = sim_clampi(chuck_w, 10, 90);
+        //chuck_w = sim_clampi(chuck_w, 10, 90);
         uint32_t old_draw_base = ra_get_draw_base();
         ra_set_draw_base(dst_base);
         ra_fill_rect((uint16_t)view->stock_left,

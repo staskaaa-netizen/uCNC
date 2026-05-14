@@ -298,6 +298,7 @@ void rp2350_core0_loop()
 	rp2350_uart_process();
 }
 
+#ifndef RP2350_DISABLE_ARDUINO_CORE1_LOOP
 void setup1()
 {
 }
@@ -309,6 +310,7 @@ void loop1()
 		cnc_run();
 	}
 }
+#endif
 
 /**
  * initializes the mcu
@@ -837,6 +839,7 @@ bool mcu_spi_bulk_transfer(const uint8_t *out, uint8_t *in, uint16_t len)
 #include "pico/binary_info.h"
 
 static spi_config_t rp2350_spi2_config;
+
 
 void mcu_spi2_init(void)
 {

@@ -1085,12 +1085,24 @@ void leancam_bridge_init(void)
     g_nc_top_line = 0;
     g_nc_selected_row = 0;
     g_file_sel = 0;
-    g_lc_mode = LC_MODE_FILES;
     g_files_ready = false;
     g_next_file_refresh_ms = 0;
     lc_set_msg("LC: init");
 
+#ifdef LEANCAM_RP2350_STANDALONE_DEMO
+    prog_add(&g_leancam_ui.prog,
+             "SETUP|L{75}|OD{50}|ID{0}|CLAMP{8}|EXTRA{3}|CLR{1}|MAT{ST45}|WOFF{G54}");
+    prog_add(&g_leancam_ui.prog,
+             "TOOL|T{1}|D{6}|S{800}|R_FEED{120}|FIN_FEED{60}|R_DOC{2.0}|FIN_DOC{0.5}");
+    prog_add(&g_leancam_ui.prog,
+             "OD|D1{50}|Z1{0}|Z2{-35}|D2{32}|RND{0}|CHMF{1}|DT{32}|CLR{1}");
+    g_leancam_ui.cur_line = 0;
+    g_lc_mode = LC_MODE_PROGRAM;
+    lc_set_msg("LC: RP2350 demo, no SD");
+#else
+    g_lc_mode = LC_MODE_FILES;
     lc_refresh_files();
+#endif
 }
 
 

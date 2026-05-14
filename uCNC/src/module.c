@@ -40,9 +40,13 @@ uint8_t g_module_lockguard;
 static FORCEINLINE void load_modules(void)
 {
 // PLACE YOUR MODULES HERE
+#ifndef DISABLE_G7_G8
 	LOAD_MODULE(g7_g8);
+#endif
 #ifdef LOAD_MODULES_OVERRIDE
 	LOAD_MODULES_OVERRIDE();
+#elif defined(ENABLE_LEANCAM_RP2350_HDMI)
+	LOAD_MODULE(leancam_rp2350_hdmi);
 #endif
 }
 

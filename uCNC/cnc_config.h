@@ -36,7 +36,9 @@ extern "C"
 #endif
 
 #ifndef ENABLE_WIFI
+#ifndef UCNC_MINIMAL_RP2350
  #define ENABLE_WIFI
+#endif
 #endif
 
 #ifndef ENABLE_BLUETOOTH
@@ -341,7 +343,9 @@ extern "C"
 #define ENABLE_RS274NGC_EXPRESSIONS
 #ifdef ENABLE_RS274NGC_EXPRESSIONS
 	// Uncomment to enable named parameters
+#ifndef UCNC_MINIMAL_RP2350
 #define ENABLE_NAMED_PARAMETERS
+#endif
 // Uncomment to enable O codes
 //#define ENABLE_O_CODES
 /**
@@ -350,7 +354,9 @@ extern "C"
  * enabling this will also print the ok/error responses of the codes in the subroutines to the stream that
  * invoked the command
  */
+#ifndef UCNC_MINIMAL_RP2350
 #define ENABLE_O_CODES_VERBOSE
+#endif
 #endif
 
 	/**

@@ -14,8 +14,10 @@
 #include "../../cnc.h"
 #include "../system_menu.h"
 #include "ui_snapshot.h"
+#ifndef LEANCAM_RP2350_NO_CAM_KEYBOARD
 #include "../cam_keyboard/cam_keyboard.h"
 #include "../cam_keyboard/ui_input_keypad.h"
+#endif
 #include "../encoder.h"
 #include "../file_system.h"
 #include "../leanCam/leancam_bridge.h"
@@ -153,6 +155,7 @@ static void ui_builder_fill_runtime(ui_snapshot_frame_t *f)
 
 static void ui_builder_poll_cam_keyboard(void)
 {
+#ifndef LEANCAM_RP2350_NO_CAM_KEYBOARD
     ui_input_keypad_poll();
 
     while (ui_input_keypad_has_key())
@@ -161,6 +164,7 @@ static void ui_builder_poll_cam_keyboard(void)
         if (key != UI_KEY_NONE)
             leancam_bridge_handle_key(key);
     }
+#endif
 }
 
 void ui_snapshot_set_modal_popup_text(const char *s)
@@ -177,8 +181,10 @@ void ui_snapshot_build_live(void)
 {
     static ui_snapshot_frame_t f;
     char keybuf[32];
+#ifndef LEANCAM_RP2350_NO_CAM_KEYBOARD
     const uint8_t *raw;
     char keych;
+#endif
 
     ui_snapshot_prepare_frame(&f);
 
@@ -196,11 +202,15 @@ void ui_snapshot_build_live(void)
     leancam_bridge_fill_snapshot(&f);
     encoder_get_index_debug_line(ENC0, f.encoder_debug, sizeof(f.encoder_debug), &f.encoder_debug_seq);
 
+#ifndef LEANCAM_RP2350_NO_CAM_KEYBOARD
     raw = cam_keyboard_raw();
     keych = cam_keyboard_key_char();
     snprintf(keybuf, sizeof(keybuf), "K:%c %02X %02X %02X %02X %02X %02X",
              keych ? keych : '-',
              raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);
+#else
+    snprintf(keybuf, sizeof(keybuf), "USB keyboard pending");
+#endif
     ui_snapshot_strcpy(f.leancam_key_debug, keybuf, sizeof(f.leancam_key_debug));
 
     if (f.screen_kind == UI_SCREEN_MODAL_POPUP)
@@ -254,7 +264,9 @@ DECL_MODULE(ui_snapshot_builder)
 
     memset(&g_ui_snapshot, 0, sizeof(g_ui_snapshot));
 
+#ifndef LEANCAM_RP2350_NO_CAM_KEYBOARD
     ui_input_keypad_init();
+#endif
     leancam_bridge_init();
 
     ui_snapshot_build_live();

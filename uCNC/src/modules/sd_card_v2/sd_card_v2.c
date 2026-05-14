@@ -645,7 +645,7 @@ DECL_MODULE(sd_card_v2)
 	DECL_DYNAMIC_MENU(10, 1, system_menu_fs_render, system_menu_fs_action);
 
 // try to mount the SD card automatically if card is present
-#if (!ASSERT_PIN(SD_CARD_DETECT_PIN))
+#if (!defined(SD_CARD_NO_AUTOMOUNT) && !ASSERT_PIN(SD_CARD_DETECT_PIN))
 	sd_card_mount();
 #endif
 

@@ -40,7 +40,9 @@ extern "C"
 #include BOARDMAP
 
 // reinclude the override file
+#ifndef UCNC_IGNORE_BOARDMAP_OVERRIDES
 #include "../../../boardmap_overrides.h"
+#endif
 #include "pin_mapping_helper.h"
 #include "../mcus/mcudefs.h" //configures the MCU for the selected board
 

@@ -6,95 +6,52 @@ extern "C"
 #endif
 
 #include "cnc_hal_reset.h"
+
+/*
+    RP2350 LeanCam HDMI first-stage HAL profile.
+
+    This keeps uCNC small and avoids modules/pins that belong to the old
+    ESP32/MKS Tinybee setup: G33, ESP32 PCNT encoder, I2C keyboard, 74HC595,
+    WiFi, SD/filesystem, and real machine-runtime extras.
+*/
+
 #define S_CURVE_ACCELERATION_LEVEL 0
-#define ESTOP_PULLUP_ENABLE
-#define SAFETY_DOOR_PULLUP_ENABLE
-#define FHOLD_PULLUP_ENABLE
-#define CS_RES_PULLUP_ENABLE
+
 #define LIMIT_X_PULLUP_ENABLE
 #define LIMIT_Y_PULLUP_ENABLE
 #define LIMIT_Z_PULLUP_ENABLE
-#define LIMIT_X2_PULLUP_ENABLE
-#define LIMIT_Y2_PULLUP_ENABLE
-#define LIMIT_Z2_PULLUP_ENABLE
-#define TOOL1 spindle_pwm
 
+#define ESTOP_PULLUP_ENABLE
+#define FHOLD_PULLUP_ENABLE
+#define CS_RES_PULLUP_ENABLE
+
+#define TOOL1 spindle_pwm
 #define SPINDLE_PWM PWM0
 #define SPINDLE_PWM_DIR DOUT0
- #define SPINDLE_RPM_ENCODER ENC0
-//#define ENCODERS 1
+
+#define ENCODERS 0
+
+#define IC74HC595_COUNT 0
+#define IC74HC165_COUNT 0
+
 #define ENABLE_MAIN_LOOP_MODULES
 #define ENABLE_IO_MODULES
 #define ENABLE_PARSER_MODULES
 #define ENABLE_RT_SYNC_MOTIONS
 #define ENABLE_ITP_FEED_TASK
-#define SD_CARD_INTERFACE SD_CARD_HW_SPI
-#define SD_SPI_CS SPI_CS
-#define SD_CARD_DETECT_PIN DIN4
-#define FF_USE_LFN 1
+
+/* Keep settings in RAM for now; flash/SD persistence can return later. */
+#define RAM_ONLY_SETTINGS
+
+/*
+    SD is tested through a delayed Arduino SDFS probe only. The current uCNC
+    SD/file-system layer is parked because linking it breaks video/serial.
+*/
+#define SD_CARD_DETECT_PIN 255
 #define SD_CARD_SPI_DMA false
 
-//#define ENABLE_ENCODER_MODULE
-#define ENCODERS 1
-
-#define ENC0_TYPE ENC_TYPE_CUSTOM
-
-#define ENC0_PULSE_GPIO 15  //36   // A
-#define ENC0_DIR_GPIO   17 // 39   // B; ignored in ENC0_PCNT_COUNT_MODE 1
-
-// PCNT count mode:
-// 1 = A/Z only, one count per A pulse. For 1000 PPR AZ test set $150=1000.
-// 4 = ABZ quadrature x4. For 1000 PPR ABZ set $150=4000.
-#define ENC0_PCNT_COUNT_MODE 4
-
-#define ENC0_PCNT_UNIT PCNT_UNIT_0
-#define ENC0_PCNT_RECENTER_THRESHOLD 20000
-
-#define ENC0_IS_INCREMENTAL
-#define ENC0_READ_WRAP 65536UL
-
-#define SPINDLE_PWM_RPM_ENCODER ENC0
-
-#define G33_ENCODER ENC0
-#define G33_INDEX_PIN  255
-//#define G33_FEEDBACK_LOOP_USE_ENC_PULSE
-#define G33_FEEDBACK_LOOP_USE_HW_COUNTER
-#define G33_CORRECTION_GAIN 1.0f
-
-
-
-//#define G33_FEEDBACK_LOOP_USE_HW_COUNTER
-//#define G33_HW_COUNTER_FEED_ONLY_TEST
-#define G33_DEBUG
-#define G33_DEBUG_EVERY_N 5
-
-#define ENC0_INDEX DIN5
-#define ENC0_INDEX_GPIO DIN5_BIT
-#define ENCODER_PCNT_FILTER 10
-#define ENC0_INDEX_VIRTUAL_FIRE_HOOK 1
-#define ENC0_VIRTUAL_INDEXES_PER_REV 10
-#define ENC0_INDEX_AUTO_ORIGIN 0
-
-
-
-#define ENC0_CPR 4000
-
-//#define G33_DEBUG 1
-//#define ENC0_RESOLUTION 65536
-
-//#define ENCODER_DEBUG_PRINT_100MS  1 // optional test only
-
-
-//Custom configurations
-//#define DISABLE_SYSTEM_MENU
-
-/*#undef SD_CARD_DETECT_PIN
-#define SD_CARD_DETECT_PIN 255*/
-
-//#define DISABLE_RTC_CODE
-
-
-#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(esp32_pcnt_encoder);LOAD_MODULE(sd_card_v2);LOAD_MODULE(ui_snapshot_builder);LOAD_MODULE(ra_renderer);LOAD_MODULE(g7_g8);LOAD_MODULE(g33);})
+/* Load only the RP2350 HDMI smoke module for this bring-up target. */
+#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(ui_snapshot_builder); LOAD_MODULE(leancam_rp2350_hdmi); LOAD_MODULE(leancam_sd_fatfs_probe);})
 
 #ifdef __cplusplus
 }

@@ -848,9 +848,12 @@ bool spindle_sync_update_loop(void *ptr)
 			{
 				debug_div = 0;
 #ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
-				proto_info("MSG:G33 hw=%ld org=%ld sorg=%ld dt=%lu rpm=%f base=%f corr=%f q16=%ld off=%ld exp=%ld real=%ld err=%ld",
+				/*proto_info("MSG:G33 hw=%ld org=%ld sorg=%ld dt=%lu rpm=%f base=%f corr=%f q16=%ld off=%ld exp=%ld real=%ld err=%ld",
 			           hw_counter_snapshot, hw_origin_snapshot, step_origin_snapshot, (unsigned long)delta_t, index_rpm, base_step_rate, correction_step_rate,
-			           steps_per_hw_count_q16, hw_phase_offset_steps, expected_position, index_step_counter, error);
+			           steps_per_hw_count_q16, hw_phase_offset_steps, expected_position, index_step_counter, error);*/
+
+				proto_info("MSG:G33 exp=%ld real=%ld err=%ld",
+			             expected_position, index_step_counter, error);
 #else
 				proto_info("MSG:G33 idx=%ld dt=%lu rpm=%f base=%f corr=%f exp=%ld real=%ld err=%ld",
 				           index_counter, (unsigned long)delta_t, index_rpm, base_step_rate, correction_step_rate, expected_position, index_step_counter, error);

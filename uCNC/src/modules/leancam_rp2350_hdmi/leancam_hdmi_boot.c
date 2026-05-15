@@ -5,7 +5,11 @@
 #include "hardware/clocks.h"
 #include "pico/stdlib.h"
 
-#if LEANCAM_USE_PSRAM_FB || LEANCAM_USE_PSRAM_BACKBUFFER
+#ifndef LEANCAM_USE_PSRAM_LIVE_SIM
+#define LEANCAM_USE_PSRAM_LIVE_SIM 0
+#endif
+
+#if LEANCAM_USE_PSRAM_FB || LEANCAM_USE_PSRAM_BACKBUFFER || LEANCAM_USE_PSRAM_LIVE_SIM
 #include "leancam_psram.h"
 #endif
 
@@ -32,7 +36,7 @@ DECL_MODULE(leancam_rp2350_hdmi)
     lc_hdmi_debug_pause("module entered");
     lc_hdmi_debug_pause("before psram");
 
-#if LEANCAM_USE_PSRAM_FB || LEANCAM_USE_PSRAM_BACKBUFFER
+#if LEANCAM_USE_PSRAM_FB || LEANCAM_USE_PSRAM_BACKBUFFER || LEANCAM_USE_PSRAM_LIVE_SIM
     bool psram_ok = lc_psram_init();
     proto_info("LC_HDMI:psram init=%d available=%d", psram_ok ? 1 : 0,
                lc_psram_available() ? 1 : 0);

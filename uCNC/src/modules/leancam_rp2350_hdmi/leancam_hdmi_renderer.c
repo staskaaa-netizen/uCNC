@@ -13,7 +13,7 @@
 #include <math.h>
 
 #ifndef LC_HDMI_RENDER_MS
-#define LC_HDMI_RENDER_MS 100
+#define LC_HDMI_RENDER_MS 30
 #endif
 
 #define LC_RENDER_MODE_FILES 0
@@ -97,9 +97,19 @@ static uint8_t *g_live_sim_mask;
 static bool g_live_sim_ready;
 static bool g_live_sim_was_running;
 static char g_live_sim_line[UI_LC_LINE_LEN];
+static char g_live_sim_setup_line[UI_LC_LINE_LEN];
 static float g_live_sim_last_x;
 static float g_live_sim_last_z;
 static bool g_live_sim_has_last;
+static bool g_live_sim_static_drawn;
+static bool g_live_tool_rect_valid;
+static int g_live_tool_rect_x;
+static int g_live_tool_rect_y;
+static int g_live_tool_rect_w;
+static int g_live_tool_rect_h;
+static int g_live_tool_last_x;
+static int g_live_tool_last_y;
+static bool g_live_tool_has_last_pos;
 static uint32_t g_render_last_us;
 static uint32_t g_render_period_us;
 static uint32_t g_live_prof_clear_us;
@@ -155,6 +165,8 @@ typedef struct {
 
 static lc_sim_setup_t g_live_sim_setup;
 static lc_sim_view_t g_live_sim_view;
+
+static void lc_sim_draw_live_tool_marker_fast(const ui_snapshot_frame_t *frame, const lc_sim_view_t *view);
 
 static const char *lc_skip_line_number(const char *s)
 {
@@ -483,6 +495,14 @@ static bool lc_sim_active_field_is(const ui_snapshot_frame_t *frame, const char 
          strcmp(frame->leancam_active_field, "D1") == 0)) {
         return true;
     }
+    if (strcmp(name, "Z2") == 0 && strcmp(frame->leancam_active_field, "Z") == 0) {
+        return true;
+    }
+    if (strcmp(name, "D1") == 0 &&
+        (strcmp(frame->leancam_active_field, "D") == 0 ||
+         strcmp(frame->leancam_active_field, "OD") == 0)) {
+        return true;
+    }
     return false;
 }
 
@@ -614,6 +634,52 @@ static bool lc_live_sim_is_id_cycle(const ui_snapshot_frame_t *frame)
     return lc_is_cycle(line, "ID") || lc_is_cycle(line, "THR_ID");
 }
 
+static void lc_sim_draw_face_start_group(const lc_sim_view_t *view,
+                                         const ui_snapshot_frame_t *frame,
+                                         int anchor_x,
+                                         int anchor_y,
+                                         float z1,
+                                         float d)
+{
+    int x = anchor_x - 62;
+    int y = anchor_y - 36;
+
+    lc_sim_value_label_at(view, frame, x, y, "Z1", z1);
+    lc_sim_value_label_at(view, frame, x, y + LC_PREVIEW_LABEL_H, "D1", d);
+}
+
+static void lc_sim_draw_face_end_group(const lc_sim_view_t *view,
+                                       const ui_snapshot_frame_t *frame,
+                                       int anchor_x,
+                                       int anchor_y,
+                                       float z,
+                                       float d)
+{
+    (void)d;
+    lc_sim_value_label_at(view, frame, anchor_x - 62, view->stock_top - 24, "Z2", z);
+}
+
+static bool lc_live_sim_is_face_cycle(const ui_snapshot_frame_t *frame)
+{
+    const char *line = frame ? frame->leancam_preview_line : NULL;
+    return lc_is_cycle(line, "FACE");
+}
+
+static int lc_live_doc_px(const ui_snapshot_frame_t *frame, const lc_sim_view_t *view, float scale_factor)
+{
+    float doc = 1.0f;
+    const char *line = frame ? frame->leancam_preview_line : NULL;
+
+    if (!lc_field_float3(line, "DOC", "R_DOC", "ROUGH_DOC", &doc) &&
+        frame && !lc_field_float3(frame->leancam_tool_line, "R_DOC", "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc)) {
+        doc = 1.0f;
+    }
+    if (doc < 0.2f) {
+        doc = 0.2f;
+    }
+    return lc_clampi((int)((doc * view->scale * scale_factor) + 1.5f), 4, 48);
+}
+
 static void lc_live_sim_reset(const ui_snapshot_frame_t *frame)
 {
     if (!g_live_sim_mask || !frame) {
@@ -631,7 +697,11 @@ static void lc_live_sim_reset(const ui_snapshot_frame_t *frame)
     }
 
     ui_snapshot_strcpy(g_live_sim_line, frame->leancam_preview_line, sizeof(g_live_sim_line));
+    ui_snapshot_strcpy(g_live_sim_setup_line, frame->leancam_setup_line, sizeof(g_live_sim_setup_line));
     g_live_sim_has_last = false;
+    g_live_sim_static_drawn = false;
+    g_live_tool_rect_valid = false;
+    g_live_tool_has_last_pos = false;
     g_live_sim_ready = true;
 }
 
@@ -656,6 +726,32 @@ static void lc_live_sim_remove_rect(int x1, int y1, int x2, int y2)
     }
 }
 
+static void lc_live_sim_clear_screen_rect(int mx1, int my1, int mx2, int my2)
+{
+    int tmp;
+    int x1;
+    int y1;
+    int x2;
+    int y2;
+
+    if (!g_live_sim_ready) {
+        return;
+    }
+    if (mx2 < mx1) { tmp = mx1; mx1 = mx2; mx2 = tmp; }
+    if (my2 < my1) { tmp = my1; my1 = my2; my2 = tmp; }
+
+    mx1 = lc_clampi(mx1, 0, LC_LIVE_SIM_W - 1);
+    mx2 = lc_clampi(mx2, 0, LC_LIVE_SIM_W - 1);
+    my1 = lc_clampi(my1, 0, LC_LIVE_SIM_H - 1);
+    my2 = lc_clampi(my2, 0, LC_LIVE_SIM_H - 1);
+
+    x1 = g_live_sim_view.stock_left + mx1;
+    y1 = g_live_sim_view.stock_top + my1;
+    x2 = g_live_sim_view.stock_left + mx2;
+    y2 = g_live_sim_view.stock_top + my2;
+    lc_display_fill_rect(x1, y1, x2 - x1 + 1, y2 - y1 + 1, LC_LIVE_BG);
+}
+
 static void lc_live_sim_cut_swept_rect(const ui_snapshot_frame_t *frame, float x0, float z0, float x1, float z1)
 {
     float d0 = lc_live_runtime_x_to_diam(x0);
@@ -672,15 +768,34 @@ static void lc_live_sim_cut_swept_rect(const ui_snapshot_frame_t *frame, float x
         return;
     }
 
-    if (lc_live_sim_is_id_cycle(frame)) {
+    if (lc_live_sim_is_face_cycle(frame)) {
+        int doc_px = lc_live_doc_px(frame, &g_live_sim_view, 1.0f);
+        int z_left = mx0 < mx1 ? mx0 : mx1;
+        int z_right = z_left + doc_px;
         top = 0;
         bottom = my0 > my1 ? my0 : my1;
+        lc_live_sim_remove_rect(z_left, top, z_right, bottom);
+        return;
+    }
+
+    if (lc_live_sim_is_id_cycle(frame)) {
+        top = 0;
+        bottom = g_live_sim_view.stock_bottom - g_live_sim_view.stock_top;
     } else {
         top = my0 < my1 ? my0 : my1;
         bottom = g_live_sim_view.stock_bottom - g_live_sim_view.stock_top;
     }
 
     lc_live_sim_remove_rect(mx0, top, mx1 + pad, bottom);
+}
+
+static bool lc_live_sim_context_changed(const ui_snapshot_frame_t *frame)
+{
+    if (!frame) {
+        return true;
+    }
+    return strcmp(g_live_sim_line, frame->leancam_preview_line) != 0 ||
+           strcmp(g_live_sim_setup_line, frame->leancam_setup_line) != 0;
 }
 
 static void lc_live_sim_update_cut(const ui_snapshot_frame_t *frame)
@@ -1514,7 +1629,8 @@ static void lc_sim_draw_preview_ex(const ui_snapshot_frame_t *frame, bool full_s
         if (x2 < x1) { tmp = x1; x1 = x2; x2 = tmp; }
         y2 = lc_sim_dy(&view, d);
         lc_sim_hatch_rect(x1, view.stock_top, x2 - x1 + 1, y2 - view.stock_top + 1, true);
-        lc_sim_label(&view, x2 + 4, view.stock_top + 8, "Z", z);
+        lc_sim_draw_face_start_group(&view, frame, lc_sim_zx(&view, z1), y2, z1, d);
+        lc_sim_draw_face_end_group(&view, frame, lc_sim_zx(&view, z), y2, z, d);
     } else if (lc_is_cycle(line, "DRILL")) {
         float z1, depth, target, td = setup.od * 0.12f;
         int x1, x2, y2, tmp;
@@ -1599,7 +1715,6 @@ static void draw_fullscreen_preview(const ui_snapshot_frame_t *frame)
 
 static void draw_live_run_preview(const ui_snapshot_frame_t *frame)
 {
-    char perf[48];
     uint32_t t0;
     uint32_t t1;
 
@@ -1607,33 +1722,46 @@ static void draw_live_run_preview(const ui_snapshot_frame_t *frame)
         g_live_sim_mask = lc_psram_available() ? (uint8_t *)lc_psram_ptr(LC_LIVE_SIM_PSRAM_OFFSET) : NULL;
     }
 
-    if (!g_live_sim_was_running ||
-        strcmp(g_live_sim_line, frame->leancam_preview_line) != 0) {
+    if (!g_live_sim_ready ||
+        (g_live_sim_was_running && lc_live_sim_context_changed(frame))) {
         lc_live_sim_reset(frame);
     }
 
-    lc_live_sim_update_cut(frame);
-
     t0 = mcu_micros();
-    lc_display_fill_rect(0, 42, LC_DISPLAY_WIDTH, 558, LC_LIVE_BG);
-    lc_text_clip(26, 62, "Live", 18, LC_LIVE_TITLE_FG, LC_LIVE_PANEL_BG, LC_FONT_LARGE);
+    if (!g_live_sim_static_drawn) {
+        lc_display_fill_rect(0, 42, LC_DISPLAY_WIDTH, 558, LC_LIVE_BG);
+        lc_text_clip(26, 62, "Live", 18, LC_LIVE_TITLE_FG, LC_LIVE_PANEL_BG, LC_FONT_LARGE);
+    }
     t1 = mcu_micros();
     g_live_prof_clear_us = t1 - t0;
 
     if (g_live_sim_ready) {
+        if (!g_live_sim_static_drawn) {
+            t0 = mcu_micros();
+            lc_live_sim_draw_material();
+            t1 = mcu_micros();
+            g_live_prof_material_us = t1 - t0;
+            t0 = mcu_micros();
+            lc_display_text(g_live_sim_view.z0_x - 12, g_live_sim_view.stock_top - 24, "Z0", LC_LIVE_LABEL_FG, LC_LIVE_PANEL_BG, LC_FONT_NORMAL);
+            lc_sim_draw_live_chuck(&g_live_sim_view, &g_live_sim_setup,
+                                   lc_live_tool_hits_chuck(frame, &g_live_sim_view, &g_live_sim_setup));
+            lc_sim_label_large(&g_live_sim_view, g_live_sim_view.stock_left + 4, g_live_sim_view.stock_top - 46, "L", g_live_sim_setup.length);
+            lc_sim_label_large(&g_live_sim_view, g_live_sim_view.stock_left + 128, g_live_sim_view.stock_top - 46, "OD", g_live_sim_setup.od);
+            t1 = mcu_micros();
+            g_live_prof_overlay_us = t1 - t0;
+            g_live_sim_static_drawn = true;
+        } else {
+            g_live_prof_material_us = 0;
+            g_live_prof_material_rects = 0;
+            g_live_prof_overlay_us = 0;
+        }
+        lc_live_sim_update_cut(frame);
         t0 = mcu_micros();
-        lc_live_sim_draw_material();
-        t1 = mcu_micros();
-        g_live_prof_material_us = t1 - t0;
-        t0 = mcu_micros();
-        lc_display_text(g_live_sim_view.z0_x - 12, g_live_sim_view.stock_top - 24, "Z0", LC_LIVE_LABEL_FG, LC_LIVE_PANEL_BG, LC_FONT_NORMAL);
         lc_sim_draw_live_chuck(&g_live_sim_view, &g_live_sim_setup,
                                lc_live_tool_hits_chuck(frame, &g_live_sim_view, &g_live_sim_setup));
-        lc_sim_label_large(&g_live_sim_view, g_live_sim_view.stock_left + 4, g_live_sim_view.stock_top - 46, "L", g_live_sim_setup.length);
-        lc_sim_label_large(&g_live_sim_view, g_live_sim_view.stock_left + 128, g_live_sim_view.stock_top - 46, "OD", g_live_sim_setup.od);
-        lc_sim_draw_live_tool(frame, &g_live_sim_view);
+        lc_sim_draw_live_tool_marker_fast(frame, &g_live_sim_view);
         t1 = mcu_micros();
-        g_live_prof_overlay_us = t1 - t0;
+        g_live_prof_overlay_us += t1 - t0;
     } else {
         t0 = mcu_micros();
         lc_text_clip(26, 128, "Live sim needs PSRAM", 32, LC_LIVE_COLLISION, LC_LIVE_PANEL_BG, LC_FONT_NORMAL);
@@ -1643,29 +1771,150 @@ static void draw_live_run_preview(const ui_snapshot_frame_t *frame)
         g_live_prof_overlay_us = t1 - t0;
     }
 
-    t0 = mcu_micros();
-    lc_display_fill_rect(0, 548, LC_DISPLAY_WIDTH, 52, LC_COL_FOOTER_BG);
-    lc_text_clip(12, 552, frame->leancam_message, 78, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
-    if (g_render_last_us > 0) {
-        uint32_t fps10 = g_render_period_us > 0 ? (10000000UL / g_render_period_us) : 0;
-        snprintf(perf, sizeof(perf), "%lu.%lu fps %lu.%03lu ms",
-                 (unsigned long)(fps10 / 10),
-                 (unsigned long)(fps10 % 10),
-                 (unsigned long)(g_render_last_us / 1000),
-                 (unsigned long)(g_render_last_us % 1000));
-        lc_text_clip(586, 552, perf, 25, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
+    g_live_prof_footer_us = 0;
+}
+
+static int lc_live_tool_doc_px(const ui_snapshot_frame_t *frame, const lc_sim_view_t *view)
+{
+    return lc_live_doc_px(frame, view, lc_live_sim_is_face_cycle(frame) ? 1.0f : 0.5f);
+}
+
+static void lc_live_sim_restore_screen_rect(int x, int y, int w, int h)
+{
+    int x1 = lc_clampi(x, g_live_sim_view.x0 + 2, g_live_sim_view.x1 - 2);
+    int y1 = lc_clampi(y, g_live_sim_view.y0 + 2, g_live_sim_view.y1 - 2);
+    int x2 = lc_clampi(x + w - 1, g_live_sim_view.x0 + 2, g_live_sim_view.x1 - 2);
+    int y2 = lc_clampi(y + h - 1, g_live_sim_view.y0 + 2, g_live_sim_view.y1 - 2);
+
+    if (x2 < x1 || y2 < y1) {
+        return;
     }
-    snprintf(perf, sizeof(perf), "c%lu m%lu r%lu o%lu f%lu p%lu",
-             (unsigned long)(g_live_prof_clear_us / 1000),
-             (unsigned long)(g_live_prof_material_us / 1000),
-             (unsigned long)g_live_prof_material_rects,
-             (unsigned long)(g_live_prof_overlay_us / 1000),
-             (unsigned long)(g_live_prof_footer_us / 1000),
-             (unsigned long)(g_live_prof_present_us / 1000));
-    lc_text_clip(12, 574, perf, 38, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
-    lc_text_clip(330, 574, frame->leancam_preview_line, 37, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
-    t1 = mcu_micros();
-    g_live_prof_footer_us = t1 - t0;
+
+    for (int sy = y1; sy <= y2; ++sy) {
+        int run_x = x1;
+        lc_color_t run_color = LC_LIVE_BG;
+
+        for (int sx = x1; sx <= x2 + 1; ++sx) {
+            lc_color_t color = LC_LIVE_BG;
+            if (sx <= x2 &&
+                sx >= g_live_sim_view.stock_left &&
+                sx <= g_live_sim_view.stock_right &&
+                sy >= g_live_sim_view.stock_top &&
+                sy <= g_live_sim_view.stock_bottom &&
+                g_live_sim_mask && g_live_sim_ready) {
+                int mx = sx - g_live_sim_view.stock_left;
+                int my = sy - g_live_sim_view.stock_top;
+                if (mx >= 0 && mx < LC_LIVE_SIM_W &&
+                    my >= 0 && my < LC_LIVE_SIM_H &&
+                    g_live_sim_mask[my * LC_LIVE_SIM_W + mx]) {
+                    color = LC_LIVE_STOCK_FG;
+                }
+            }
+
+            if (sx == x1) {
+                run_color = color;
+                run_x = sx;
+            } else if (sx > x2 || color != run_color) {
+                lc_display_fill_rect(run_x, sy, sx - run_x, 1, run_color);
+                run_color = color;
+                run_x = sx;
+            }
+        }
+    }
+}
+
+static void lc_live_draw_rect_diff(int old_x,
+                                   int old_y,
+                                   int old_w,
+                                   int old_h,
+                                   int new_x,
+                                   int new_y,
+                                   int new_w,
+                                   int new_h)
+{
+    int ix1 = old_x > new_x ? old_x : new_x;
+    int iy1 = old_y > new_y ? old_y : new_y;
+    int ix2 = old_x + old_w < new_x + new_w ? old_x + old_w : new_x + new_w;
+    int iy2 = old_y + old_h < new_y + new_h ? old_y + old_h : new_y + new_h;
+
+    if (ix1 >= ix2 || iy1 >= iy2) {
+        lc_live_sim_restore_screen_rect(old_x, old_y, old_w, old_h);
+        lc_display_fill_rect(new_x, new_y, new_w, new_h, LC_LIVE_TOOL_MARK);
+        return;
+    }
+
+    /* Old-only strips become restored stock/background. */
+    if (old_x < ix1) {
+        lc_live_sim_restore_screen_rect(old_x, old_y, ix1 - old_x, old_h);
+    }
+    if (ix2 < old_x + old_w) {
+        lc_live_sim_restore_screen_rect(ix2, old_y, old_x + old_w - ix2, old_h);
+    }
+    if (old_y < iy1) {
+        lc_live_sim_restore_screen_rect(ix1, old_y, ix2 - ix1, iy1 - old_y);
+    }
+    if (iy2 < old_y + old_h) {
+        lc_live_sim_restore_screen_rect(ix1, iy2, ix2 - ix1, old_y + old_h - iy2);
+    }
+
+    /* New-only strips are the advancing red tool area. */
+    if (new_x < ix1) {
+        lc_display_fill_rect(new_x, new_y, ix1 - new_x, new_h, LC_LIVE_TOOL_MARK);
+    }
+    if (ix2 < new_x + new_w) {
+        lc_display_fill_rect(ix2, new_y, new_x + new_w - ix2, new_h, LC_LIVE_TOOL_MARK);
+    }
+    if (new_y < iy1) {
+        lc_display_fill_rect(ix1, new_y, ix2 - ix1, iy1 - new_y, LC_LIVE_TOOL_MARK);
+    }
+    if (iy2 < new_y + new_h) {
+        lc_display_fill_rect(ix1, iy2, ix2 - ix1, new_y + new_h - iy2, LC_LIVE_TOOL_MARK);
+    }
+}
+
+static void lc_sim_draw_live_tool_marker_fast(const ui_snapshot_frame_t *frame, const lc_sim_view_t *view)
+{
+    float z;
+    float d;
+    int size;
+    int zx;
+    int dy;
+    int x;
+    int y;
+
+    if (!frame || !view || !frame->axes_valid) {
+        return;
+    }
+
+    z = frame->axis[2];
+    d = lc_live_runtime_x_to_diam(frame->axis[0]);
+    size = lc_live_tool_doc_px(frame, view);
+    zx = lc_sim_zx_view(view, z);
+    dy = lc_sim_dy_view(view, d);
+    x = lc_clampi(zx, view->x0 + 2, view->x1 - size - 2);
+    y = lc_clampi(dy, view->y0 + 2, view->y1 - size - 2);
+
+    if (!g_live_tool_rect_valid) {
+        lc_display_fill_rect(x, y, size, size, LC_LIVE_TOOL_MARK);
+    } else {
+        lc_live_draw_rect_diff(g_live_tool_rect_x,
+                               g_live_tool_rect_y,
+                               g_live_tool_rect_w,
+                               g_live_tool_rect_h,
+                               x,
+                               y,
+                               size,
+                               size);
+    }
+
+    g_live_tool_rect_x = x;
+    g_live_tool_rect_y = y;
+    g_live_tool_rect_w = size;
+    g_live_tool_rect_h = size;
+    g_live_tool_rect_valid = true;
+    g_live_tool_last_x = x;
+    g_live_tool_last_y = y;
+    g_live_tool_has_last_pos = true;
 }
 
 static const char *lc_split_preview_title(const ui_snapshot_frame_t *frame)
@@ -1928,13 +2177,20 @@ void leancam_hdmi_renderer_poll(void)
         return;
     }
 
-    start_us = mcu_micros();
-    draw_bar(&frame);
     if (lc_live_sim_running(&frame)) {
+        lc_display_direct_scanout(true);
+        start_us = mcu_micros();
+        draw_bar(&frame);
         draw_live_run_preview(&frame);
     } else if (lc_should_draw_fullscreen_preview(&frame)) {
+        lc_display_direct_scanout(false);
+        start_us = mcu_micros();
+        draw_bar(&frame);
         draw_fullscreen_preview(&frame);
     } else {
+        lc_display_direct_scanout(false);
+        start_us = mcu_micros();
+        draw_bar(&frame);
         draw_leancam_rows(&frame);
     }
     g_live_sim_was_running = lc_live_sim_running(&frame);

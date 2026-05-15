@@ -22,6 +22,7 @@
 static uint8_t *g_scanout_buf;
 static sDrawCan g_back_can;
 static bool g_backbuffer_active;
+static bool g_direct_scanout;
 static int g_last_error;
 static int g_dirty_x1;
 static int g_dirty_y1;
@@ -200,6 +201,20 @@ bool lc_display_backbuffer_active(void)
     return g_backbuffer_active;
 }
 
+void lc_display_direct_scanout(bool direct)
+{
+    if (!g_backbuffer_active) {
+        g_direct_scanout = true;
+        return;
+    }
+    if (g_direct_scanout == direct) {
+        return;
+    }
+    g_direct_scanout = direct;
+    SetDrawCan6(direct ? &DrawCan6 : &g_back_can);
+    dirty_reset();
+}
+
 void lc_display_clear(lc_color_t color)
 {
     Draw6ClearCol(color);
@@ -282,7 +297,7 @@ void lc_display_present(void)
     int byte_x2;
     int bytes;
 
-    if (!g_backbuffer_active || !g_scanout_buf || g_dirty_x1 >= g_dirty_x2 || g_dirty_y1 >= g_dirty_y2) {
+    if (g_direct_scanout || !g_backbuffer_active || !g_scanout_buf || g_dirty_x1 >= g_dirty_x2 || g_dirty_y1 >= g_dirty_y2) {
         dirty_reset();
         return;
     }

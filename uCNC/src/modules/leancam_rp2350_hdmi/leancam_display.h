@@ -23,6 +23,7 @@ bool lc_display_init(void);
 int lc_display_last_error(void);
 void *lc_display_scanout_buffer(void);
 bool lc_display_backbuffer_active(void);
+void lc_display_direct_scanout(bool direct);
 void lc_display_clear(lc_color_t color);
 void lc_display_pixel(int x, int y, lc_color_t color);
 void lc_display_line(int x1, int y1, int x2, int y2, lc_color_t color);

@@ -4,32 +4,110 @@
 #include "../ui_snapshot/ui_snapshot.h"
 #include "../ra8876_display/ra_leancam_table.h"
 #include "leancam_display.h"
+#include "leancam_palette.h"
+#include "leancam_psram.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 #ifndef LC_HDMI_RENDER_MS
-#define LC_HDMI_RENDER_MS 50
+#define LC_HDMI_RENDER_MS 100
 #endif
 
-#define LC_COL_BG      lc_display_rgb(0, 0, 0)
-#define LC_COL_TOP     lc_display_rgb(18, 42, 54)
-#define LC_COL_PANEL   lc_display_rgb(8, 18, 22)
-#define LC_COL_LINE    lc_display_rgb(68, 130, 146)
-#define LC_COL_TEXT    lc_display_rgb(230, 238, 228)
-#define LC_COL_DIM     lc_display_rgb(122, 150, 150)
-#define LC_COL_VALUE   lc_display_rgb(246, 210, 92)
-#define LC_COL_HI      lc_display_rgb(255, 245, 130)
-#define LC_COL_BAD     lc_display_rgb(230, 80, 70)
-#define LC_COL_OK      lc_display_rgb(80, 210, 130)
-#define LC_COL_STOCK   lc_display_rgb(138, 142, 140)
-#define LC_COL_SELECT  lc_display_rgb(36, 54, 58)
-#define LC_COL_CUT     lc_display_rgb(238, 204, 78)
-#define LC_COL_HATCH   lc_display_rgb(58, 50, 22)
-#define LC_COL_DARK    lc_display_rgb(4, 8, 10)
+#define LC_RENDER_MODE_FILES 0
+#define LC_RENDER_MODE_NC_VIEW 4
+
+#define LC_COL_BG      lc_palette_element(LC_ELEM_BACKGROUND)
+#define LC_COL_TOP     lc_palette_element(LC_ELEM_HEADER)
+#define LC_COL_PANEL   lc_palette_element(LC_ELEM_PANEL)
+#define LC_COL_LINE    lc_palette_element(LC_ELEM_BORDER)
+#define LC_COL_TEXT    lc_palette_element(LC_ELEM_TEXT)
+#define LC_COL_DIM     lc_palette_element(LC_ELEM_SECONDARY_TEXT)
+#define LC_COL_VALUE   lc_palette_element(LC_ELEM_VALUE_TEXT)
+#define LC_COL_HI      lc_palette_element(LC_ELEM_SELECTED_TEXT)
+#define LC_COL_BAD     lc_palette_element(LC_ELEM_ERROR)
+#define LC_COL_OK      lc_palette_element(LC_ELEM_OK)
+#define LC_COL_STOCK   lc_palette_element(LC_ELEM_STOCK)
+#define LC_COL_SELECT  lc_palette_element(LC_ELEM_SELECTED_ROW)
+#define LC_COL_FOOTER_BG    lc_palette_element(LC_ELEM_FOOTER_BG)
+#define LC_COL_FOOTER_TEXT  lc_palette_element(LC_ELEM_FOOTER_TEXT)
+#define LC_COL_FOOTER_VALUE lc_palette_element(LC_ELEM_FOOTER_VALUE)
+#define LC_COL_CUT     lc_palette_element(LC_ELEM_CUT)
+#define LC_COL_HATCH   lc_palette_element(LC_ELEM_HATCH)
+#define LC_COL_DARK    lc_palette_element(LC_ELEM_TOOL)
+
+#define LC_PREVIEW_BG               lc_palette_element(LC_ELEM_PREVIEW_BG)
+#define LC_PREVIEW_PANEL_BG         lc_palette_element(LC_ELEM_PREVIEW_BG)
+#define LC_PREVIEW_FRAME_FG         lc_palette_element(LC_ELEM_PREVIEW_FRAME)
+#define LC_PREVIEW_TITLE_FG         lc_palette_element(LC_ELEM_PREVIEW_TEXT)
+#define LC_PREVIEW_LABEL_FG         lc_palette_element(LC_ELEM_PREVIEW_DIM_TEXT)
+#define LC_PREVIEW_VALUE_FG         lc_palette_element(LC_ELEM_PREVIEW_DIM_TEXT)
+#define LC_PREVIEW_ACTIVE_VALUE_FG  lc_palette_element(LC_ELEM_PREVIEW_ACTIVE_TEXT)
+#define LC_PREVIEW_ACTIVE_VALUE_BG  lc_palette_element(LC_ELEM_PREVIEW_ACTIVE_BG)
+#define LC_PREVIEW_MESSAGE_FG       lc_palette_element(LC_ELEM_PREVIEW_VALUE_TEXT)
+#define LC_PREVIEW_STOCK_FG         lc_palette_element(LC_ELEM_PREVIEW_STOCK)
+#define LC_PREVIEW_AXIS_FG          lc_palette_element(LC_ELEM_PREVIEW_TEXT)
+#define LC_PREVIEW_CHUCK_FG         lc_palette_element(LC_ELEM_PREVIEW_CHUCK)
+#define LC_PREVIEW_CHUCK_TEXT_FG    lc_palette_element(LC_ELEM_PREVIEW_CHUCK_TEXT)
+#define LC_PREVIEW_CUT_FG           lc_palette_element(LC_ELEM_PREVIEW_CUT)
+#define LC_PREVIEW_HATCH_FG         lc_palette_element(LC_ELEM_PREVIEW_HATCH)
+#define LC_PREVIEW_PROFILE_FG       lc_palette_element(LC_ELEM_PREVIEW_PROFILE)
+#define LC_PREVIEW_TOOL_FG          lc_palette_element(LC_ELEM_PREVIEW_TOOL)
+#define LC_PREVIEW_TOOL_MARK        lc_palette_element(LC_ELEM_PREVIEW_TOOL_MARK)
+#define LC_PREVIEW_TOOL_OUTLINE     lc_palette_element(LC_ELEM_PREVIEW_TOOL_OUTLINE)
+#define LC_PREVIEW_ERROR_FG         lc_palette_element(LC_ELEM_ERROR)
+
+#define LC_LIVE_BG                  lc_palette_element(LC_ELEM_LIVE_BG)
+#define LC_LIVE_PANEL_BG            lc_palette_element(LC_ELEM_LIVE_BG)
+#define LC_LIVE_FRAME_FG            lc_palette_element(LC_ELEM_LIVE_FRAME)
+#define LC_LIVE_TITLE_FG            lc_palette_element(LC_ELEM_LIVE_TEXT)
+#define LC_LIVE_LABEL_FG            lc_palette_element(LC_ELEM_LIVE_TEXT)
+#define LC_LIVE_VALUE_FG            lc_palette_element(LC_ELEM_LIVE_VALUE_TEXT)
+#define LC_LIVE_DEBUG_FG            lc_palette_element(LC_ELEM_LIVE_DEBUG_TEXT)
+#define LC_LIVE_STOCK_FG            lc_palette_element(LC_ELEM_LIVE_STOCK)
+#define LC_LIVE_AXIS_FG             lc_palette_element(LC_ELEM_LIVE_AXIS)
+#define LC_LIVE_TOOL_FG             lc_palette_element(LC_ELEM_LIVE_TOOL)
+#define LC_LIVE_TOOL_MARK           lc_palette_element(LC_ELEM_LIVE_TOOL_MARK)
+#define LC_LIVE_TOOL_OUTLINE        lc_palette_element(LC_ELEM_LIVE_TOOL_OUTLINE)
+#define LC_LIVE_CHUCK_FG            lc_palette_element(LC_ELEM_LIVE_CHUCK)
+#define LC_LIVE_CHUCK_OUTLINE       lc_palette_element(LC_ELEM_LIVE_CHUCK_OUTLINE)
+#define LC_LIVE_COLLISION           lc_palette_element(LC_ELEM_LIVE_COLLISION)
+
+#define LC_LIVE_SIM_W 680
+#define LC_LIVE_SIM_H 380
+#define LC_LIVE_SIM_PSRAM_OFFSET (512u * 1024u)
+#define LC_PREVIEW_LABEL_FONT LC_FONT_NORMAL
+#define LC_PREVIEW_LABEL_H 18
+#define LC_LEFT_PANE_X 10
+#define LC_LEFT_PANE_W 392
+#define LC_RIGHT_PANE_X 412
+#define LC_RIGHT_PANE_W 372
+#define LC_TEXT_X (LC_RIGHT_PANE_X + 14)
+#define LC_PREVIEW_X (LC_LEFT_PANE_X + 14)
+#define LC_RENDER_MODE_DRAFT 3
+
+#ifndef LEANCAM_HDMI_LIVE_RT_X_RADIUS
+#define LEANCAM_HDMI_LIVE_RT_X_RADIUS 1
+#endif
 
 static uint32_t g_last_seq;
+static uint8_t *g_live_sim_mask;
+static bool g_live_sim_ready;
+static bool g_live_sim_was_running;
+static char g_live_sim_line[UI_LC_LINE_LEN];
+static float g_live_sim_last_x;
+static float g_live_sim_last_z;
+static bool g_live_sim_has_last;
+static uint32_t g_render_last_us;
+static uint32_t g_render_period_us;
+static uint32_t g_live_prof_clear_us;
+static uint32_t g_live_prof_material_us;
+static uint32_t g_live_prof_overlay_us;
+static uint32_t g_live_prof_footer_us;
+static uint32_t g_live_prof_present_us;
+static uint32_t g_live_prof_material_rects;
 
 typedef struct {
     float length;
@@ -53,6 +131,30 @@ typedef struct {
     float stock_len;
     float stock_od;
 } lc_sim_view_t;
+
+typedef enum {
+    LC_SIM_CORNER_NONE = 0,
+    LC_SIM_CORNER_RND,
+    LC_SIM_CORNER_CHMF
+} lc_sim_corner_kind_t;
+
+typedef struct {
+    float d1;
+    float dt;
+    float d2;
+    float z1;
+    float z2;
+    float z_profile_end;
+    float d_profile_end;
+    float d_corner_end;
+    float arc_i;
+    float arc_k;
+    float amount;
+    lc_sim_corner_kind_t corner;
+} lc_sim_turn_shape_t;
+
+static lc_sim_setup_t g_live_sim_setup;
+static lc_sim_view_t g_live_sim_view;
 
 static const char *lc_skip_line_number(const char *s)
 {
@@ -267,11 +369,11 @@ static void lc_sim_read_setup(const ui_snapshot_frame_t *frame, lc_sim_setup_t *
     if (setup->extra < 0.0f) setup->extra = 0.0f;
 }
 
-static void lc_sim_build_view(const lc_sim_setup_t *setup, lc_sim_view_t *view)
+static void lc_sim_build_view(const lc_sim_setup_t *setup, lc_sim_view_t *view, bool full_screen)
 {
     float visible_len = setup->length + setup->extra;
-    float usable_w = 294.0f;
-    float usable_h = 245.0f;
+    float usable_w = full_screen ? 680.0f : 294.0f;
+    float usable_h = full_screen ? 380.0f : 245.0f;
     float z_scale;
     float d_scale;
     int stock_w;
@@ -290,13 +392,26 @@ static void lc_sim_build_view(const lc_sim_setup_t *setup, lc_sim_view_t *view)
     if (stock_w > (int)usable_w) stock_w = (int)usable_w;
     if (stock_h > (int)usable_h) stock_h = (int)usable_h;
 
-    view->x0 = 432;
-    view->y0 = 104;
-    view->x1 = 776;
-    view->y1 = 520;
-    view->stock_right = 744;
-    view->stock_left = view->stock_right - stock_w;
-    view->stock_top = 170;
+    view->x0 = full_screen ? 24 : LC_PREVIEW_X;
+    view->y0 = full_screen ? 92 : 104;
+    view->x1 = full_screen ? 776 : (LC_LEFT_PANE_X + LC_LEFT_PANE_W - 14);
+    view->y1 = full_screen ? 548 : 520;
+    if (full_screen) {
+        view->stock_left = 20;
+        view->stock_right = view->stock_left + stock_w;
+        if (view->stock_right > view->x1 - 2) {
+            view->stock_right = view->x1 - 2;
+            view->stock_left = view->stock_right - stock_w;
+        }
+    } else {
+        view->stock_left = LC_LEFT_PANE_X + 20;
+        view->stock_right = view->stock_left + stock_w;
+        if (view->stock_right > view->x1 - 2) {
+            view->stock_right = view->x1 - 2;
+            view->stock_left = view->stock_right - stock_w;
+        }
+    }
+    view->stock_top = full_screen ? 126 : 170;
     view->stock_bottom = view->stock_top + stock_h;
     view->z0_x = lc_clampi(view->stock_left + (int)(setup->length * view->scale + 0.5f),
                            view->stock_left, view->stock_right);
@@ -310,18 +425,366 @@ static int lc_sim_zx(const lc_sim_view_t *view, float z)
                     view->stock_left, view->stock_right);
 }
 
+static int lc_sim_zx_view(const lc_sim_view_t *view, float z)
+{
+    return lc_clampi(view->z0_x + (int)(z * view->scale + (z >= 0.0f ? 0.5f : -0.5f)),
+                    view->x0 + 2, view->x1 - 2);
+}
+
 static int lc_sim_dy(const lc_sim_view_t *view, float d)
 {
     int y = view->stock_top + (int)((d * 0.5f) * view->scale + 0.5f);
     return lc_clampi(y, view->stock_top, view->stock_bottom);
 }
 
-static void lc_sim_label(int x, int y, const char *name, float v)
+static int lc_sim_dy_view(const lc_sim_view_t *view, float d)
+{
+    int y = view->stock_top + (int)((d * 0.5f) * view->scale + 0.5f);
+    return lc_clampi(y, view->y0 + 2, view->y1 - 2);
+}
+
+static int lc_sim_diam_len_px(const lc_sim_view_t *view, float d)
+{
+    int px;
+
+    if (!view) {
+        return 0;
+    }
+    if (d < 0.0f) {
+        d = -d;
+    }
+    px = (int)((d * 0.5f) * view->scale + 0.5f);
+    return px < 1 ? 1 : px;
+}
+
+static float lc_lerpf(float a, float b, float t)
+{
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    return a + ((b - a) * t);
+}
+
+static float lc_absf(float v)
+{
+    return v < 0.0f ? -v : v;
+}
+
+static bool lc_sim_active_field_is(const ui_snapshot_frame_t *frame, const char *name)
+{
+    if (!frame || !name || !frame->leancam_active_field[0]) {
+        return false;
+    }
+    if (strcmp(frame->leancam_active_field, name) == 0) {
+        return true;
+    }
+    if ((strcmp(name, "OD") == 0 || strcmp(name, "ID") == 0) &&
+        (strcmp(frame->leancam_active_field, "M") == 0 ||
+         strcmp(frame->leancam_active_field, "D") == 0 ||
+         strcmp(frame->leancam_active_field, "D1") == 0)) {
+        return true;
+    }
+    return false;
+}
+
+static void lc_sim_value_label_at(const lc_sim_view_t *view,
+                                  const ui_snapshot_frame_t *frame,
+                                  int x,
+                                  int y,
+                                  const char *name,
+                                  float value)
+{
+    char value_text[18];
+    int name_w;
+    int value_w;
+    int tx;
+    int ty;
+    uint16_t value_fg;
+    uint16_t value_bg;
+
+    if (!view || !name) {
+        return;
+    }
+
+    snprintf(value_text, sizeof(value_text), "%.2f", (double)value);
+    name_w = lc_display_text_width(name, LC_PREVIEW_LABEL_FONT) + lc_display_text_width(" ", LC_PREVIEW_LABEL_FONT);
+    value_w = lc_display_text_width(value_text, LC_PREVIEW_LABEL_FONT);
+    tx = lc_clampi(x, view->x0 + 2, view->x1 - name_w - value_w - 2);
+    ty = lc_clampi(y, view->y0 + 2, view->y1 - LC_PREVIEW_LABEL_H);
+
+    lc_display_text(tx, ty, name, LC_PREVIEW_LABEL_FG, LC_PREVIEW_PANEL_BG, LC_PREVIEW_LABEL_FONT);
+    value_fg = lc_sim_active_field_is(frame, name) ? LC_PREVIEW_ACTIVE_VALUE_FG : LC_PREVIEW_VALUE_FG;
+    value_bg = lc_sim_active_field_is(frame, name) ? LC_PREVIEW_ACTIVE_VALUE_BG : LC_PREVIEW_PANEL_BG;
+    lc_display_text(tx + name_w, ty, value_text, value_fg, value_bg, LC_PREVIEW_LABEL_FONT);
+}
+
+static void lc_sim_draw_turn_start_group(const lc_sim_view_t *view,
+                                         const ui_snapshot_frame_t *frame,
+                                         int anchor_x,
+                                         int anchor_y,
+                                         float z1,
+                                         float d1)
+{
+    int x = anchor_x - 62;
+    int y = anchor_y - 36;
+
+    lc_sim_value_label_at(view, frame, x, y, "Z1", z1);
+    lc_sim_value_label_at(view, frame, x, y + LC_PREVIEW_LABEL_H, "D1", d1);
+}
+
+static void lc_sim_draw_turn_dt_label(const lc_sim_view_t *view,
+                                      const ui_snapshot_frame_t *frame,
+                                      int anchor_x,
+                                      int anchor_y,
+                                      float dt)
+{
+    lc_sim_value_label_at(view, frame, anchor_x - 62, anchor_y - 15, "DT", dt);
+}
+
+static void lc_sim_draw_turn_end_group(const lc_sim_view_t *view,
+                                       const ui_snapshot_frame_t *frame,
+                                       int anchor_x,
+                                       int anchor_y,
+                                       float z2,
+                                       float d2,
+                                       const char *corner_name,
+                                       float corner_amount)
+{
+    char z2_text[18];
+    char d2_text[18];
+    char corner_text[18];
+    int has_corner = corner_name && corner_name[0] && corner_amount > 0.0f;
+    int lines = has_corner ? 3 : 2;
+    int max_w;
+    int x;
+    int y = anchor_y - ((lines * LC_PREVIEW_LABEL_H) + 8);
+
+    snprintf(z2_text, sizeof(z2_text), "%.2f", (double)z2);
+    snprintf(d2_text, sizeof(d2_text), "%.2f", (double)d2);
+    snprintf(corner_text, sizeof(corner_text), "%.2f", (double)corner_amount);
+    max_w = lc_display_text_width("Z2 ", LC_PREVIEW_LABEL_FONT) + lc_display_text_width(z2_text, LC_PREVIEW_LABEL_FONT);
+    max_w = lc_display_text_width("D2 ", LC_PREVIEW_LABEL_FONT) + lc_display_text_width(d2_text, LC_PREVIEW_LABEL_FONT) > max_w ?
+            lc_display_text_width("D2 ", LC_PREVIEW_LABEL_FONT) + lc_display_text_width(d2_text, LC_PREVIEW_LABEL_FONT) : max_w;
+    if (has_corner) {
+        int cw = lc_display_text_width(corner_name, LC_PREVIEW_LABEL_FONT) +
+                 lc_display_text_width(" ", LC_PREVIEW_LABEL_FONT) +
+                 lc_display_text_width(corner_text, LC_PREVIEW_LABEL_FONT);
+        if (cw > max_w) max_w = cw;
+    }
+    x = anchor_x - max_w - 8;
+    if (y < view->y0 + 2) y = view->y0 + 2;
+
+    if (has_corner) {
+        lc_sim_value_label_at(view, frame, x, y, corner_name, corner_amount);
+        y += LC_PREVIEW_LABEL_H;
+    }
+    lc_sim_value_label_at(view, frame, x, y, "Z2", z2);
+    lc_sim_value_label_at(view, frame, x, y + LC_PREVIEW_LABEL_H, "D2", d2);
+}
+
+static int lc_live_sim_mx(const lc_sim_view_t *view, float z)
+{
+    int px = lc_sim_zx_view(view, z) - view->stock_left;
+    return lc_clampi(px, 0, LC_LIVE_SIM_W - 1);
+}
+
+static int lc_live_sim_my(const lc_sim_view_t *view, float d)
+{
+    int py = lc_sim_dy_view(view, d) - view->stock_top;
+    return lc_clampi(py, 0, LC_LIVE_SIM_H - 1);
+}
+
+static bool lc_live_sim_running(const ui_snapshot_frame_t *frame)
+{
+    return frame && (frame->motion_active || (frame->state & (EXEC_RUN | EXEC_HOLD)));
+}
+
+static float lc_live_runtime_x_to_diam(float runtime_x)
+{
+    float x = runtime_x < 0.0f ? -runtime_x : runtime_x;
+#if LEANCAM_HDMI_LIVE_RT_X_RADIUS
+    return x * 2.0f;
+#else
+    return x;
+#endif
+}
+
+static bool lc_live_sim_is_id_cycle(const ui_snapshot_frame_t *frame)
+{
+    const char *line = frame ? frame->leancam_preview_line : NULL;
+    return lc_is_cycle(line, "ID") || lc_is_cycle(line, "THR_ID");
+}
+
+static void lc_live_sim_reset(const ui_snapshot_frame_t *frame)
+{
+    if (!g_live_sim_mask || !frame) {
+        g_live_sim_ready = false;
+        return;
+    }
+
+    lc_sim_read_setup(frame, &g_live_sim_setup);
+    lc_sim_build_view(&g_live_sim_setup, &g_live_sim_view, true);
+    memset(g_live_sim_mask, 0, LC_LIVE_SIM_W * LC_LIVE_SIM_H);
+
+    for (int y = 0; y <= g_live_sim_view.stock_bottom - g_live_sim_view.stock_top && y < LC_LIVE_SIM_H; ++y) {
+        memset(g_live_sim_mask + (y * LC_LIVE_SIM_W), 1,
+               (size_t)(g_live_sim_view.stock_right - g_live_sim_view.stock_left + 1));
+    }
+
+    ui_snapshot_strcpy(g_live_sim_line, frame->leancam_preview_line, sizeof(g_live_sim_line));
+    g_live_sim_has_last = false;
+    g_live_sim_ready = true;
+}
+
+static void lc_live_sim_remove_rect(int x1, int y1, int x2, int y2)
+{
+    int tmp;
+
+    if (!g_live_sim_mask || !g_live_sim_ready) {
+        return;
+    }
+
+    if (x2 < x1) { tmp = x1; x1 = x2; x2 = tmp; }
+    if (y2 < y1) { tmp = y1; y1 = y2; y2 = tmp; }
+
+    x1 = lc_clampi(x1, 0, LC_LIVE_SIM_W - 1);
+    x2 = lc_clampi(x2, 0, LC_LIVE_SIM_W - 1);
+    y1 = lc_clampi(y1, 0, LC_LIVE_SIM_H - 1);
+    y2 = lc_clampi(y2, 0, LC_LIVE_SIM_H - 1);
+
+    for (int y = y1; y <= y2; ++y) {
+        memset(g_live_sim_mask + (y * LC_LIVE_SIM_W) + x1, 0, (size_t)(x2 - x1 + 1));
+    }
+}
+
+static void lc_live_sim_cut_swept_rect(const ui_snapshot_frame_t *frame, float x0, float z0, float x1, float z1)
+{
+    float d0 = lc_live_runtime_x_to_diam(x0);
+    float d1 = lc_live_runtime_x_to_diam(x1);
+    int mx0 = lc_live_sim_mx(&g_live_sim_view, z0);
+    int mx1 = lc_live_sim_mx(&g_live_sim_view, z1);
+    int my0 = lc_live_sim_my(&g_live_sim_view, d0);
+    int my1 = lc_live_sim_my(&g_live_sim_view, d1);
+    int top;
+    int bottom;
+    int pad = 1;
+
+    if (d0 > g_live_sim_view.stock_od && d1 > g_live_sim_view.stock_od) {
+        return;
+    }
+
+    if (lc_live_sim_is_id_cycle(frame)) {
+        top = 0;
+        bottom = my0 > my1 ? my0 : my1;
+    } else {
+        top = my0 < my1 ? my0 : my1;
+        bottom = g_live_sim_view.stock_bottom - g_live_sim_view.stock_top;
+    }
+
+    lc_live_sim_remove_rect(mx0, top, mx1 + pad, bottom);
+}
+
+static void lc_live_sim_update_cut(const ui_snapshot_frame_t *frame)
+{
+    float x;
+    float z;
+
+    if (!g_live_sim_ready || !frame || !frame->axes_valid) {
+        return;
+    }
+
+    x = frame->axis[0];
+    z = frame->axis[2];
+    if (g_live_sim_has_last) {
+        lc_live_sim_cut_swept_rect(frame, g_live_sim_last_x, g_live_sim_last_z, x, z);
+    } else {
+        lc_live_sim_cut_swept_rect(frame, x, z, x, z);
+    }
+
+    g_live_sim_last_x = x;
+    g_live_sim_last_z = z;
+    g_live_sim_has_last = true;
+}
+
+static void lc_live_sim_draw_material(void)
+{
+    int stock_w;
+    int stock_h;
+    int active_start = -1;
+    int active_end = -1;
+    int active_y = 0;
+
+    if (!g_live_sim_mask || !g_live_sim_ready) {
+        return;
+    }
+
+    stock_w = g_live_sim_view.stock_right - g_live_sim_view.stock_left + 1;
+    stock_h = g_live_sim_view.stock_bottom - g_live_sim_view.stock_top + 1;
+    if (stock_w > LC_LIVE_SIM_W) stock_w = LC_LIVE_SIM_W;
+    if (stock_h > LC_LIVE_SIM_H) stock_h = LC_LIVE_SIM_H;
+
+    g_live_prof_material_rects = 0;
+    for (int y = 0; y < stock_h; ++y) {
+        int run_start = -1;
+        int row_start = -1;
+        int row_end = -1;
+        const uint8_t *row = g_live_sim_mask + (y * LC_LIVE_SIM_W);
+
+        for (int x = 0; x <= stock_w; ++x) {
+            bool material = (x < stock_w) && row[x];
+            if (material && run_start < 0) {
+                run_start = x;
+            } else if (!material && run_start >= 0) {
+                row_start = run_start;
+                row_end = x;
+                run_start = -1;
+                break;
+            }
+        }
+
+        if (row_start == active_start && row_end == active_end && row_start >= 0) {
+            continue;
+        }
+
+        if (active_start >= 0) {
+            lc_display_fill_rect(g_live_sim_view.stock_left + active_start,
+                                 g_live_sim_view.stock_top + active_y,
+                                 active_end - active_start,
+                                 y - active_y,
+                                 LC_LIVE_STOCK_FG);
+            g_live_prof_material_rects++;
+        }
+
+        active_start = row_start;
+        active_end = row_end;
+        active_y = y;
+    }
+
+    if (active_start >= 0) {
+        lc_display_fill_rect(g_live_sim_view.stock_left + active_start,
+                             g_live_sim_view.stock_top + active_y,
+                             active_end - active_start,
+                             stock_h - active_y,
+                             LC_LIVE_STOCK_FG);
+        g_live_prof_material_rects++;
+    }
+}
+
+static void lc_sim_label(const lc_sim_view_t *view, int x, int y, const char *name, float v)
 {
     char buf[32];
     snprintf(buf, sizeof(buf), "%s %.1f", name, (double)v);
-    lc_display_text(lc_clampi(x, 432, 730), lc_clampi(y, 112, 504),
-                    buf, LC_COL_DIM, LC_COL_BG, LC_FONT_SMALL);
+    lc_display_text(lc_clampi(x, view->x0 + 4, view->x1 - 70),
+                    lc_clampi(y, view->y0 + 8, view->y1 - 18),
+                    buf, LC_PREVIEW_LABEL_FG, LC_PREVIEW_PANEL_BG, LC_FONT_NORMAL);
+}
+
+static void lc_sim_label_large(const lc_sim_view_t *view, int x, int y, const char *name, float v)
+{
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%s %.1f", name, (double)v);
+    lc_display_text(lc_clampi(x, view->x0 + 4, view->x1 - 110),
+                    lc_clampi(y, view->y0 + 8, view->y1 - 18),
+                    buf, LC_LIVE_LABEL_FG, LC_LIVE_PANEL_BG, LC_FONT_NORMAL);
 }
 
 static void lc_sim_hatch_rect(int x, int y, int w, int h, bool vertical)
@@ -329,95 +792,717 @@ static void lc_sim_hatch_rect(int x, int y, int w, int h, bool vertical)
     int p;
     if (w < 1) w = 1;
     if (h < 1) h = 1;
-    lc_display_fill_rect(x, y, w, h, LC_COL_CUT);
-    lc_display_rect(x, y, w, h, LC_COL_HATCH);
+    lc_display_fill_rect(x, y, w, h, LC_PREVIEW_CUT_FG);
+    lc_display_rect(x, y, w, h, LC_PREVIEW_HATCH_FG);
     if (vertical) {
         for (p = x + 6; p < x + w; p += 6) {
-            lc_display_line(p, y, p, y + h - 1, LC_COL_HATCH);
+            lc_display_line(p, y, p, y + h - 1, LC_PREVIEW_HATCH_FG);
         }
     } else {
         for (p = y + 6; p < y + h; p += 6) {
-            lc_display_line(x, p, x + w - 1, p, LC_COL_HATCH);
+            lc_display_line(x, p, x + w - 1, p, LC_PREVIEW_HATCH_FG);
         }
     }
 }
 
+static void lc_sim_hatch_vline(int x, int y1, int y2)
+{
+    int tmp;
+
+    if (y2 < y1) { tmp = y1; y1 = y2; y2 = tmp; }
+    if (y2 <= y1) {
+        return;
+    }
+    lc_display_line(x, y1, x, y2, LC_PREVIEW_CUT_FG);
+}
+
+static void lc_sim_build_turn_corner_geometry(bool is_od, lc_sim_turn_shape_t *shape)
+{
+    const float eps = 0.000001f;
+    float r_start;
+    float r_end;
+    float dz;
+    float dr;
+    float len;
+    float az;
+    float ax;
+    float bx;
+    float dot;
+    float trim;
+
+    if (!shape) {
+        return;
+    }
+
+    shape->z_profile_end = shape->z2;
+    shape->d_profile_end = shape->d2;
+    shape->d_corner_end = shape->d2;
+    shape->arc_i = 0.0f;
+    shape->arc_k = 0.0f;
+
+    if (shape->corner == LC_SIM_CORNER_NONE || shape->amount <= 0.0f) {
+        return;
+    }
+
+    r_start = shape->dt * 0.5f;
+    r_end = shape->d2 * 0.5f;
+    dz = shape->z2 - shape->z1;
+    dr = r_end - r_start;
+    len = sqrtf((dz * dz) + (dr * dr));
+    if (len <= eps) {
+        shape->corner = LC_SIM_CORNER_NONE;
+        shape->amount = 0.0f;
+        return;
+    }
+
+    az = -dz / len;
+    ax = -dr / len;
+    bx = is_od ? 1.0f : -1.0f;
+    dot = ax * bx;
+    if (dot > 0.999f) dot = 0.999f;
+    if (dot < -0.999f) dot = -0.999f;
+
+    trim = shape->corner == LC_SIM_CORNER_CHMF ?
+           shape->amount :
+           shape->amount * sqrtf((1.0f + dot) / (1.0f - dot));
+
+    shape->z_profile_end = shape->z2 + (az * trim);
+    shape->d_profile_end = 2.0f * (r_end + (ax * trim));
+    shape->d_corner_end = 2.0f * (r_end + (bx * trim));
+
+    if (shape->corner == LC_SIM_CORNER_RND) {
+        float bis_z = az;
+        float bis_x = ax + bx;
+        float bis_len = sqrtf((bis_z * bis_z) + (bis_x * bis_x));
+        float inv_sin_half;
+        float center_z;
+        float center_r;
+
+        if (bis_len <= eps) {
+            shape->corner = LC_SIM_CORNER_NONE;
+            shape->amount = 0.0f;
+            shape->z_profile_end = shape->z2;
+            shape->d_profile_end = shape->d2;
+            shape->d_corner_end = shape->d2;
+            return;
+        }
+
+        inv_sin_half = sqrtf(2.0f / (1.0f - dot));
+        center_z = shape->z2 + (bis_z / bis_len) * shape->amount * inv_sin_half;
+        center_r = r_end + (bis_x / bis_len) * shape->amount * inv_sin_half;
+        shape->arc_k = center_z - shape->z_profile_end;
+        shape->arc_i = center_r - (shape->d_profile_end * 0.5f);
+    }
+}
+
+static void lc_sim_read_turn_shape(const char *line, bool is_od, lc_sim_turn_shape_t *shape)
+{
+    float rnd = 0.0f;
+    float chmf = 0.0f;
+
+    if (!shape) {
+        return;
+    }
+
+    memset(shape, 0, sizeof(*shape));
+    if (!lc_field_float2(line, "D1", "DIAMETER_1", &shape->d1)) return;
+    if (!lc_field_float2(line, "D2", "DIAMETER_2", &shape->d2)) return;
+    if (!lc_field_float2(line, "Z1", "Z_1", &shape->z1)) return;
+    if (!lc_field_float2(line, "Z2", "Z_2", &shape->z2)) return;
+
+    shape->dt = shape->d2;
+    (void)lc_field_float3(line, "DT", "D_TAPER", "TAPER_DIAMETER", &shape->dt);
+    (void)lc_field_float3(line, "RND", "ROUND", "RADIUS", &rnd);
+    (void)lc_field_float3(line, "CHMF", "CHAMFER", "C", &chmf);
+
+    if (rnd > 0.0f && chmf <= 0.0f) {
+        shape->corner = LC_SIM_CORNER_RND;
+        shape->amount = rnd;
+    } else if (chmf > 0.0f && rnd <= 0.0f) {
+        shape->corner = LC_SIM_CORNER_CHMF;
+        shape->amount = chmf;
+    }
+
+    if (is_od && shape->dt > shape->d1) shape->dt = shape->d1;
+    if (!is_od && shape->dt < shape->d1) shape->dt = shape->d1;
+    if (shape->amount >= lc_absf(shape->z1 - shape->z2)) shape->amount = 0.0f;
+    if (shape->amount <= 0.0f) shape->corner = LC_SIM_CORNER_NONE;
+
+    lc_sim_build_turn_corner_geometry(is_od, shape);
+}
+
+static float lc_sim_profile_d_at_z(const lc_sim_turn_shape_t *shape, bool is_od, float z)
+{
+    float z_span;
+    float d_profile;
+    bool in_corner;
+
+    (void)is_od;
+    if (!shape) {
+        return 0.0f;
+    }
+
+    z_span = shape->z_profile_end - shape->z1;
+    d_profile = z_span == 0.0f ?
+                shape->d_profile_end :
+                lc_lerpf(shape->dt, shape->d_profile_end, (z - shape->z1) / z_span);
+
+    if (shape->corner == LC_SIM_CORNER_NONE || shape->amount <= 0.0f) {
+        return d_profile;
+    }
+
+    in_corner = shape->z_profile_end < shape->z2 ?
+                (z >= shape->z_profile_end && z <= shape->z2) :
+                (z <= shape->z_profile_end && z >= shape->z2);
+    if (!in_corner) {
+        return d_profile;
+    }
+
+    if (shape->corner == LC_SIM_CORNER_RND) {
+        float center_z = shape->z_profile_end + shape->arc_k;
+        float center_r = (shape->d_profile_end * 0.5f) + shape->arc_i;
+        float dz = z - center_z;
+        float root_arg = (shape->amount * shape->amount) - (dz * dz);
+        float rd;
+        float d_a;
+        float d_b;
+        float d_ref;
+
+        if (root_arg < 0.0f) root_arg = 0.0f;
+        rd = sqrtf(root_arg);
+        d_a = 2.0f * (center_r + rd);
+        d_b = 2.0f * (center_r - rd);
+        d_ref = lc_lerpf(shape->d_profile_end, shape->d_corner_end,
+                         (z - shape->z_profile_end) / (shape->z2 - shape->z_profile_end));
+        return lc_absf(d_a - d_ref) < lc_absf(d_b - d_ref) ? d_a : d_b;
+    }
+
+    return lc_lerpf(shape->d_profile_end, shape->d_corner_end,
+                   (z - shape->z_profile_end) / (shape->z2 - shape->z_profile_end));
+}
+
+static void lc_sim_draw_chuck(const lc_sim_view_t *view, const lc_sim_setup_t *setup);
+
 static void lc_sim_draw_stock(const lc_sim_view_t *view, const lc_sim_setup_t *setup)
 {
-    int clamp_w;
-
-    lc_display_text(432, 104, "Cycle preview", LC_COL_DIM, LC_COL_BG, LC_FONT_NORMAL);
-    lc_display_line(view->stock_left - 20, view->stock_top, view->stock_right + 20, view->stock_top, LC_COL_TEXT);
-    lc_display_line(view->z0_x, view->stock_top - 24, view->z0_x, view->stock_bottom + 28, LC_COL_TEXT);
+    lc_display_text(view->x0, view->y0, "Cycle preview", LC_PREVIEW_TITLE_FG, LC_PREVIEW_PANEL_BG, LC_FONT_NORMAL);
+    lc_display_line(view->stock_left - 20, view->stock_top, view->stock_right + 20, view->stock_top, LC_PREVIEW_AXIS_FG);
+    lc_display_line(view->z0_x, view->stock_top - 24, view->z0_x, view->stock_bottom + 28, LC_PREVIEW_AXIS_FG);
     lc_display_fill_rect(view->stock_left, view->stock_top,
                          view->stock_right - view->stock_left + 1,
                          view->stock_bottom - view->stock_top + 1,
-                         LC_COL_STOCK);
+                         LC_PREVIEW_STOCK_FG);
     lc_display_rect(view->stock_left, view->stock_top,
                     view->stock_right - view->stock_left + 1,
                     view->stock_bottom - view->stock_top + 1,
-                    LC_COL_TEXT);
+                    LC_PREVIEW_AXIS_FG);
 
     if (setup->clamp > 0.0f) {
-        clamp_w = (int)(setup->clamp * view->scale + 0.5f);
-        if (clamp_w < 6) clamp_w = 6;
-        lc_display_fill_rect(view->stock_left, view->stock_bottom + 2, clamp_w, 22, LC_COL_LINE);
-        lc_display_text(view->stock_left + 3, view->stock_bottom + 8, "CL", LC_COL_BG, LC_COL_LINE, LC_FONT_SMALL);
+        lc_sim_draw_chuck(view, setup);
     }
 
-    lc_display_text(view->z0_x - 8, view->stock_top - 20, "Z0", LC_COL_DIM, LC_COL_BG, LC_FONT_SMALL);
-    lc_sim_label(view->stock_left, view->stock_bottom + 34, "L", setup->length);
-    lc_sim_label(view->stock_left + 74, view->stock_bottom + 34, "OD", setup->od);
+    lc_display_text(view->z0_x - 12, view->stock_top - 24, "Z0", LC_PREVIEW_LABEL_FG, LC_PREVIEW_PANEL_BG, LC_FONT_NORMAL);
+    lc_sim_label(view, view->stock_left + 4, view->stock_top - 42, "L", setup->length);
+    lc_sim_label(view, view->stock_left + 92, view->stock_top - 42, "OD", setup->od);
 }
 
-static void lc_sim_draw_turn(const lc_sim_view_t *view, const char *line, bool is_od)
+static void lc_sim_draw_chuck(const lc_sim_view_t *view, const lc_sim_setup_t *setup)
 {
-    float d1, d2, dt, z1, z2;
-    int x1, x2, y1, y2, yt, tmp;
+    char buf[24];
+    int clamp_w;
+    int y1;
+    int y2;
+    int jaw_x;
 
-    if (!lc_field_float2(line, "D1", "DIAMETER_1", &d1)) return;
-    if (!lc_field_float2(line, "D2", "DIAMETER_2", &d2)) return;
-    if (!lc_field_float2(line, "Z1", "Z_1", &z1)) return;
-    if (!lc_field_float2(line, "Z2", "Z_2", &z2)) return;
-    if (!lc_field_float2(line, "DT", "D_TARGET", &dt)) dt = d2;
+    if (!view || !setup || setup->clamp <= 0.0f) {
+        return;
+    }
 
-    x1 = lc_sim_zx(view, z1);
-    x2 = lc_sim_zx(view, z2);
-    y1 = lc_sim_dy(view, d1);
-    y2 = lc_sim_dy(view, d2);
-    yt = lc_sim_dy(view, dt);
+    clamp_w = (int)(setup->clamp * view->scale + 0.5f);
+    if (clamp_w < 28) clamp_w = 28;
+    if (clamp_w > view->stock_right - view->stock_left + 1) {
+        clamp_w = view->stock_right - view->stock_left + 1;
+    }
+
+    y1 = view->stock_bottom + 1;
+    y2 = y1 + 43;
+    if (y2 > view->y1 - 4) {
+        y2 = view->y1 - 4;
+        y1 = y2 - 43;
+    }
+    if (y1 <= view->stock_bottom) {
+        y1 = view->stock_bottom + 1;
+    }
+    if (y2 <= y1) {
+        return;
+    }
+
+    jaw_x = 0;
+    lc_display_fill_rect(jaw_x, view->stock_bottom - 18,
+                         view->stock_left - jaw_x + 1, 62, LC_PREVIEW_CHUCK_FG);
+    lc_display_fill_rect(view->stock_left, y1, clamp_w, y2 - y1 + 1, LC_PREVIEW_CHUCK_FG);
+
+    snprintf(buf, sizeof(buf), "CL %.1f", (double)setup->clamp);
+    lc_display_text(10, y1 + 13, buf,
+                    LC_PREVIEW_CHUCK_TEXT_FG, LC_PREVIEW_CHUCK_FG, LC_FONT_NORMAL);
+}
+
+static bool lc_live_tool_hits_chuck(const ui_snapshot_frame_t *frame,
+                                    const lc_sim_view_t *view,
+                                    const lc_sim_setup_t *setup)
+{
+    float z;
+    float chuck_z_min;
+
+    if (!frame || !view || !setup || !frame->axes_valid || setup->clamp <= 0.0f) {
+        return false;
+    }
+    if (lc_live_sim_is_id_cycle(frame)) {
+        return false;
+    }
+
+    z = frame->axis[2];
+    chuck_z_min = -setup->length;
+
+    return z <= chuck_z_min + setup->clamp;
+}
+
+static void lc_sim_draw_live_chuck(const lc_sim_view_t *view,
+                                   const lc_sim_setup_t *setup,
+                                   bool collision)
+{
+    int clamp_w;
+    int y1;
+    int y2;
+    int jaw_x;
+    lc_color_t fill = collision ? LC_LIVE_COLLISION : LC_LIVE_CHUCK_FG;
+    char buf[24];
+
+    if (!view || !setup || setup->clamp <= 0.0f) {
+        return;
+    }
+
+    clamp_w = (int)(setup->clamp * view->scale + 0.5f);
+    if (clamp_w < 28) clamp_w = 28;
+    if (clamp_w > view->stock_right - view->stock_left + 1) {
+        clamp_w = view->stock_right - view->stock_left + 1;
+    }
+
+    y1 = view->stock_bottom + 1;
+    y2 = y1 + 43;
+    if (y2 > view->y1 - 4) {
+        y2 = view->y1 - 4;
+        y1 = y2 - 43;
+    }
+    if (y1 <= view->stock_bottom) {
+        y1 = view->stock_bottom + 1;
+    }
+    if (y2 <= y1) {
+        return;
+    }
+
+    jaw_x = 0;
+
+    lc_display_fill_rect(jaw_x, view->stock_bottom - 18,
+                         view->stock_left - jaw_x + 1, 62, fill);
+    lc_display_fill_rect(view->stock_left, y1, clamp_w, y2 - y1 + 1, fill);
+    snprintf(buf, sizeof(buf), collision ? "HIT" : "CL %.1f", (double)setup->clamp);
+    lc_display_text(10, y1 + 13, buf, LC_LIVE_BG, fill, LC_FONT_NORMAL);
+}
+
+static void lc_sim_draw_turn_shape_preview(const lc_sim_view_t *view,
+                                           const lc_sim_turn_shape_t *shape,
+                                           bool is_od,
+                                           int spacing)
+{
+    int x1;
+    int x2;
+    int x;
+    int tmp;
+    int hatch_step;
+    int min_y;
+    int max_y;
+    int y;
+    int base_y;
+    int profile_y;
+    int prev_x = 0;
+    int prev_y = 0;
+    bool have_prev = false;
+
+    if (!view || !shape) {
+        return;
+    }
+
+    x1 = lc_sim_zx(view, shape->z1);
+    x2 = lc_sim_zx(view, shape->z2);
     if (x2 < x1) { tmp = x1; x1 = x2; x2 = tmp; }
     if (x2 <= x1) x2 = x1 + 1;
 
-    if (is_od) {
-        lc_sim_hatch_rect(x1, y2, x2 - x1 + 1, y1 - y2 + 1, true);
-    } else {
-        lc_sim_hatch_rect(x1, y1, x2 - x1 + 1, y2 - y1 + 1, true);
+    base_y = lc_sim_dy(view, shape->d1);
+    hatch_step = lc_clampi(spacing > 0 ? spacing : 4, 2, 12);
+    min_y = base_y;
+    max_y = base_y;
+
+    for (x = x1; x <= x2; ++x) {
+        float z = ((float)x - (float)view->z0_x) / view->scale;
+        profile_y = lc_sim_dy(view, lc_sim_profile_d_at_z(shape, is_od, z));
+
+        if (is_od) {
+            lc_sim_hatch_vline(x, profile_y, base_y);
+        } else {
+            lc_sim_hatch_vline(x, base_y, profile_y);
+        }
+        if (profile_y < min_y) min_y = profile_y;
+        if (profile_y > max_y) max_y = profile_y;
     }
-    lc_display_line_w(lc_sim_zx(view, z1), lc_sim_dy(view, d1),
-                      lc_sim_zx(view, z2), lc_sim_dy(view, d2), LC_COL_BAD, 2);
-    lc_display_line(lc_sim_zx(view, z1), yt, lc_sim_zx(view, z2), yt, LC_COL_OK);
-    lc_sim_label(x1 - 16, y1 + 8, "D1", d1);
-    lc_sim_label(x2 - 42, y2 + 8, "D2", d2);
+
+    for (y = min_y + hatch_step; y < max_y; y += hatch_step) {
+        int seg_start = -1;
+
+        for (x = x1; x <= x2; ++x) {
+            float z = ((float)x - (float)view->z0_x) / view->scale;
+            int ya;
+            int yb;
+            bool inside;
+
+            profile_y = lc_sim_dy(view, lc_sim_profile_d_at_z(shape, is_od, z));
+            ya = profile_y < base_y ? profile_y : base_y;
+            yb = profile_y > base_y ? profile_y : base_y;
+            inside = y >= ya && y <= yb;
+
+            if (inside && seg_start < 0) {
+                seg_start = x;
+            } else if (!inside && seg_start >= 0) {
+                if (x - 1 > seg_start) {
+                    lc_display_line(seg_start, y, x - 1, y, LC_PREVIEW_HATCH_FG);
+                }
+                seg_start = -1;
+            }
+        }
+        if (seg_start >= 0 && x2 > seg_start) {
+            lc_display_line(seg_start, y, x2, y, LC_PREVIEW_HATCH_FG);
+        }
+    }
+
+    for (x = x1; x <= x2; ++x) {
+        float z = ((float)x - (float)view->z0_x) / view->scale;
+        profile_y = lc_sim_dy(view, lc_sim_profile_d_at_z(shape, is_od, z));
+
+        if (have_prev) {
+            lc_display_line(prev_x, prev_y, x, profile_y, LC_PREVIEW_PROFILE_FG);
+        }
+        prev_x = x;
+        prev_y = profile_y;
+        have_prev = true;
+    }
 }
 
-static void lc_sim_draw_preview(const ui_snapshot_frame_t *frame)
+static void lc_sim_draw_turn(const lc_sim_view_t *view,
+                             const char *line,
+                             const ui_snapshot_frame_t *frame,
+                             bool is_od)
+{
+    lc_sim_turn_shape_t shape;
+    float doc;
+    int spacing = 0;
+    int label_x1;
+    int label_end_x;
+    int label_y1;
+    int label_corner_y;
+    int label_dt_y;
+    const char *corner_name = "";
+
+    lc_sim_read_turn_shape(line, is_od, &shape);
+    if (shape.z1 == 0.0f && shape.z2 == 0.0f && shape.d1 == 0.0f && shape.d2 == 0.0f) {
+        return;
+    }
+
+    label_x1 = lc_sim_zx(view, shape.z1);
+    label_end_x = lc_sim_zx(view, shape.z2);
+    label_y1 = lc_sim_dy(view, shape.d1);
+    label_corner_y = lc_sim_dy(view, lc_sim_profile_d_at_z(&shape, is_od, shape.z2));
+    label_dt_y = lc_sim_dy(view, shape.dt);
+
+    if (lc_field_float3(line, "DOC", "R_DOC", "ROUGH_DOC", &doc) ||
+        (frame && lc_field_float3(frame->leancam_tool_line, "R_DOC", "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc))) {
+        spacing = lc_sim_diam_len_px(view, doc);
+    }
+    if (spacing <= 0) spacing = 4;
+
+    lc_sim_draw_turn_shape_preview(view, &shape, is_od, spacing);
+    if (shape.corner != LC_SIM_CORNER_NONE) {
+        corner_name = shape.corner == LC_SIM_CORNER_RND ? "RND" : "CHMF";
+    }
+    lc_sim_draw_turn_start_group(view, frame, label_x1, label_y1, shape.z1, shape.d1);
+    lc_sim_draw_turn_dt_label(view, frame, label_x1, label_dt_y, shape.dt);
+    lc_sim_draw_turn_end_group(view, frame, label_end_x, label_corner_y,
+                               shape.z2, shape.d2, corner_name, shape.amount);
+}
+
+static void lc_sim_draw_live_tool(const ui_snapshot_frame_t *frame, const lc_sim_view_t *view)
+{
+    float z;
+    float x;
+    float d;
+    int zx;
+    int dy;
+
+    if (!frame || !frame->axes_valid) {
+        return;
+    }
+
+    x = frame->axis[0];
+    z = frame->axis[2];
+    d = lc_live_runtime_x_to_diam(x);
+    zx = lc_sim_zx_view(view, z);
+    dy = lc_sim_dy_view(view, d);
+
+    lc_display_line(zx, view->y0 + 8, zx, view->y1 - 8, LC_PREVIEW_TOOL_FG);
+    lc_display_line(view->x0 + 8, dy, view->x1 - 8, dy, LC_PREVIEW_TOOL_FG);
+    lc_display_fill_rect(zx - 5, dy - 5, 11, 11, LC_PREVIEW_TOOL_MARK);
+    lc_display_rect(zx - 7, dy - 7, 15, 15, LC_PREVIEW_TOOL_OUTLINE);
+}
+
+static const char *lc_nc_row_gcode(const char *row)
+{
+    const char *p = row;
+
+    if (!p) {
+        return "";
+    }
+    while (*p >= '0' && *p <= '9') {
+        p++;
+    }
+    while (*p == ' ') {
+        p++;
+    }
+    return p;
+}
+
+static bool lc_gcode_has_word(const char *line, char letter, int code);
+
+static bool lc_gcode_has_motion(const char *line)
+{
+    return lc_gcode_has_word(line, 'G', 0) ||
+           lc_gcode_has_word(line, 'G', 1) ||
+           lc_gcode_has_word(line, 'G', 2) ||
+           lc_gcode_has_word(line, 'G', 3);
+}
+
+static bool lc_gcode_has_word(const char *line, char letter, int code)
+{
+    const char *p = line;
+    char lower = (letter >= 'A' && letter <= 'Z') ? (char)(letter + ('a' - 'A')) : letter;
+
+    while (p && *p) {
+        if (*p == letter || *p == lower) {
+            char *endp;
+            long v = strtol(p + 1, &endp, 10);
+            if (endp != p + 1 && v == code &&
+                (*endp == 0 || *endp == ' ' || *endp == '\t')) {
+                return true;
+            }
+        }
+        p++;
+    }
+    return false;
+}
+
+static bool lc_gcode_axis_value(const char *line, char axis, float *out)
+{
+    const char *p = line;
+    char lower = (axis >= 'A' && axis <= 'Z') ? (char)(axis + ('a' - 'A')) : axis;
+
+    if (!line || !out) {
+        return false;
+    }
+
+    while (*p) {
+        if (*p == axis || *p == lower) {
+            char *endp;
+            float v = (float)strtod(p + 1, &endp);
+            if (endp != p + 1) {
+                *out = v;
+                return true;
+            }
+        }
+        p++;
+    }
+    return false;
+}
+
+static float lc_angle_norm(float a)
+{
+    const float two_pi = 6.28318530718f;
+
+    while (a < 0.0f) {
+        a += two_pi;
+    }
+    while (a >= two_pi) {
+        a -= two_pi;
+    }
+    return a;
+}
+
+static void lc_sim_draw_nc_arc(const lc_sim_view_t *view,
+                               float z0,
+                               float d0,
+                               float z1,
+                               float d1,
+                               float i,
+                               float k,
+                               bool cw,
+                               bool selected)
+{
+    const float two_pi = 6.28318530718f;
+    float center_z = z0 + k;
+    float r0 = d0 * 0.5f;
+    float r1 = d1 * 0.5f;
+    float center_r = r0 + i;
+    float rz = z0 - center_z;
+    float rr = r0 - center_r;
+    float radius = sqrtf((rz * rz) + (rr * rr));
+    float a0;
+    float a1;
+    float sweep;
+    int steps;
+    int prev_x;
+    int prev_y;
+    int s;
+
+    if (!view || radius <= 0.0001f) {
+        return;
+    }
+
+    a0 = atan2f(r0 - center_r, z0 - center_z);
+    a1 = atan2f(r1 - center_r, z1 - center_z);
+    a0 = lc_angle_norm(a0);
+    a1 = lc_angle_norm(a1);
+
+    if (cw) {
+        sweep = a1 - a0;
+        if (sweep >= 0.0f) {
+            sweep -= two_pi;
+        }
+    } else {
+        sweep = a1 - a0;
+        if (sweep <= 0.0f) {
+            sweep += two_pi;
+        }
+    }
+
+    steps = (int)(lc_absf(sweep) * radius * view->scale / 6.0f) + 4;
+    steps = lc_clampi(steps, 6, 48);
+    prev_x = lc_sim_zx_view(view, z0);
+    prev_y = lc_sim_dy_view(view, d0);
+
+    for (s = 1; s <= steps; ++s) {
+        float t = (float)s / (float)steps;
+        float a = a0 + (sweep * t);
+        float z = center_z + cosf(a) * radius;
+        float d = (center_r + sinf(a) * radius) * 2.0f;
+        int x = lc_sim_zx_view(view, z);
+        int y = lc_sim_dy_view(view, d);
+
+        lc_display_line_w(prev_x, prev_y, x, y, LC_PREVIEW_PROFILE_FG, selected ? 3 : 1);
+        prev_x = x;
+        prev_y = y;
+    }
+}
+
+static void lc_sim_draw_nc_overlay(const ui_snapshot_frame_t *frame,
+                                   const lc_sim_view_t *view)
+{
+    float z = 0.0f;
+    float d = view ? view->stock_od : 0.0f;
+    bool have_pos = false;
+    bool diameter_mode = true;
+    int i;
+
+    if (!frame || !view || frame->leancam_mode != LC_RENDER_MODE_NC_VIEW) {
+        return;
+    }
+
+    for (i = 0; i < frame->leancam_line_count && i < UI_LC_MAX_LINES; ++i) {
+        const char *g = lc_nc_row_gcode(frame->leancam_lines[i]);
+        float next_z = z;
+        float next_d = d;
+        bool has_z;
+        bool has_x;
+        bool motion;
+        bool is_arc;
+        bool is_cw;
+
+        if (!g || g[0] == '(' || g[0] == 0) {
+            continue;
+        }
+
+        if (lc_gcode_has_word(g, 'G', 7)) {
+            diameter_mode = true;
+        } else if (lc_gcode_has_word(g, 'G', 8)) {
+            diameter_mode = false;
+        }
+
+        has_z = lc_gcode_axis_value(g, 'Z', &next_z);
+        has_x = lc_gcode_axis_value(g, 'X', &next_d);
+        if (has_x) {
+            next_d = lc_absf(next_d) * (diameter_mode ? 1.0f : 2.0f);
+        }
+        motion = lc_gcode_has_motion(g) && (has_z || has_x);
+        is_cw = lc_gcode_has_word(g, 'G', 2);
+        is_arc = is_cw || lc_gcode_has_word(g, 'G', 3);
+
+        if (motion && have_pos) {
+            float arc_i = 0.0f;
+            float arc_k = 0.0f;
+            bool has_i = lc_gcode_axis_value(g, 'I', &arc_i);
+            bool has_k = lc_gcode_axis_value(g, 'K', &arc_k);
+            if (is_arc && has_i && has_k) {
+                lc_sim_draw_nc_arc(view, z, d, next_z, next_d, arc_i, arc_k, is_cw,
+                                   frame->leancam_line_selected[i]);
+            } else {
+                int x1 = lc_sim_zx_view(view, z);
+                int y1 = lc_sim_dy_view(view, d);
+                int x2 = lc_sim_zx_view(view, next_z);
+                int y2 = lc_sim_dy_view(view, next_d);
+                lc_display_line_w(x1, y1, x2, y2, LC_PREVIEW_PROFILE_FG,
+                                  frame->leancam_line_selected[i] ? 3 : 1);
+            }
+        }
+
+        if (has_z || has_x) {
+            z = next_z;
+            d = next_d;
+            have_pos = true;
+        }
+
+        if (frame->leancam_line_selected[i]) {
+            break;
+        }
+    }
+}
+
+static void lc_sim_draw_preview_ex(const ui_snapshot_frame_t *frame, bool full_screen)
 {
     lc_sim_setup_t setup;
     lc_sim_view_t view;
     const char *line;
 
     lc_sim_read_setup(frame, &setup);
-    lc_sim_build_view(&setup, &view);
+    lc_sim_build_view(&setup, &view, full_screen);
     lc_sim_draw_stock(&view, &setup);
 
     line = frame->leancam_preview_line;
-    if (!line || !line[0] || lc_is_cycle(line, "SETUP")) return;
+    if (!line || !line[0] || lc_is_cycle(line, "SETUP")) {
+        lc_sim_draw_nc_overlay(frame, &view);
+        lc_sim_draw_live_tool(frame, &view);
+        return;
+    }
 
     if (lc_is_cycle(line, "OD")) {
-        lc_sim_draw_turn(&view, line, true);
+        lc_sim_draw_turn(&view, line, frame, true);
     } else if (lc_is_cycle(line, "ID")) {
-        lc_sim_draw_turn(&view, line, false);
+        lc_sim_draw_turn(&view, line, frame, false);
     } else if (lc_is_cycle(line, "FACE")) {
         float d, z1 = 0.0f, z;
         int x1, x2, y2, tmp;
@@ -429,7 +1514,7 @@ static void lc_sim_draw_preview(const ui_snapshot_frame_t *frame)
         if (x2 < x1) { tmp = x1; x1 = x2; x2 = tmp; }
         y2 = lc_sim_dy(&view, d);
         lc_sim_hatch_rect(x1, view.stock_top, x2 - x1 + 1, y2 - view.stock_top + 1, true);
-        lc_sim_label(x2 + 4, view.stock_top + 8, "Z", z);
+        lc_sim_label(&view, x2 + 4, view.stock_top + 8, "Z", z);
     } else if (lc_is_cycle(line, "DRILL")) {
         float z1, depth, target, td = setup.od * 0.12f;
         int x1, x2, y2, tmp;
@@ -442,7 +1527,7 @@ static void lc_sim_draw_preview(const ui_snapshot_frame_t *frame)
         if (x2 < x1) { tmp = x1; x1 = x2; x2 = tmp; }
         y2 = lc_sim_dy(&view, td);
         lc_sim_hatch_rect(x1, view.stock_top, x2 - x1 + 1, y2 - view.stock_top + 1, false);
-        lc_sim_label(x2 - 34, y2 + 8, "Z", target);
+        lc_sim_label(&view, x2 - 34, y2 + 8, "Z", target);
     } else if (lc_is_cycle(line, "GROOVE") || lc_is_cycle(line, "PART") || lc_is_cycle(line, "CUT")) {
         float d1 = setup.od, d2 = 0.0f, z1, z2, width;
         int x1, x2, y1, y2, tmp;
@@ -471,12 +1556,127 @@ static void lc_sim_draw_preview(const ui_snapshot_frame_t *frame)
         x2 = lc_sim_zx(&view, z2);
         if (x2 < x1) { tmp = x1; x1 = x2; x2 = tmp; }
         y = lc_sim_dy(&view, d);
-        lc_display_line_w(x1, y, x2, y, LC_COL_CUT, 3);
+        lc_display_line_w(x1, y, x2, y, LC_PREVIEW_CUT_FG, 3);
         for (p = x1; p < x2; p += lc_clampi((int)(pitch * view.scale + 0.5f), 5, 18)) {
-            lc_display_line(p, y - 8, p + 8, y + 8, LC_COL_DARK);
+            lc_display_line(p, y - 8, p + 8, y + 8, LC_PREVIEW_PROFILE_FG);
         }
-        lc_sim_label(x1, y + 16, "P", pitch);
+        lc_sim_label(&view, x1, y + 16, "P", pitch);
     }
+
+    lc_sim_draw_nc_overlay(frame, &view);
+    lc_sim_draw_live_tool(frame, &view);
+}
+
+static void lc_sim_draw_preview(const ui_snapshot_frame_t *frame)
+{
+    lc_sim_draw_preview_ex(frame, false);
+}
+
+static bool lc_should_draw_fullscreen_preview(const ui_snapshot_frame_t *frame)
+{
+    if (!frame) {
+        return false;
+    }
+    return false;
+}
+
+static void draw_fullscreen_preview(const ui_snapshot_frame_t *frame)
+{
+    char buf[96];
+
+    lc_display_fill_rect(0, 42, LC_DISPLAY_WIDTH, 558, LC_PREVIEW_BG);
+    lc_display_rect(12, 56, 776, 500, LC_PREVIEW_FRAME_FG);
+    lc_text_clip(26, 62, frame->leancam_title[0] ? frame->leancam_title : "LeanCam live preview",
+                 36, LC_PREVIEW_TITLE_FG, LC_PREVIEW_PANEL_BG, LC_FONT_NORMAL);
+    lc_text_clip(330, 62, frame->leancam_message, 38, LC_PREVIEW_MESSAGE_FG, LC_PREVIEW_PANEL_BG, LC_FONT_NORMAL);
+    lc_sim_draw_preview_ex(frame, true);
+    snprintf(buf, sizeof(buf), "Live X %.3f  Z %.3f",
+             frame->axes_valid ? (double)frame->axis[0] : 0.0,
+             frame->axes_valid ? (double)frame->axis[2] : 0.0);
+    lc_text_clip(26, 566, buf, 32, LC_PREVIEW_LABEL_FG, LC_PREVIEW_PANEL_BG, LC_FONT_SMALL);
+    lc_text_clip(330, 566, frame->leancam_preview_line, 54, LC_PREVIEW_LABEL_FG, LC_PREVIEW_PANEL_BG, LC_FONT_SMALL);
+}
+
+static void draw_live_run_preview(const ui_snapshot_frame_t *frame)
+{
+    char perf[48];
+    uint32_t t0;
+    uint32_t t1;
+
+    if (!g_live_sim_mask) {
+        g_live_sim_mask = lc_psram_available() ? (uint8_t *)lc_psram_ptr(LC_LIVE_SIM_PSRAM_OFFSET) : NULL;
+    }
+
+    if (!g_live_sim_was_running ||
+        strcmp(g_live_sim_line, frame->leancam_preview_line) != 0) {
+        lc_live_sim_reset(frame);
+    }
+
+    lc_live_sim_update_cut(frame);
+
+    t0 = mcu_micros();
+    lc_display_fill_rect(0, 42, LC_DISPLAY_WIDTH, 558, LC_LIVE_BG);
+    lc_text_clip(26, 62, "Live", 18, LC_LIVE_TITLE_FG, LC_LIVE_PANEL_BG, LC_FONT_LARGE);
+    t1 = mcu_micros();
+    g_live_prof_clear_us = t1 - t0;
+
+    if (g_live_sim_ready) {
+        t0 = mcu_micros();
+        lc_live_sim_draw_material();
+        t1 = mcu_micros();
+        g_live_prof_material_us = t1 - t0;
+        t0 = mcu_micros();
+        lc_display_text(g_live_sim_view.z0_x - 12, g_live_sim_view.stock_top - 24, "Z0", LC_LIVE_LABEL_FG, LC_LIVE_PANEL_BG, LC_FONT_NORMAL);
+        lc_sim_draw_live_chuck(&g_live_sim_view, &g_live_sim_setup,
+                               lc_live_tool_hits_chuck(frame, &g_live_sim_view, &g_live_sim_setup));
+        lc_sim_label_large(&g_live_sim_view, g_live_sim_view.stock_left + 4, g_live_sim_view.stock_top - 46, "L", g_live_sim_setup.length);
+        lc_sim_label_large(&g_live_sim_view, g_live_sim_view.stock_left + 128, g_live_sim_view.stock_top - 46, "OD", g_live_sim_setup.od);
+        lc_sim_draw_live_tool(frame, &g_live_sim_view);
+        t1 = mcu_micros();
+        g_live_prof_overlay_us = t1 - t0;
+    } else {
+        t0 = mcu_micros();
+        lc_text_clip(26, 128, "Live sim needs PSRAM", 32, LC_LIVE_COLLISION, LC_LIVE_PANEL_BG, LC_FONT_NORMAL);
+        lc_sim_draw_preview_ex(frame, true);
+        t1 = mcu_micros();
+        g_live_prof_material_us = 0;
+        g_live_prof_overlay_us = t1 - t0;
+    }
+
+    t0 = mcu_micros();
+    lc_display_fill_rect(0, 548, LC_DISPLAY_WIDTH, 52, LC_COL_FOOTER_BG);
+    lc_text_clip(12, 552, frame->leancam_message, 78, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
+    if (g_render_last_us > 0) {
+        uint32_t fps10 = g_render_period_us > 0 ? (10000000UL / g_render_period_us) : 0;
+        snprintf(perf, sizeof(perf), "%lu.%lu fps %lu.%03lu ms",
+                 (unsigned long)(fps10 / 10),
+                 (unsigned long)(fps10 % 10),
+                 (unsigned long)(g_render_last_us / 1000),
+                 (unsigned long)(g_render_last_us % 1000));
+        lc_text_clip(586, 552, perf, 25, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
+    }
+    snprintf(perf, sizeof(perf), "c%lu m%lu r%lu o%lu f%lu p%lu",
+             (unsigned long)(g_live_prof_clear_us / 1000),
+             (unsigned long)(g_live_prof_material_us / 1000),
+             (unsigned long)g_live_prof_material_rects,
+             (unsigned long)(g_live_prof_overlay_us / 1000),
+             (unsigned long)(g_live_prof_footer_us / 1000),
+             (unsigned long)(g_live_prof_present_us / 1000));
+    lc_text_clip(12, 574, perf, 38, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
+    lc_text_clip(330, 574, frame->leancam_preview_line, 37, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
+    t1 = mcu_micros();
+    g_live_prof_footer_us = t1 - t0;
+}
+
+static const char *lc_split_preview_title(const ui_snapshot_frame_t *frame)
+{
+    if (frame && (frame->leancam_mode == LC_RENDER_MODE_FILES || frame->leancam_mode == 1)) {
+        return "File manager";
+    }
+    if (frame && frame->leancam_mode == LC_RENDER_MODE_NC_VIEW) {
+        return "G code edit";
+    }
+    return "Programming";
 }
 
 static const char *exec_state_text(uint8_t state)
@@ -512,11 +1712,10 @@ static void draw_bar(const ui_snapshot_frame_t *frame)
     }
 
     lc_display_fill_rect(0, 0, LC_DISPLAY_WIDTH, 42, LC_COL_TOP);
-    lc_display_text(12, 10, "LeanCam", LC_COL_TEXT, LC_COL_TOP, LC_FONT_NORMAL);
     snprintf(buf, sizeof(buf), "%-5s X:%7.3f Z:%7.3f F:%5.1f S:%u",
              frame ? exec_state_text(frame->state) : "BOOT",
              (double)x, (double)z, (double)feed, spindle);
-    lc_display_text(142, 10, buf, LC_COL_TEXT, LC_COL_TOP, LC_FONT_NORMAL);
+    lc_display_text(12, 10, buf, LC_COL_TEXT, LC_COL_TOP, LC_FONT_LARGE);
 }
 
 static void draw_value_with_highlight(int x, int y, const char *value,
@@ -557,20 +1756,83 @@ static void draw_value_with_highlight(int x, int y, const char *value,
     lc_display_text(x + ((int)hi_end * 8), y, right, LC_COL_VALUE, bg, LC_FONT_NORMAL);
 }
 
+static void lc_scroll_pair_to_highlight(char *header,
+                                        size_t header_sz,
+                                        char *value,
+                                        size_t value_sz,
+                                        uint8_t *hi_start,
+                                        uint8_t *hi_end,
+                                        uint8_t visible_cols)
+{
+    size_t len;
+    uint8_t scroll;
+
+    if (!header || !value || !hi_start || !hi_end || visible_cols == 0) {
+        return;
+    }
+
+    len = strlen(value);
+    if (len <= visible_cols || *hi_end <= visible_cols || *hi_start >= len) {
+        return;
+    }
+
+    scroll = (*hi_start > 12u) ? (uint8_t)(*hi_start - 12u) : *hi_start;
+    if (scroll == 0u || scroll >= len) {
+        return;
+    }
+
+    if (scroll < strlen(header)) {
+        memmove(header, header + scroll, strlen(header) - scroll + 1u);
+    } else if (header_sz > 0) {
+        header[0] = 0;
+    }
+
+    if (scroll < strlen(value)) {
+        memmove(value, value + scroll, strlen(value) - scroll + 1u);
+    } else if (value_sz > 0) {
+        value[0] = 0;
+    }
+
+    *hi_start = (uint8_t)(*hi_start - scroll);
+    *hi_end = (*hi_end > scroll) ? (uint8_t)(*hi_end - scroll) : 0u;
+}
+
 static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
 {
     int i;
-    int y = 90;
-    int max_blocks = 6;
+    int y = 86;
+    int max_blocks = 7;
+    bool compact_rows = frame->leancam_mode == LC_RENDER_MODE_FILES ||
+                        frame->leancam_mode == LC_RENDER_MODE_NC_VIEW;
 
     lc_display_fill_rect(0, 42, LC_DISPLAY_WIDTH, 558, LC_COL_BG);
 
-    lc_display_rect(10, 58, 392, 490, LC_COL_LINE);
-    lc_display_rect(418, 58, 372, 490, LC_COL_LINE);
-    lc_text_clip(24, 64, frame->leancam_title[0] ? frame->leancam_title : "LeanCam",
-                 28, LC_COL_TEXT, LC_COL_BG, LC_FONT_NORMAL);
-    lc_text_clip(432, 64, "Preview", 20, LC_COL_TEXT, LC_COL_BG, LC_FONT_NORMAL);
-    lc_text_clip(184, 64, frame->leancam_message, 25, LC_COL_VALUE, LC_COL_BG, LC_FONT_NORMAL);
+    lc_display_fill_rect((LC_DISPLAY_WIDTH / 2) - 1, 58, 2, 474, LC_COL_LINE);
+    lc_text_clip(LC_PREVIEW_X, 64, lc_split_preview_title(frame), 14, LC_COL_TEXT, LC_COL_BG, LC_FONT_LARGE);
+
+    if (compact_rows) {
+        int max_rows = 23;
+        for (i = 0; i < frame->leancam_line_count && i < UI_LC_MAX_LINES && max_rows > 0; ++i) {
+            lc_color_t fg = frame->leancam_line_selected[i] ? LC_COL_HI : LC_COL_TEXT;
+            lc_color_t bg = frame->leancam_line_selected[i] ? LC_COL_SELECT : LC_COL_BG;
+
+            if (frame->leancam_line_selected[i]) {
+                lc_display_fill_rect(LC_RIGHT_PANE_X + 8, y - 2, LC_RIGHT_PANE_W - 16, 19, bg);
+                lc_display_rect(LC_RIGHT_PANE_X + 8, y - 2, LC_RIGHT_PANE_W - 16, 19, LC_COL_HI);
+            }
+            lc_text_clip(LC_TEXT_X, y, frame->leancam_lines[i], 43, fg, bg, LC_FONT_NORMAL);
+            y += 20;
+            max_rows--;
+        }
+
+        lc_sim_draw_preview(frame);
+        lc_text_clip(LC_PREVIEW_X, 522, frame->leancam_active_field,
+                     34, LC_COL_VALUE, LC_COL_BG, LC_FONT_SMALL);
+        lc_display_fill_rect(0, 548, LC_DISPLAY_WIDTH, 52, LC_COL_FOOTER_BG);
+        lc_text_clip(12, 552, frame->leancam_message, 78, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
+        lc_text_clip(12, 574, frame->leancam_helper, 78, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
+        return;
+    }
 
     for (i = 0; i < frame->leancam_line_count && i < UI_LC_MAX_LINES && max_blocks > 0; ++i) {
         ra_lc_table_line_t tl;
@@ -580,35 +1842,58 @@ static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
         ra_lc_build_table_line(frame, i, &tl);
         if (tl.table_like) {
             lc_color_t row_bg = frame->leancam_line_selected[i] ? LC_COL_SELECT : LC_COL_BG;
+            char header[UI_LC_LINE_LEN];
+            char value[UI_LC_LINE_LEN];
+            uint8_t hi_start;
+            uint8_t hi_end;
             lc_block_title(frame->leancam_lines[i], title, sizeof(title));
-            if (frame->leancam_line_selected[i]) {
-                lc_display_fill_rect(18, y - 3, 376, 82, row_bg);
-                lc_display_rect(18, y - 3, 376, 82, LC_COL_HI);
+            ui_snapshot_strcpy(header, lc_table_without_block_name(tl.header), sizeof(header));
+            ui_snapshot_strcpy(value, lc_table_without_block_name(tl.value), sizeof(value));
+            hi_start = tl.hi_start > 11 ? (uint8_t)(tl.hi_start - 11) : 0;
+            hi_end = tl.hi_end > 11 ? (uint8_t)(tl.hi_end - 11) : 0;
+            if (tl.has_hi) {
+                lc_scroll_pair_to_highlight(header, sizeof(header), value, sizeof(value),
+                                            &hi_start, &hi_end, 45);
             }
-            lc_text_clip(24, y, title, 45, fg, row_bg, LC_FONT_NORMAL);
-            y += 22;
-            lc_text_clip(24, y, lc_table_without_block_name(tl.header), 45, fg, row_bg, LC_FONT_NORMAL);
-            y += 24;
-            draw_value_with_highlight(24, y, lc_table_without_block_name(tl.value),
+            if (frame->leancam_line_selected[i]) {
+                lc_display_fill_rect(LC_RIGHT_PANE_X + 8, y - 3, LC_RIGHT_PANE_W - 16, 64, row_bg);
+                lc_display_rect(LC_RIGHT_PANE_X + 8, y - 3, LC_RIGHT_PANE_W - 16, 64, LC_COL_HI);
+            }
+            lc_text_clip(LC_TEXT_X, y, title, 43, fg, row_bg, LC_FONT_NORMAL);
+            y += 18;
+            lc_text_clip(LC_TEXT_X, y, header, 43, fg, row_bg, LC_FONT_NORMAL);
+            y += 20;
+            draw_value_with_highlight(LC_TEXT_X, y, value,
                                       tl.has_hi,
-                                      tl.hi_start > 11 ? (uint8_t)(tl.hi_start - 11) : 0,
-                                      tl.hi_end > 11 ? (uint8_t)(tl.hi_end - 11) : 0,
-                                      45,
+                                      hi_start,
+                                      hi_end,
+                                      43,
                                       row_bg);
-            y += 34;
-            lc_display_line(24, y - 10, 388, y - 10, LC_COL_PANEL);
+            y += 26;
+            //lc_display_line(24, y - 10, 388, y - 10, LC_COL_PANEL);
             max_blocks--;
         } else {
-            lc_text_clip(24, y, frame->leancam_lines[i], 45, fg, LC_COL_BG, LC_FONT_NORMAL);
-            y += 30;
+            bool has_hi = frame->leancam_field_hi_end[i] > frame->leancam_field_hi_start[i];
+            if (has_hi) {
+                draw_value_with_highlight(LC_TEXT_X, y, frame->leancam_lines[i], true,
+                                          frame->leancam_field_hi_start[i],
+                                          frame->leancam_field_hi_end[i],
+                                          43,
+                                          LC_COL_BG);
+            } else {
+                lc_text_clip(LC_TEXT_X, y, frame->leancam_lines[i], 43, fg, LC_COL_BG, LC_FONT_NORMAL);
+            }
+            y += 22;
             max_blocks--;
         }
     }
 
     lc_sim_draw_preview(frame);
-    lc_text_clip(432, 522, frame->leancam_active_field,
+    lc_text_clip(LC_PREVIEW_X, 522, frame->leancam_active_field,
                  34, LC_COL_VALUE, LC_COL_BG, LC_FONT_SMALL);
-    lc_display_text(12, 566, frame->leancam_helper, LC_COL_DIM, LC_COL_BG, LC_FONT_SMALL);
+    lc_display_fill_rect(0, 548, LC_DISPLAY_WIDTH, 52, LC_COL_FOOTER_BG);
+    lc_text_clip(12, 552, frame->leancam_message, 78, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
+    lc_text_clip(12, 574, frame->leancam_helper, 78, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LC_FONT_NORMAL);
 }
 
 void leancam_hdmi_renderer_init(void)
@@ -624,8 +1909,11 @@ void leancam_hdmi_renderer_poll(void)
 {
     static ui_snapshot_frame_t frame;
     static uint32_t last_ms;
+    static uint32_t last_present_us;
     uint32_t seq = 0;
     uint32_t now = mcu_millis();
+    uint32_t start_us;
+    uint32_t end_us;
 
     if ((uint32_t)(now - last_ms) < LC_HDMI_RENDER_MS) {
         return;
@@ -640,9 +1928,29 @@ void leancam_hdmi_renderer_poll(void)
         return;
     }
 
+    start_us = mcu_micros();
     draw_bar(&frame);
-    draw_leancam_rows(&frame);
+    if (lc_live_sim_running(&frame)) {
+        draw_live_run_preview(&frame);
+    } else if (lc_should_draw_fullscreen_preview(&frame)) {
+        draw_fullscreen_preview(&frame);
+    } else {
+        draw_leancam_rows(&frame);
+    }
+    g_live_sim_was_running = lc_live_sim_running(&frame);
+    start_us = mcu_micros();
     lc_display_present();
+    end_us = mcu_micros();
+    g_live_prof_present_us = end_us - start_us;
+    g_render_last_us = g_live_prof_clear_us +
+                       g_live_prof_material_us +
+                       g_live_prof_overlay_us +
+                       g_live_prof_footer_us +
+                       g_live_prof_present_us;
+    if (last_present_us != 0) {
+        g_render_period_us = end_us - last_present_us;
+    }
+    last_present_us = end_us;
     g_last_seq = seq;
 }
 

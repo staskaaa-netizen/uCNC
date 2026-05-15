@@ -53,10 +53,10 @@ extern "C"
 
 #define STEP1_BIT 6
 #define DIR1_BIT 7
-#define STEP1_EN_BIT 8
+#define STEP1_EN_BIT 11
 
-#define STEP2_BIT 10
-#define DIR2_BIT 11
+#define STEP2_BIT 25
+#define DIR2_BIT 8
 #define STEP2_EN_BIT 20
 
 /* Limit inputs. */
@@ -81,7 +81,7 @@ extern "C"
 #define DOUT0_BIT 26
 
 /* Activity LED. */
-#define DOUT31_BIT 25
+#define DOUT31_BIT 255
 
 /* Onboard SD socket: spi1 / uCNC SPI2, parked for now. */
 /* #define SPI2_CLK_BIT 30 */

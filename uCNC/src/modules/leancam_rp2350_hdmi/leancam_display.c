@@ -6,6 +6,7 @@
 #include "pico/stdlib.h"
 
 #include "disphstx.h"
+#include "leancam_palette.h"
 
 #if LEANCAM_USE_PSRAM_FB || LEANCAM_USE_PSRAM_BACKBUFFER
 #include "leancam_psram.h"
@@ -16,6 +17,7 @@
 #endif
 
 #define LC_DISPLAY_PITCH ((LC_DISPLAY_WIDTH + 4) / 5 * 4)
+#define LC_PALETTE_SIZE 64
 
 static uint8_t *g_scanout_buf;
 static sDrawCan g_back_can;
@@ -25,6 +27,73 @@ static int g_dirty_x1;
 static int g_dirty_y1;
 static int g_dirty_x2;
 static int g_dirty_y2;
+static uint16_t g_palette_rgb565[LC_PALETTE_SIZE];
+static bool g_palette_used[LC_PALETTE_SIZE];
+static uint8_t g_palette_next;
+
+static uint16_t rgb_to_565(uint8_t r, uint8_t g, uint8_t b)
+{
+    return (uint16_t)((((uint16_t)r & 0xf8) << 8) |
+                      (((uint16_t)g & 0xfc) << 3) |
+                      (((uint16_t)b & 0xf8) >> 3));
+}
+
+static void palette_set(uint8_t index, uint16_t rgb565)
+{
+    if (index >= LC_PALETTE_SIZE) {
+        return;
+    }
+    g_palette_rgb565[index] = rgb565;
+    g_palette_used[index] = true;
+    DispHstxPal6b[index] = rgb565;
+}
+
+static void palette_reset(void)
+{
+    for (uint8_t i = 0; i < LC_PALETTE_SIZE; i++) {
+        uint8_t r = (uint8_t)(((i >> 4) & 0x03) * 85);
+        uint8_t g = (uint8_t)(((i >> 2) & 0x03) * 85);
+        uint8_t b = (uint8_t)((i & 0x03) * 85);
+        g_palette_rgb565[i] = rgb_to_565(r, g, b);
+        g_palette_used[i] = false;
+        DispHstxPal6b[i] = g_palette_rgb565[i];
+    }
+
+    palette_set(0, rgb_to_565(0, 0, 0));
+    g_palette_next = 1;
+    lc_palette_reset();
+}
+
+static lc_color_t palette_lookup(uint16_t rgb565)
+{
+    uint32_t best_dist = 0xffffffffu;
+    uint8_t best = 0;
+
+    for (uint8_t i = 0; i < LC_PALETTE_SIZE; i++) {
+        if (g_palette_used[i] && g_palette_rgb565[i] == rgb565) {
+            return i;
+        }
+    }
+
+    if (g_palette_next < LC_PALETTE_SIZE) {
+        uint8_t index = g_palette_next++;
+        palette_set(index, rgb565);
+        return index;
+    }
+
+    for (uint8_t i = 0; i < LC_PALETTE_SIZE; i++) {
+        int dr = (int)((g_palette_rgb565[i] >> 11) & 0x1f) - (int)((rgb565 >> 11) & 0x1f);
+        int dg = (int)((g_palette_rgb565[i] >> 5) & 0x3f) - (int)((rgb565 >> 5) & 0x3f);
+        int db = (int)(g_palette_rgb565[i] & 0x1f) - (int)(rgb565 & 0x1f);
+        uint32_t dist = (uint32_t)(dr * dr * 2 + dg * dg + db * db * 2);
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = i;
+        }
+    }
+
+    return best;
+}
 
 static int font_scale(int font)
 {
@@ -89,6 +158,7 @@ static void dirty_mark_line(int x1, int y1, int x2, int y2, int thick)
 bool lc_display_init(void)
 {
     void *fb = NULL;
+    palette_reset();
 #if LEANCAM_USE_PSRAM_FB
     if (lc_psram_available()) {
         fb = lc_psram_ptr(0);
@@ -234,13 +304,10 @@ void lc_display_present(void)
 
 lc_color_t lc_display_rgb565(uint16_t rgb565)
 {
-    uint8_t r = (uint8_t)(((rgb565 >> 11) & 0x1f) * 255 / 31);
-    uint8_t g = (uint8_t)(((rgb565 >> 5) & 0x3f) * 255 / 63);
-    uint8_t b = (uint8_t)((rgb565 & 0x1f) * 255 / 31);
-    return lc_display_rgb(r, g, b);
+    return palette_lookup(rgb565);
 }
 
 lc_color_t lc_display_rgb(uint8_t r, uint8_t g, uint8_t b)
 {
-    return COLOR6(r, g, b);
+    return palette_lookup(rgb_to_565(r, g, b));
 }

@@ -60,7 +60,7 @@ typedef struct
 #define UI_GCODE_LINE_LEN RX_BUFFER_CAPACITY
 
 #ifndef UI_LC_MAX_LINES
-#define UI_LC_MAX_LINES 12
+#define UI_LC_MAX_LINES 22
 #endif
 
 #ifndef UI_LC_LINE_LEN

@@ -1,11 +1,9 @@
 # LeanCam RP2350 HDMI Backend Staging
 
-This folder stages the standalone RP2350 LeanCam display backend for migration
-into uCNC.
+This folder contains only the RP2350 LeanCam display backend for uCNC.
 
 Current status:
 
-- copied from the working standalone `leancam_hdmi_pio_usb` proof
 - 800x600 RGB222 HSTX/DVI drawing primitives
 - internal SRAM scanout buffer
 - optional PSRAM backbuffer with dirty-row copy to scanout
@@ -25,7 +23,6 @@ uCNC targets:
 - G7/G8 parser extension disabled
 - G33 not loaded
 - encoders disabled
-- I2C keyboard avoided
 - 74HC595/74HC165 disabled
 
 Build integration:
@@ -34,8 +31,8 @@ Build integration:
   from `C:/acc/rp2350/DispHSTX`
 - local `config.h` keeps the Waveshare 800x600 HSTX/DVI pin mapping aligned
   between C and assembly
-- `leancam_hdmi_boot.c` is intentionally only a smoke-test module, not the final
-  LeanCam UI bridge
+- `leancam_hdmi_boot.c` starts the LeanCam UI renderer on the display core
 
-Next stage is to connect the real LeanCam snapshot/bridge drawing to
-`leancam_display` primitives, then add the USB keyboard path.
+Storage is intentionally not owned by this module. The RP2350 SD/FatFs bridge
+lives in `../leancam_rp2350_sd` so the LeanCam UI and uCNC core can share it
+without coupling storage to HSTX video.

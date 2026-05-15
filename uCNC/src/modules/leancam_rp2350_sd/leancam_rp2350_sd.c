@@ -1,6 +1,6 @@
 #include "../../cnc.h"
 
-#ifdef LEANCAM_ENABLE_FATFS_SD_PROBE
+#ifdef ENABLE_LEANCAM_RP2350_SD
 
 #include "ff.h"
 #include "f_util.h"
@@ -12,7 +12,7 @@
 #endif
 
 #ifndef LEANCAM_SD_PROBE_DELAY_MS
-#define LEANCAM_SD_PROBE_DELAY_MS 8000UL
+#define LEANCAM_SD_PROBE_DELAY_MS 1200UL
 #endif
 
 #ifndef LEANCAM_SD_CAT_MAX_BYTES
@@ -22,6 +22,7 @@
 static FATFS g_lc_sd_fs;
 #ifdef ENABLE_LEANCAM_RP2350_SD
 static fs_t g_lc_sd_drive;
+static fs_t *g_lc_fs_default_drive;
 #endif
 static bool g_lc_sd_armed;
 static bool g_lc_sd_done;
@@ -180,8 +181,168 @@ static bool leancam_sd_cmd_parser(void *args)
 }
 
 #ifdef ENABLE_LEANCAM_RP2350_SD
+static fs_t *lc_fs_search_drive(const char *path)
+{
+    fs_t *ptr = g_lc_fs_default_drive;
+    char c;
+
+    if (!ptr || !path || path[0] != '/' || strlen(path) < 2) {
+        return NULL;
+    }
+
+    if (strlen(path) > 2 && path[2] != '/') {
+        return NULL;
+    }
+
+    c = path[1];
+    if (c >= 'a' && c <= 'z') {
+        c = (char)(c - 32);
+    }
+
+    while (ptr) {
+        char drv = ptr->drive;
+        if (drv >= 'a' && drv <= 'z') {
+            drv = (char)(drv - 32);
+        }
+        if (drv == c) {
+            return ptr;
+        }
+        ptr = ptr->next;
+    }
+
+    return NULL;
+}
+
+void fs_mount(fs_t *drive)
+{
+    if (!drive) {
+        return;
+    }
+    drive->next = g_lc_fs_default_drive;
+    g_lc_fs_default_drive = drive;
+}
+
+void fs_unmount(char drive)
+{
+    fs_t **ptr = &g_lc_fs_default_drive;
+    if (drive >= 'a' && drive <= 'z') {
+        drive = (char)(drive - 32);
+    }
+
+    while (*ptr) {
+        char drv = (*ptr)->drive;
+        if (drv >= 'a' && drv <= 'z') {
+            drv = (char)(drv - 32);
+        }
+        if (drv == drive) {
+            *ptr = (*ptr)->next;
+            return;
+        }
+        ptr = &(*ptr)->next;
+    }
+}
+
+fs_file_t *fs_open(const char *path, const char *mode)
+{
+    fs_t *fs = lc_fs_search_drive(path);
+    if (!fs || !fs->open) {
+        return NULL;
+    }
+    return fs->open((strlen(path) > 2) ? &path[2] : "/", mode);
+}
+
+fs_file_t *fs_opendir(const char *path)
+{
+    fs_t *fs = lc_fs_search_drive(path);
+    if (!fs || !fs->opendir) {
+        return NULL;
+    }
+    return fs->opendir((strlen(path) > 2) ? &path[2] : "/");
+}
+
+size_t fs_read(fs_file_t *fp, uint8_t *buffer, size_t len)
+{
+    return (fp && fp->fs_ptr && fp->fs_ptr->read) ? fp->fs_ptr->read(fp, buffer, len) : 0;
+}
+
+size_t fs_write(fs_file_t *fp, const uint8_t *buffer, size_t len)
+{
+    return (fp && fp->fs_ptr && fp->fs_ptr->write) ? fp->fs_ptr->write(fp, buffer, len) : 0;
+}
+
+bool fs_seek(fs_file_t *fp, uint32_t position)
+{
+    return (fp && fp->fs_ptr && fp->fs_ptr->seek) ? fp->fs_ptr->seek(fp, position) : false;
+}
+
+int fs_available(fs_file_t *fp)
+{
+    return (fp && fp->fs_ptr && fp->fs_ptr->available) ? fp->fs_ptr->available(fp) : 0;
+}
+
+void fs_close(fs_file_t *fp)
+{
+    if (!fp) {
+        return;
+    }
+    if (fp->fs_ptr && fp->fs_ptr->close) {
+        fp->fs_ptr->close(fp);
+    }
+    free(fp->file_ptr);
+    free(fp);
+}
+
+bool fs_remove(const char *path)
+{
+    fs_t *fs = lc_fs_search_drive(path);
+    return (fs && fs->remove) ? fs->remove((strlen(path) > 2) ? &path[2] : "/") : false;
+}
+
+bool fs_mkdir(const char *path)
+{
+    fs_t *fs = lc_fs_search_drive(path);
+    return (fs && fs->mkdir) ? fs->mkdir((strlen(path) > 2) ? &path[2] : "/") : false;
+}
+
+bool fs_rmdir(const char *path)
+{
+    fs_t *fs = lc_fs_search_drive(path);
+    return (fs && fs->rmdir) ? fs->rmdir((strlen(path) > 2) ? &path[2] : "/") : false;
+}
+
+bool fs_next_file(fs_file_t *fp, fs_file_info_t *finfo)
+{
+    return (fp && fp->fs_ptr && fp->fs_ptr->next_file) ? fp->fs_ptr->next_file(fp, finfo) : false;
+}
+
+bool fs_finfo(const char *path, fs_file_info_t *finfo)
+{
+    fs_t *fs;
+    if (!finfo) {
+        return false;
+    }
+    memset(finfo, 0, sizeof(*finfo));
+    if (!path || strlen(path) <= 1) {
+        return true;
+    }
+    fs = lc_fs_search_drive(path);
+    return (fs && fs->finfo) ? fs->finfo((strlen(path) > 2) ? &path[2] : "/", finfo) : false;
+}
+
+void fs_file_run(char *params)
+{
+    (void)params;
+}
+
+bool fs_file_run_active(void)
+{
+    return false;
+}
+
 static bool lc_sd_path(char *out, size_t out_len, const char *path)
 {
+    const char *p;
+
     if (!out || !out_len || !path) {
         return false;
     }
@@ -189,6 +350,11 @@ static bool lc_sd_path(char *out, size_t out_len, const char *path)
     memset(out, 0, out_len);
     if (strcmp(path, "/") == 0 || path[0] == 0) {
         return snprintf(out, out_len, "0:/") < (int)out_len;
+    }
+
+    if (strncmp(path, "/D/", 3) == 0) {
+        p = path + 3;
+        return snprintf(out, out_len, "0:/%s", p) < (int)out_len;
     }
 
     if (path[0] == '/') {
@@ -244,6 +410,7 @@ static fs_file_t *lc_sd_open(const char *path, const char *mode)
     }
 
     fp->file_ptr = fil;
+    fp->fs_ptr = &g_lc_sd_drive;
     (void)g_lc_sd_drive.finfo(path, &fp->file_info);
     return fp;
 }
@@ -328,6 +495,7 @@ static fs_file_t *lc_sd_opendir(const char *path)
     }
 
     fp->file_ptr = dir;
+    fp->fs_ptr = &g_lc_sd_drive;
     strncpy(fp->file_info.full_name, path, FS_PATH_NAME_MAX_LEN - 1);
     fp->file_info.is_dir = true;
     return fp;
@@ -395,7 +563,7 @@ static bool lc_sd_finfo(const char *path, fs_file_info_t *finfo)
 static void lc_sd_mount_ucnc_drive(void)
 {
     memset(&g_lc_sd_drive, 0, sizeof(g_lc_sd_drive));
-    g_lc_sd_drive.drive = 'S';
+    g_lc_sd_drive.drive = 'D';
     g_lc_sd_drive.open = lc_sd_open;
     g_lc_sd_drive.read = lc_sd_read;
     g_lc_sd_drive.write = lc_sd_write;
@@ -413,7 +581,7 @@ static void lc_sd_mount_ucnc_drive(void)
 }
 #endif
 
-static bool leancam_sd_fatfs_probe_update(void *args)
+static bool leancam_rp2350_sd_update(void *args)
 {
     (void)args;
 
@@ -451,7 +619,7 @@ static bool leancam_sd_fatfs_probe_update(void *args)
     g_lc_sd_mounted = true;
 #ifdef ENABLE_LEANCAM_RP2350_SD
     lc_sd_mount_ucnc_drive();
-    proto_info("LC_SD:uCNC drive mounted as /S");
+    proto_info("LC_SD:uCNC drive mounted as /D");
 #endif
 
     char root_path[12];
@@ -478,18 +646,18 @@ static bool leancam_sd_fatfs_probe_update(void *args)
     return EVENT_CONTINUE;
 }
 
-CREATE_EVENT_LISTENER(cnc_dotasks, leancam_sd_fatfs_probe_update);
+CREATE_EVENT_LISTENER(cnc_dotasks, leancam_rp2350_sd_update);
 CREATE_EVENT_LISTENER(grbl_cmd, leancam_sd_cmd_parser);
 
-DECL_MODULE(leancam_sd_fatfs_probe)
+DECL_MODULE(leancam_rp2350_sd)
 {
-    ADD_EVENT_LISTENER(cnc_dotasks, leancam_sd_fatfs_probe_update);
+    ADD_EVENT_LISTENER(cnc_dotasks, leancam_rp2350_sd_update);
     ADD_EVENT_LISTENER(grbl_cmd, leancam_sd_cmd_parser);
 }
 
 #else
 
-DECL_MODULE(leancam_sd_fatfs_probe)
+DECL_MODULE(leancam_rp2350_sd)
 {
 }
 

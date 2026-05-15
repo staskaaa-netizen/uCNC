@@ -11,8 +11,8 @@ extern "C"
     RP2350 LeanCam HDMI first-stage HAL profile.
 
     This keeps uCNC small and avoids modules/pins that belong to the old
-    ESP32/MKS Tinybee setup: G33, ESP32 PCNT encoder, I2C keyboard, 74HC595,
-    WiFi, SD/filesystem, and real machine-runtime extras.
+    ESP32/MKS Tinybee setup: G33, ESP32 PCNT encoder, 74HC595,
+    WiFi, full generic SD/filesystem setup, and real machine-runtime extras.
 */
 
 #define S_CURVE_ACCELERATION_LEVEL 0
@@ -43,15 +43,18 @@ extern "C"
 /* Keep settings in RAM for now; flash/SD persistence can return later. */
 #define RAM_ONLY_SETTINGS
 
-/*
-    SD is tested through a delayed Arduino SDFS probe only. The current uCNC
-    SD/file-system layer is parked because linking it breaks video/serial.
-*/
 #define SD_CARD_DETECT_PIN 255
 #define SD_CARD_SPI_DMA false
 
-/* Load only the RP2350 HDMI smoke module for this bring-up target. */
-#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(ui_snapshot_builder); LOAD_MODULE(leancam_rp2350_hdmi); LOAD_MODULE(leancam_sd_fatfs_probe);})
+/*
+    Load the RP2350 LeanCam UI, display, storage, and parser helper modules.
+
+    Do not load full file_system here yet. It has twice killed early boot on
+    RP2350-LEANCAM-HDMI: no HSTX video and no USB serial. The current SD module
+    intentionally provides a small fs_* facade for LeanCam until the full uCNC
+    filesystem can be staged safely.
+*/
+#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(g7_g8); LOAD_MODULE(ui_snapshot_builder); LOAD_MODULE(leancam_rp2350_hdmi); LOAD_MODULE(leancam_rp2350_sd);})
 
 #ifdef __cplusplus
 }

@@ -18,7 +18,7 @@
 #define LC_FILES_DIR LC_DEFAULT_DIR
 
 #ifndef LC_VISIBLE_PROGRAM_LINES
-#define LC_VISIBLE_PROGRAM_LINES UI_LC_MAX_LINES
+#define LC_VISIBLE_PROGRAM_LINES 6
 #endif
 
 #ifndef LC_FILE_REFRESH_RETRY_MS
@@ -27,6 +27,10 @@
 
 #ifndef LC_SELECTED_RUN_USE_STREAM
 #define LC_SELECTED_RUN_USE_STREAM 0
+#endif
+
+#ifndef LEANCAM_DIRECT_STREAM_BUFFER
+#define LEANCAM_DIRECT_STREAM_BUFFER 8192u
 #endif
 
 #ifndef G33_ELS_LOCK_REV_MIN
@@ -51,12 +55,15 @@ static int  g_nc_selected_row = 0;
 static char g_new_file_name[32];
 static char g_last_msg[UI_SNAPSHOT_POPUP_LEN];
 static char g_nc_path[LC_FILE_PATH_MAX];
+static char g_nc_setup_line[UI_LC_LINE_LEN];
 static char g_nc_lines[UI_LC_MAX_LINES][UI_LC_LINE_LEN];
 static uint8_t g_nc_line_count = 0;
 static bool g_nc_eof = false;
 static uint8_t g_draft_field_index = 0;
 static bool g_files_ready = false;
 static uint32_t g_next_file_refresh_ms = 0;
+
+static void lc_open_nc_viewer(const char *path);
 
 typedef struct
 {
@@ -618,6 +625,19 @@ static int lc_emit_program_cycle_banner(lc_gcode_file_emit_t *emit_ctx, int line
     return 1;
 }
 
+static int lc_emit_setup_comment(lc_gcode_file_emit_t *emit_ctx, const program_t *prog)
+{
+    const char *setup;
+    char buf[UI_LC_LINE_LEN + 12];
+
+    setup = lc_find_setup_in_program(prog, prog ? prog->count - 1 : 0);
+    if (!setup || !setup[0])
+        return 1;
+
+    snprintf(buf, sizeof(buf), "(LC %s)", setup);
+    return lc_write_line_to_file(buf, emit_ctx);
+}
+
 static void lc_generate_selected_file_gcode(void)
 {
     char in_path[LC_FILE_PATH_MAX];
@@ -702,6 +722,8 @@ static void lc_generate_selected_file_gcode(void)
     lc_publish_msg("LC: writing header");
     if (!leancam_gcode_emit_program_header(lc_write_line_to_file, &emit_ctx))
         r = LC_GCODE_STREAM_REJECT;
+    if (r == LC_GCODE_OK && !lc_emit_setup_comment(&emit_ctx, &prog))
+        r = LC_GCODE_STREAM_REJECT;
 
     for (i = 0; r == LC_GCODE_OK && i < prog.count; ++i)
     {
@@ -748,6 +770,7 @@ static void lc_generate_selected_file_gcode(void)
     lc_publish_msg("LC: refreshing files");
     lc_refresh_files();
     lc_set_msgf("LC: saved %s", lc_basename(out_path));
+    lc_open_nc_viewer(out_path);
     ui_snapshot_build_live();
 }
 
@@ -949,6 +972,30 @@ static bool lc_nc_read_line(fs_file_t *fp, char *out, int out_sz)
     return got;
 }
 
+static void lc_nc_capture_setup_comment(const char *line)
+{
+    const char *p;
+    const char *end;
+    size_t n;
+
+    if (!line || g_nc_setup_line[0])
+        return;
+
+    p = strstr(line, "SETUP|");
+    if (!p)
+        return;
+
+    end = strchr(p, ')');
+    if (!end)
+        end = p + strlen(p);
+
+    n = (size_t)(end - p);
+    if (n >= sizeof(g_nc_setup_line))
+        n = sizeof(g_nc_setup_line) - 1u;
+    memcpy(g_nc_setup_line, p, n);
+    g_nc_setup_line[n] = 0;
+}
+
 static bool lc_nc_load_window(void)
 {
     fs_file_t *fp;
@@ -957,6 +1004,7 @@ static bool lc_nc_load_window(void)
     int row = 0;
 
     lc_nc_clear_window();
+    g_nc_setup_line[0] = 0;
 
     if (!g_nc_path[0])
         return false;
@@ -970,10 +1018,16 @@ static bool lc_nc_load_window(void)
     }
 
     while (skipped < g_nc_top_line && lc_nc_read_line(fp, throwaway, sizeof(throwaway)))
+    {
+        lc_nc_capture_setup_comment(throwaway);
         skipped++;
+    }
 
     while (row < UI_LC_MAX_LINES && lc_nc_read_line(fp, g_nc_lines[row], UI_LC_LINE_LEN))
+    {
+        lc_nc_capture_setup_comment(g_nc_lines[row]);
         row++;
+    }
 
     g_nc_line_count = (uint8_t)row;
     g_nc_eof = !fs_available(fp);
@@ -1090,6 +1144,11 @@ void leancam_bridge_init(void)
     lc_set_msg("LC: init");
 
 #ifdef LEANCAM_RP2350_STANDALONE_DEMO
+#ifdef ENABLE_LEANCAM_RP2350_SD
+    g_lc_mode = LC_MODE_FILES;
+    g_next_file_refresh_ms = mcu_millis() + 250u;
+    lc_set_msg("LC: waiting for SD");
+#else
     prog_add(&g_leancam_ui.prog,
              "SETUP|L{75}|OD{50}|ID{0}|CLAMP{8}|EXTRA{3}|CLR{1}|MAT{ST45}|WOFF{G54}");
     prog_add(&g_leancam_ui.prog,
@@ -1099,6 +1158,7 @@ void leancam_bridge_init(void)
     g_leancam_ui.cur_line = 0;
     g_lc_mode = LC_MODE_PROGRAM;
     lc_set_msg("LC: RP2350 demo, no SD");
+#endif
 #else
     g_lc_mode = LC_MODE_FILES;
     lc_refresh_files();
@@ -1196,6 +1256,157 @@ static void lc_run_selected_line_stream(const char *line, const char *setup, con
 }
 #endif
 
+#ifdef LEANCAM_RP2350_DIRECT_STREAM
+static char g_lc_direct_stream_buf[LEANCAM_DIRECT_STREAM_BUFFER];
+static uint32_t g_lc_direct_stream_len = 0;
+static uint32_t g_lc_direct_stream_pos = 0;
+static bool g_lc_direct_stream_active = false;
+
+typedef struct
+{
+    uint32_t lines;
+    bool overflow;
+} lc_direct_stream_emit_t;
+
+static void lc_direct_stream_reset(void)
+{
+    g_lc_direct_stream_len = 0;
+    g_lc_direct_stream_pos = 0;
+    g_lc_direct_stream_active = false;
+}
+
+static uint8_t lc_direct_stream_available(void)
+{
+    if (g_lc_direct_stream_pos < g_lc_direct_stream_len)
+        return 1;
+
+    if (g_lc_direct_stream_active)
+    {
+        lc_direct_stream_reset();
+        grbl_stream_change(NULL);
+    }
+
+    return 0;
+}
+
+static uint8_t lc_direct_stream_getc(void)
+{
+    if (g_lc_direct_stream_pos < g_lc_direct_stream_len)
+        return (uint8_t)g_lc_direct_stream_buf[g_lc_direct_stream_pos++];
+
+    return 0;
+}
+
+static void lc_direct_stream_clear(void)
+{
+    lc_direct_stream_reset();
+    grbl_stream_change(NULL);
+}
+
+static int lc_direct_stream_append(const char *line, void *user)
+{
+    lc_direct_stream_emit_t *ctx = (lc_direct_stream_emit_t *)user;
+    size_t len;
+
+    if (!line)
+        return 0;
+
+    len = strlen(line);
+    if (g_lc_direct_stream_len + len + 1u >= (uint32_t)sizeof(g_lc_direct_stream_buf))
+    {
+        if (ctx)
+            ctx->overflow = true;
+        return 0;
+    }
+
+    if (len > 0)
+    {
+        memcpy(&g_lc_direct_stream_buf[g_lc_direct_stream_len], line, len);
+        g_lc_direct_stream_len += (uint32_t)len;
+    }
+    g_lc_direct_stream_buf[g_lc_direct_stream_len++] = '\n';
+
+    if (ctx)
+        ctx->lines++;
+
+    return 1;
+}
+
+static bool lc_direct_stream_banner(int run_line_no, const char *tool, lc_direct_stream_emit_t *ctx)
+{
+    char buf[96];
+
+    snprintf(buf, sizeof(buf), "(--- LeanCam L%d ---)", run_line_no);
+    if (!lc_direct_stream_append(buf, ctx))
+        return false;
+
+    if (tool && tool[0])
+    {
+        snprintf(buf, sizeof(buf), "(--- %.84s ---)", tool);
+        if (!lc_direct_stream_append(buf, ctx))
+            return false;
+    }
+
+    return true;
+}
+
+static void lc_run_selected_line_direct_stream(const char *line, const char *setup, const char *tool, int run_line_no)
+{
+    lc_direct_stream_emit_t emit_ctx;
+    lc_gcode_result_t r = LC_GCODE_OK;
+    char err[64];
+
+    err[0] = 0;
+    emit_ctx.lines = 0;
+    emit_ctx.overflow = false;
+
+    if (g_lc_direct_stream_active)
+    {
+        lc_set_msg("LC: stream busy");
+        return;
+    }
+
+    if (cnc_has_alarm() || cnc_get_exec_state(EXEC_GCODE_LOCKED))
+    {
+        lc_set_msg("LC: machine locked");
+        return;
+    }
+
+    lc_direct_stream_reset();
+
+    if (!leancam_gcode_emit_program_header(lc_direct_stream_append, &emit_ctx))
+        r = LC_GCODE_STREAM_REJECT;
+
+    if (r == LC_GCODE_OK && !lc_direct_stream_banner(run_line_no, tool, &emit_ctx))
+        r = LC_GCODE_STREAM_REJECT;
+
+    if (r == LC_GCODE_OK)
+        r = leancam_gcode_run_program_line_ex(line, setup, tool, lc_direct_stream_append, &emit_ctx, err, sizeof(err));
+
+    if (r == LC_GCODE_OK && !leancam_gcode_emit_program_footer(lc_direct_stream_append, &emit_ctx))
+        r = LC_GCODE_STREAM_REJECT;
+
+    if (r != LC_GCODE_OK)
+    {
+        lc_direct_stream_reset();
+        lc_set_msgf("LC: L%d %.32s", run_line_no,
+                    emit_ctx.overflow ? "stream overflow" : (err[0] ? err : lc_gcode_result_name(r)));
+        return;
+    }
+
+    if (g_lc_direct_stream_len == 0)
+    {
+        lc_set_msg("LC: no gcode");
+        return;
+    }
+
+    g_lc_direct_stream_pos = 0;
+    g_lc_direct_stream_active = true;
+    grbl_stream_readonly(lc_direct_stream_getc, lc_direct_stream_available, lc_direct_stream_clear);
+    lc_set_msgf("LC: queued L%d %lu lines", run_line_no, (unsigned long)emit_ctx.lines);
+}
+#endif
+
 static void lc_run_selected_line(void)
 {
     char out_path[LC_FILE_PATH_MAX];
@@ -1227,6 +1438,11 @@ static void lc_run_selected_line(void)
 
 #if LC_SELECTED_RUN_USE_STREAM
     lc_run_selected_line_stream(line, setup, tool, run_line_no);
+    return;
+#endif
+
+#ifdef LEANCAM_RP2350_DIRECT_STREAM
+    lc_run_selected_line_direct_stream(line, setup, tool, run_line_no);
     return;
 #endif
 
@@ -1436,6 +1652,29 @@ static int lc_replace_span(char *line, uint32_t line_len, const char *span_start
     return 1;
 }
 
+static void lc_build_draft_preview_line(char *out, uint32_t out_len)
+{
+    const char *open;
+    const char *close;
+
+    if (!out || out_len == 0)
+        return;
+
+    out[0] = 0;
+    if (!g_leancam_ui.draft_active)
+        return;
+
+    strncpy(out, g_leancam_ui.draft_line, out_len - 1u);
+    out[out_len - 1u] = 0;
+
+    if (!g_leancam_ui.input_buf[0])
+        return;
+    if (!lc_find_brace_field(out, g_draft_field_index, &open, &close))
+        return;
+
+    (void)lc_replace_span(out, out_len, open + 1, close, g_leancam_ui.input_buf);
+}
+
 static int lc_accept_active_field_bridge_owned(void)
 {
     const char *open;
@@ -1443,6 +1682,8 @@ static int lc_accept_active_field_bridge_owned(void)
     char accepted[LEANCAM_INPUT_MAX];
     uint32_t n;
     uint8_t field_count;
+    bool editing_existing;
+    int replace_index;
 
     if (!g_leancam_ui.draft_active) return 0;
 
@@ -1478,6 +1719,9 @@ static int lc_accept_active_field_bridge_owned(void)
 
     lc_clear_input_buf();
 
+    editing_existing = (g_leancam_ui.draft_replace_index >= 0);
+    replace_index = g_leancam_ui.draft_replace_index;
+
     /* Braces intentionally remain in the saved .lcam line, so field_count
      * does not decrease. Advance the single bridge-owned active field index.
      * When it reaches field_count, no field is highlighted; # commits.
@@ -1486,6 +1730,16 @@ static int lc_accept_active_field_bridge_owned(void)
         g_draft_field_index++;
     else
         g_draft_field_index = field_count;
+
+    if (editing_existing &&
+        replace_index >= 0 &&
+        replace_index < g_leancam_ui.prog.count)
+    {
+        strncpy(g_leancam_ui.prog.lines[replace_index], g_leancam_ui.draft_line, MAX_LEN - 1);
+        g_leancam_ui.prog.lines[replace_index][MAX_LEN - 1] = 0;
+        g_leancam_ui.cur_line = replace_index;
+        lc_autosave();
+    }
 
     return 1;
 }
@@ -1867,26 +2121,24 @@ static void lc_snapshot_program(ui_snapshot_frame_t *f)
                                              &hi_start,
                                              &hi_end);
 
-            /* Draft is drawn in its real program position: replacement line
-             * or inserted line. No bottom-jump ghost row anymore.
-             */
-            lc_snapshot_line_ex(f, row++, buf, false, hi_start, hi_end);
-            if (row < UI_LC_MAX_LINES &&
-                lc_calc_thread_lanes(g_leancam_ui.draft_line, tool, NULL, NULL,
-                                     &f->leancam_thread_ramp_lane,
-                                     &f->leancam_thread_lock_lane,
-                                     &f->leancam_thread_z_speed))
+            if (lc_line_is_thread(g_leancam_ui.draft_line))
             {
                 float start_lane = 0.0f;
                 float stop_lane = 0.0f;
 
-                (void)lc_calc_thread_lanes(g_leancam_ui.draft_line, tool,
-                                           &start_lane, &stop_lane, NULL, NULL, NULL);
-                snprintf(buf, sizeof(buf),
-                         "   ELS reserve: start %.2f stop %.2f mm before/after real thread",
-                         start_lane, stop_lane);
-                lc_snapshot_line(f, row++, buf, false);
+                if (lc_calc_thread_lanes(g_leancam_ui.draft_line, tool,
+                                         &start_lane, &stop_lane,
+                                         &f->leancam_thread_ramp_lane,
+                                         &f->leancam_thread_lock_lane,
+                                         &f->leancam_thread_z_speed))
+                {
+                    size_t used = strlen(buf);
+                    snprintf(buf + used, sizeof(buf) - used, " | ELS %.2f/%.2f",
+                             (double)start_lane, (double)stop_lane);
+                }
             }
+
+            lc_snapshot_line_ex(f, row++, buf, false, hi_start, hi_end);
         }
         else
         {
@@ -1902,12 +2154,7 @@ static void lc_snapshot_program(ui_snapshot_frame_t *f)
 
             if (pi >= 0 && pi < g_leancam_ui.prog.count)
             {
-                snprintf(buf, sizeof(buf), "%02d %s", pi + 1, g_leancam_ui.prog.lines[pi]);
-                lc_snapshot_line(f,
-                                 row++,
-                                 buf,
-                                 (pi == g_leancam_ui.cur_line) && (!g_leancam_ui.draft_active));
-                if (row < UI_LC_MAX_LINES && lc_line_is_thread(g_leancam_ui.prog.lines[pi]))
+                if (lc_line_is_thread(g_leancam_ui.prog.lines[pi]))
                 {
                     const char *tool = lc_find_prefix_in_program(&g_leancam_ui.prog, pi, "TOOL|");
                     float start_lane = 0.0f;
@@ -1916,12 +2163,22 @@ static void lc_snapshot_program(ui_snapshot_frame_t *f)
                     if (lc_calc_thread_lanes(g_leancam_ui.prog.lines[pi], tool,
                                              &start_lane, &stop_lane, NULL, NULL, NULL))
                     {
-                        snprintf(buf, sizeof(buf),
-                                 "   ELS reserve: start %.2f stop %.2f mm before/after real thread",
-                                 start_lane, stop_lane);
-                        lc_snapshot_line(f, row++, buf, false);
+                        snprintf(buf, sizeof(buf), "%02d %s | ELS %.2f/%.2f",
+                                 pi + 1, g_leancam_ui.prog.lines[pi], start_lane, stop_lane);
+                    }
+                    else
+                    {
+                        snprintf(buf, sizeof(buf), "%02d %s", pi + 1, g_leancam_ui.prog.lines[pi]);
                     }
                 }
+                else
+                {
+                    snprintf(buf, sizeof(buf), "%02d %s", pi + 1, g_leancam_ui.prog.lines[pi]);
+                }
+                lc_snapshot_line(f,
+                                 row++,
+                                 buf,
+                                 (pi == g_leancam_ui.cur_line) && (!g_leancam_ui.draft_active));
             }
         }
     }
@@ -1973,6 +2230,43 @@ static void lc_snapshot_nc_view(ui_snapshot_frame_t *f)
                        sizeof(f->leancam_helper));
 }
 
+static const char *lc_selected_file_setup_line(void)
+{
+    static program_t preview_prog;
+    static char setup_copy[UI_LC_LINE_LEN];
+    static int cached_sel = -2;
+    static uint32_t cached_count = 0;
+    char path[LC_FILE_PATH_MAX];
+    int cnt = leancam_files_count();
+    const char *setup;
+
+    if (g_lc_mode != LC_MODE_FILES || !g_files_ready || g_file_sel < 0 || g_file_sel >= cnt)
+        return NULL;
+
+    if (!lc_has_suffix_ci_local(leancam_files_name(g_file_sel), ".lcam"))
+        return NULL;
+
+    if (cached_sel == g_file_sel && cached_count == (uint32_t)cnt)
+        return setup_copy[0] ? setup_copy : NULL;
+
+    cached_sel = g_file_sel;
+    cached_count = (uint32_t)cnt;
+    setup_copy[0] = 0;
+
+    if (!leancam_files_build_path(LC_FILES_DIR, g_file_sel, path, sizeof(path)))
+        return NULL;
+
+    if (!leancam_files_load(path, &preview_prog))
+        return NULL;
+
+    setup = lc_find_setup_in_program(&preview_prog, preview_prog.count - 1);
+    if (!setup || !setup[0])
+        return NULL;
+
+    ui_snapshot_strcpy(setup_copy, setup, sizeof(setup_copy));
+    return setup_copy;
+}
+
 static void lc_snapshot_preview_sources(ui_snapshot_frame_t *f)
 {
     const char *setup = NULL;
@@ -1985,28 +2279,29 @@ static void lc_snapshot_preview_sources(ui_snapshot_frame_t *f)
 
     (void)lc_setup_line(&setup);
 
-    if (g_leancam_ui.draft_active)
+    if (g_lc_mode == LC_MODE_FILES)
     {
-        char display[UI_LC_LINE_LEN];
-        uint8_t hi_start = 0;
-        uint8_t hi_end = 0;
+        setup = lc_selected_file_setup_line();
+        line = NULL;
+        tool = NULL;
+    }
+    else if (g_lc_mode == LC_MODE_NC_VIEW)
+    {
+        setup = g_nc_setup_line[0] ? g_nc_setup_line : NULL;
+        line = NULL;
+        tool = NULL;
+    }
+    else if (g_leancam_ui.draft_active)
+    {
+        char preview_line[MAX_LEN];
 
-        line = g_leancam_ui.draft_line;
         if (g_leancam_ui.draft_replace_index >= 0)
             before_or_at = g_leancam_ui.draft_replace_index;
         else
             before_or_at = g_leancam_ui.draft_insert_after + 1;
 
-        leancam_expr_build_draft_display(display,
-                                         sizeof(display),
-                                         g_leancam_ui.draft_line,
-                                         g_leancam_ui.input_buf,
-                                         g_draft_field_index,
-                                         setup,
-                                         g_leancam_ui.draft_line,
-                                         &hi_start,
-                                         &hi_end);
-        line = display;
+        lc_build_draft_preview_line(preview_line, sizeof(preview_line));
+        line = preview_line;
         lc_get_field_name_by_index(g_leancam_ui.draft_line,
                                    g_draft_field_index,
                                    f->leancam_active_field,
@@ -2018,7 +2313,8 @@ static void lc_snapshot_preview_sources(ui_snapshot_frame_t *f)
         line = g_leancam_ui.prog.lines[g_leancam_ui.cur_line];
     }
 
-    tool = lc_find_prefix_in_program(&g_leancam_ui.prog, before_or_at, "TOOL|");
+    if (g_lc_mode != LC_MODE_FILES && g_lc_mode != LC_MODE_NC_VIEW)
+        tool = lc_find_prefix_in_program(&g_leancam_ui.prog, before_or_at, "TOOL|");
 
     ui_snapshot_strcpy(f->leancam_setup_line, setup ? setup : "", sizeof(f->leancam_setup_line));
     if (!g_leancam_ui.draft_active)
@@ -2069,6 +2365,8 @@ void leancam_bridge_fill_snapshot(ui_snapshot_frame_t *f)
 
             ui_snapshot_strcpy(f->leancam_title, "LeanCam Files", sizeof(f->leancam_title));
             lc_snapshot_line(f, row++, "Storage: " LC_FILES_DIR, false);
+            if (!g_files_ready && row < UI_LC_MAX_LINES)
+                lc_snapshot_line(f, row++, "Waiting for SD card...", false);
 
             for (i = 0; i < cnt && row < UI_LC_MAX_LINES; ++i)
             {

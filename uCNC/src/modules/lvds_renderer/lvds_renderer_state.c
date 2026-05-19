@@ -13,7 +13,7 @@
 #include <stdio.h>
 
 #ifndef LVDS_RENDERER_STATE_MS
-#define LVDS_RENDERER_STATE_MS 30
+#define LVDS_RENDERER_STATE_MS 10
 #endif
 
 /* Do not call fs_file_run_active() from this renderer state poll. In the RP2350

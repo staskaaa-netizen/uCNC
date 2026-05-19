@@ -121,7 +121,7 @@ extern "C"
 #define LVDS_HEIGHT 600
 #define LVDS_SYS_CLOCK_KHZ 280000
 #define LVDS_HSTX_PLL_KHZ 280000
-#define LVDS_HSTX_CLOCK_DIV 2
+#define LVDS_HSTX_CLOCK_DIV 3
 
 // Ascending HSTX GPIO pinout, matching lvds_hstx.c.
 

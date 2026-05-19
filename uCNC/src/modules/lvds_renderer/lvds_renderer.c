@@ -14,7 +14,7 @@
 #include <math.h>
 
 #ifndef LVDS_RENDERER_MS
-#define LVDS_RENDERER_MS 35
+#define LVDS_RENDERER_MS 20
 #endif
 
 #define LC_RENDER_MODE_FILES 0

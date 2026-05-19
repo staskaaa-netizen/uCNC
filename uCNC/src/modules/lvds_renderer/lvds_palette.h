@@ -1,7 +1,7 @@
-#ifndef LEANCAM_PALETTE_H
-#define LEANCAM_PALETTE_H
+#ifndef LVDS_PALETTE_H
+#define LVDS_PALETTE_H
 
-#include "leancam_display.h"
+#include "lvds_hstx.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,7 +24,7 @@ typedef enum {
     red_bright,
     green_bright,
     LC_COLOR_COUNT
-} lc_palette_color_id_t;
+} lvds_palette_color_id_t;
 
 typedef enum {
     /* Main LeanCam screen. */
@@ -80,17 +80,17 @@ typedef enum {
     LC_ELEM_LIVE_CHUCK_OUTLINE,
     LC_ELEM_LIVE_COLLISION,
     LC_ELEM_COUNT
-} lc_palette_element_id_t;
+} lvds_palette_element_id_t;
 
-void lc_palette_init(void);
-void lc_palette_reset(void);
-lc_color_t lc_palette_color(lc_palette_color_id_t id);
-lc_color_t lc_palette_element(lc_palette_element_id_t id);
-const char *lc_palette_color_name(lc_palette_color_id_t id);
-const char *lc_palette_element_name(lc_palette_element_id_t id);
+void lvds_palette_init(void);
+void lvds_palette_reset(void);
+lvds_color_t lvds_palette_color(lvds_palette_color_id_t id);
+lvds_color_t lvds_palette_element(lvds_palette_element_id_t id);
+const char *lvds_palette_color_name(lvds_palette_color_id_t id);
+const char *lvds_palette_element_name(lvds_palette_element_id_t id);
 
 #ifdef __cplusplus
 }
-#endif
+#endif /* LVDS_PALETTE_H */
 
 #endif

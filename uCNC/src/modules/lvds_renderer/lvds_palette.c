@@ -1,37 +1,37 @@
-#include "leancam_palette.h"
+#include "lvds_palette.h"
 
 #include <stddef.h>
 
 typedef struct {
     const char *name;
     const char *hex;
-} lc_palette_color_def_t;
+} lvds_palette_color_def_t;
 
 typedef struct {
     const char *name;
-    lc_palette_color_id_t color;
-} lc_palette_element_def_t;
+    lvds_palette_color_id_t color;
+} lvds_palette_element_def_t;
 
-#define LC_HDMI_MAX_PALETTE_COLORS 64
+#define LVDS_RENDERER_MAX_PALETTE_COLORS 64
 
-#if LC_COLOR_COUNT > LC_HDMI_MAX_PALETTE_COLORS
-#error "LeanCam HDMI color table exceeds the 64-color HSTX paletted output limit"
+#if LC_COLOR_COUNT > LVDS_RENDERER_MAX_PALETTE_COLORS
+#error "LeanCam LVDS color table exceeds the 64-color HSTX paletted output limit"
 #endif
 
 /* Available colors. Edit RGB values here. */
-static const lc_palette_color_def_t g_color_def[LC_COLOR_COUNT] = {
+static const lvds_palette_color_def_t g_color_def[LC_COLOR_COUNT] = {
     [gray_192] = {"gray_192", "#C0C0C0"},
     [gray_128] = {"gray_128", "#808080"},
     [gray_160] = {"gray_160", "#A0A0A0"},
     [gray_96] = {"gray_96", "#606060"},
-    [black] = {"black", "#000000"},
+    [black] = {"black", "#242506"},
     [white_warm] = {"white_warm", "#ffffff"},
     [yellow] = {"yellow", "#fff701"},
     [yellow_light] = {"yellow_light", "#FFF582"},
     [red] = {"red", "#E60000"},
     [green] = {"green", "#24c863"},
     [white] = {"white", "#DDDDDD"},
-    [yellow_pale] = {"yellow_pale", "#ffff2f"},
+    [yellow_pale] = {"yellow_pale", "#fff701"},
     [brown] = {"brown", "#3A3216"},
     [red_bright] = {"red_bright", "#ff0000"},
     [green_bright] = {"green_bright", "#3eff24"},
@@ -39,7 +39,7 @@ static const lc_palette_color_def_t g_color_def[LC_COLOR_COUNT] = {
 };
 
 /* Element-to-color map. Reassign UI objects to available colors here. */
-static const lc_palette_element_def_t g_element_def[LC_ELEM_COUNT] = {
+static const lvds_palette_element_def_t g_element_def[LC_ELEM_COUNT] = {
     [LC_ELEM_BACKGROUND] = {"main.background", gray_192},
     [LC_ELEM_HEADER] = {"main.header", gray_128},
     [LC_ELEM_PANEL] = {"main.panel", green},
@@ -91,10 +91,10 @@ static const lc_palette_element_def_t g_element_def[LC_ELEM_COUNT] = {
     [LC_ELEM_LIVE_COLLISION] = {"live.collision", red},
 };
 
-static lc_color_t g_color[LC_COLOR_COUNT];
+static lvds_color_t g_color[LC_COLOR_COUNT];
 static bool g_palette_ready;
 
-static int lc_palette_hex_nibble(char c)
+static int lvds_palette_hex_nibble(char c)
 {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -102,7 +102,7 @@ static int lc_palette_hex_nibble(char c)
     return -1;
 }
 
-static uint8_t lc_palette_hex_byte(const char *s, uint8_t fallback)
+static uint8_t lvds_palette_hex_byte(const char *s, uint8_t fallback)
 {
     int hi;
     int lo;
@@ -110,53 +110,53 @@ static uint8_t lc_palette_hex_byte(const char *s, uint8_t fallback)
     if (!s) {
         return fallback;
     }
-    hi = lc_palette_hex_nibble(s[0]);
-    lo = lc_palette_hex_nibble(s[1]);
+    hi = lvds_palette_hex_nibble(s[0]);
+    lo = lvds_palette_hex_nibble(s[1]);
     if (hi < 0 || lo < 0) {
         return fallback;
     }
     return (uint8_t)((hi << 4) | lo);
 }
 
-static lc_color_t lc_palette_parse_hex(const char *hex)
+static lvds_color_t lvds_palette_parse_hex(const char *hex)
 {
     uint8_t r;
     uint8_t g;
     uint8_t b;
 
     if (!hex) {
-        return lc_display_rgb(255, 255, 255);
+        return lvds_hstx_rgb(255, 255, 255);
     }
     if (hex[0] == '#') {
         hex++;
     }
-    r = lc_palette_hex_byte(hex + 0, 255);
-    g = lc_palette_hex_byte(hex + 2, 255);
-    b = lc_palette_hex_byte(hex + 4, 255);
-    return lc_display_rgb(r, g, b);
+    r = lvds_palette_hex_byte(hex + 0, 255);
+    g = lvds_palette_hex_byte(hex + 2, 255);
+    b = lvds_palette_hex_byte(hex + 4, 255);
+    return lvds_hstx_rgb(r, g, b);
 }
 
-void lc_palette_reset(void)
+void lvds_palette_reset(void)
 {
     g_palette_ready = false;
 }
 
-void lc_palette_init(void)
+void lvds_palette_init(void)
 {
     if (g_palette_ready) {
         return;
     }
 
     for (int i = 0; i < LC_COLOR_COUNT; i++) {
-        g_color[i] = lc_palette_parse_hex(g_color_def[i].hex);
+        g_color[i] = lvds_palette_parse_hex(g_color_def[i].hex);
     }
     g_palette_ready = true;
 }
 
-lc_color_t lc_palette_color(lc_palette_color_id_t id)
+lvds_color_t lvds_palette_color(lvds_palette_color_id_t id)
 {
     if (!g_palette_ready) {
-        lc_palette_init();
+        lvds_palette_init();
     }
     if (id < 0 || id >= LC_COLOR_COUNT) {
         return g_color[white_warm];
@@ -164,15 +164,15 @@ lc_color_t lc_palette_color(lc_palette_color_id_t id)
     return g_color[id];
 }
 
-lc_color_t lc_palette_element(lc_palette_element_id_t id)
+lvds_color_t lvds_palette_element(lvds_palette_element_id_t id)
 {
     if (id < 0 || id >= LC_ELEM_COUNT) {
-        return lc_palette_color(white_warm);
+        return lvds_palette_color(white_warm);
     }
-    return lc_palette_color(g_element_def[id].color);
+    return lvds_palette_color(g_element_def[id].color);
 }
 
-const char *lc_palette_color_name(lc_palette_color_id_t id)
+const char *lvds_palette_color_name(lvds_palette_color_id_t id)
 {
     if (id < 0 || id >= LC_COLOR_COUNT) {
         return "";
@@ -180,7 +180,7 @@ const char *lc_palette_color_name(lc_palette_color_id_t id)
     return g_color_def[id].name;
 }
 
-const char *lc_palette_element_name(lc_palette_element_id_t id)
+const char *lvds_palette_element_name(lvds_palette_element_id_t id)
 {
     if (id < 0 || id >= LC_ELEM_COUNT) {
         return "";

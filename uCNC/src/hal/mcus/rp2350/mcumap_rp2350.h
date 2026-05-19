@@ -1385,11 +1385,12 @@ extern "C"
 #define mcu_config_pullup(X) pinMode(__indirect__(X, BIT), INPUT_PULLUP)
 #define mcu_config_input_isr(X) attachInterrupt(digitalPinToInterrupt(__indirect__(X, BIT)), mcu_din_isr, CHANGE)
 
-#define mcu_get_input(X) CHECKBIT(sio_hw->gpio_in, __indirect__(X, BIT))
-#define mcu_get_output(X) CHECKBIT(sio_hw->gpio_out, __indirect__(X, BIT))
-#define mcu_set_output(X) ({ sio_hw->gpio_set = (1UL << __indirect__(X, BIT)); })
-#define mcu_clear_output(X) ({ sio_hw->gpio_clr = (1UL << __indirect__(X, BIT)); })
-#define mcu_toggle_output(X) ({ sio_hw->gpio_togl = (1UL << __indirect__(X, BIT)); })
+#define mcu_gpio_mask_(bit) (1UL << ((bit) & 31u))
+#define mcu_get_input(X) ({ uint32_t bit = __indirect__(X, BIT); ((bit < 32u) ? (sio_hw->gpio_in & mcu_gpio_mask_(bit)) : (sio_hw->gpio_hi_in & mcu_gpio_mask_(bit))); })
+#define mcu_get_output(X) ({ uint32_t bit = __indirect__(X, BIT); ((bit < 32u) ? (sio_hw->gpio_out & mcu_gpio_mask_(bit)) : (sio_hw->gpio_hi_out & mcu_gpio_mask_(bit))); })
+#define mcu_set_output(X) ({ uint32_t bit = __indirect__(X, BIT); if (bit < 32u) { sio_hw->gpio_set = mcu_gpio_mask_(bit); } else { sio_hw->gpio_hi_set = mcu_gpio_mask_(bit); } })
+#define mcu_clear_output(X) ({ uint32_t bit = __indirect__(X, BIT); if (bit < 32u) { sio_hw->gpio_clr = mcu_gpio_mask_(bit); } else { sio_hw->gpio_hi_clr = mcu_gpio_mask_(bit); } })
+#define mcu_toggle_output(X) ({ uint32_t bit = __indirect__(X, BIT); if (bit < 32u) { sio_hw->gpio_togl = mcu_gpio_mask_(bit); } else { sio_hw->gpio_hi_togl = mcu_gpio_mask_(bit); } })
 
 	extern uint8_t rp2350_pwm[16];
 #define mcu_set_pwm(X, Y)                     \

@@ -68,6 +68,15 @@ G33 itself only needs the `enc0_index` hook.
 index hooks at a different rate. For multiple updates per revolution,
 `G33_CORRECTION_GAIN` defaults to `0.25f` so each small correction is damped.
 
+RP2350 builds using `rp2350_pio_encoder` should normally use
+`G33_FEEDBACK_LOOP_USE_HW_COUNTER`. In that mode the PIO encoder count is the
+spindle position truth and virtual index hooks are only synchronization/update
+triggers. Do not diagnose that setup from the standard `EC/RPM` line alone: the
+generic encoder module still prints that line even when the backend is the
+custom RP2350 PIO reader. See `src/modules/rp2350_pio_encoder/README.md` for
+the RP2350 virtual-index debug fields and the original empty-interpolator start
+race that could leave G33 stuck in `SYNC_STARTING`.
+
 Inside the index ISR a floating point math operation is performed. If this causes issues on a specific architecture you can enable an option to replace it by a fixed point operation.
 
 `#define G33_REPLACE_FP_OPERATION_IN_ISR`

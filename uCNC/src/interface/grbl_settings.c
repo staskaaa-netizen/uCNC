@@ -291,7 +291,7 @@ void settings_init(void)
 	g_settings_error = SETTINGS_OK;
 #endif
 #endif
-	uint8_t error = settings_load(SETTINGS_ADDRESS_OFFSET, (uint8_t *)&g_settings, (uint8_t)sizeof(settings_t));
+	uint8_t error = settings_load(SETTINGS_ADDRESS_OFFSET, (uint8_t *)&g_settings, (uint16_t)sizeof(settings_t));
 
 	if (error)
 	{
@@ -364,6 +364,10 @@ uint8_t settings_load(uint16_t address, uint8_t *__ptr, uint16_t size)
 	if (crc)
 	{
 		g_settings_error |= SETTINGS_READ_ERROR;
+		if (is_machine_settings)
+		{
+			rom_memcpy(&g_settings, &default_settings, sizeof(settings_t));
+		}
 	}
 #endif
 
@@ -372,6 +376,7 @@ uint8_t settings_load(uint16_t address, uint8_t *__ptr, uint16_t size)
 		const uint8_t version[3] = SETTINGS_VERSION;
 		if ((g_settings.version[0] != version[0]) || (g_settings.version[1] != version[1]) || (g_settings.version[2] != version[2]))
 		{
+			rom_memcpy(&g_settings, &default_settings, sizeof(settings_t));
 			return 1; // return error
 		}
 	}
@@ -533,7 +538,7 @@ uint8_t settings_change(setting_offset_t id, float value)
 #endif
 
 #if !defined(ENABLE_EXTRA_SETTINGS_CMDS)
-	settings_save(SETTINGS_ADDRESS_OFFSET, (uint8_t *)&g_settings, (uint8_t)sizeof(settings_t));
+	settings_save(SETTINGS_ADDRESS_OFFSET, (uint8_t *)&g_settings, (uint16_t)sizeof(settings_t));
 #endif
 
 	return result;

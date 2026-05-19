@@ -24,6 +24,12 @@
 #include <stdbool.h>
 #include <string.h>
 
+#ifdef ENABLE_LEANCAM_SD_DEBUG
+#define LC_SD_INFO(...) proto_info(__VA_ARGS__)
+#else
+#define LC_SD_INFO(...) ((void)0)
+#endif
+
 #define PETIT_FAT_FS 1
 #define FAT_FS 2
 
@@ -54,6 +60,18 @@
 
 #ifndef FS_MAX_PATH_LEN
 #define FS_MAX_PATH_LEN 128
+#endif
+
+#ifndef SD_CARD_BOOT_DELAY_MS
+#define SD_CARD_BOOT_DELAY_MS 500
+#endif
+
+#ifndef SD_CARD_MOUNT_RETRIES
+#define SD_CARD_MOUNT_RETRIES 3
+#endif
+
+#ifndef SD_CARD_MOUNT_RETRY_DELAY_MS
+#define SD_CARD_MOUNT_RETRY_DELAY_MS 250
 #endif
 
 #if (SD_FAT_FS == PETIT_FAT_FS)
@@ -399,41 +417,52 @@ void sd_card_mount(void)
 {
 	if (sd_card_mounted != SD_MOUNTED)
 	{
-		if ((sd_mount(&cfs) == FR_OK))
+		LC_SD_INFO("SD:mount start state=%d retries=%d", sd_card_mounted, SD_CARD_MOUNT_RETRIES);
+		for (uint8_t retry = 0; retry < SD_CARD_MOUNT_RETRIES; retry++)
 		{
-			proto_feedback(SD_STR_SD_PREFIX SD_STR_SD_MOUNTED);
-			sd_fs.drive = 'D';
-			sd_fs.open = sd_fs_open;
-			sd_fs.read = sd_fs_read;
-			sd_fs.write = sd_fs_write;
-			sd_fs.seek = sd_fs_seek;
-			sd_fs.available = sd_fs_available;
-			sd_fs.close = sd_fs_close;
-			sd_fs.remove = sd_fs_remove;
-			sd_fs.opendir = sd_fs_opendir;
-			sd_fs.mkdir = sd_fs_mkdir;
-			sd_fs.rmdir = sd_fs_rmdir;
-			sd_fs.next_file = sd_fs_next_file;
-			sd_fs.finfo = sd_fs_finfo;
-			sd_fs.next = NULL;
-			fs_mount(&sd_fs);
-			sd_card_mounted = SD_MOUNTED;
+			LC_SD_INFO("SD:mount try=%d", retry);
+			FRESULT mount_res = sd_mount(&cfs);
+			LC_SD_INFO("SD:mount result try=%d res=%d", retry, mount_res);
+			if ((mount_res == FR_OK))
+			{
+				proto_feedback(SD_STR_SD_PREFIX SD_STR_SD_MOUNTED);
+				sd_fs.drive = 'D';
+				sd_fs.open = sd_fs_open;
+				sd_fs.read = sd_fs_read;
+				sd_fs.write = sd_fs_write;
+				sd_fs.seek = sd_fs_seek;
+				sd_fs.available = sd_fs_available;
+				sd_fs.close = sd_fs_close;
+				sd_fs.remove = sd_fs_remove;
+				sd_fs.opendir = sd_fs_opendir;
+				sd_fs.mkdir = sd_fs_mkdir;
+				sd_fs.rmdir = sd_fs_rmdir;
+				sd_fs.next_file = sd_fs_next_file;
+				sd_fs.finfo = sd_fs_finfo;
+				sd_fs.next = NULL;
+				fs_mount(&sd_fs);
+				sd_card_mounted = SD_MOUNTED;
+				LC_SD_INFO("SD:mounted state=%d", sd_card_mounted);
 #ifdef ENABLE_SETTINGS_ON_SD_SDCARD
-			RUNONCE
-			{ // clear the read error
-				g_settings_error &= ~SETTINGS_READ_ERROR;
-				// reload all stored settings
-				settings_init();
-				// reload all non volatile parser parameters
-				parser_parameters_load();
-				// reinitialize kinematics since some kinematics depend on settings data
-				kinematics_init();
-				RUNONCE_COMPLETE();
-			}
+				RUNONCE
+				{ // clear the read error
+					g_settings_error &= ~SETTINGS_READ_ERROR;
+					// reload all stored settings
+					settings_init();
+					// reload all non volatile parser parameters
+					parser_parameters_load();
+					// reinitialize kinematics since some kinematics depend on settings data
+					kinematics_init();
+					RUNONCE_COMPLETE();
+				}
 #endif
-			return;
+				return;
+			}
+
+			cnc_delay_ms(SD_CARD_MOUNT_RETRY_DELAY_MS);
 		}
 
+		LC_SD_INFO("SD:mount failed state=%d", sd_card_mounted);
 		proto_feedback(SD_STR_SD_PREFIX SD_STR_SD_ERROR);
 	}
 }
@@ -489,7 +518,7 @@ bool sd_card_dotasks(void *args)
 			// try again
 			g_settings_error &= ~SETTINGS_WRITE_ERROR;
 			// save all settings and parameters again
-			settings_save(SETTINGS_ADDRESS_OFFSET, (uint8_t *)&g_settings, (uint8_t)sizeof(settings_t));
+			settings_save(SETTINGS_ADDRESS_OFFSET, (uint8_t *)&g_settings, (uint16_t)sizeof(settings_t));
 			parser_parameters_save();
 		}
 	}
@@ -634,8 +663,10 @@ CREATE_EVENT_LISTENER_WITHLOCK(grbl_cmd, sd_card_cmd_parser, SD_CARD_BUS_LOCK);
 
 DECL_MODULE(sd_card_v2)
 {
+	LC_SD_INFO("SD:module enter interface=%d dma=%d detect=%d", SD_CARD_INTERFACE, SD_CARD_SPI_DMA ? 1 : 0, SD_CARD_DETECT_PIN);
 	// starts the file system and system commands
 	LOAD_MODULE(file_system);
+#ifndef SD_CARD_NO_SYSTEM_MENU
 	// STARTS SYSTEM MENU MODULE
 	LOAD_MODULE(system_menu);
 	// adds the sd card item to main menu
@@ -643,10 +674,14 @@ DECL_MODULE(sd_card_v2)
 
 	// sd card file system rendering menu
 	DECL_DYNAMIC_MENU(10, 1, system_menu_fs_render, system_menu_fs_action);
+#endif
 
 // try to mount the SD card automatically if card is present
 #if (!defined(SD_CARD_NO_AUTOMOUNT) && !ASSERT_PIN(SD_CARD_DETECT_PIN))
+	LC_SD_INFO("SD:automount begin");
+	cnc_delay_ms(SD_CARD_BOOT_DELAY_MS);
 	sd_card_mount();
+	LC_SD_INFO("SD:automount done mounted=%d", sd_card_mounted);
 #endif
 
 #ifdef ENABLE_MAIN_LOOP_MODULES
@@ -666,4 +701,5 @@ DECL_MODULE(sd_card_v2)
 #else
 #warning "Parser extensions are not enabled. SD card commands will not work."
 #endif
+	LC_SD_INFO("SD:module exit mounted=%d", sd_card_mounted);
 }

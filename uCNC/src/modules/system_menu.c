@@ -809,7 +809,7 @@ static bool system_menu_action_settings_cmd(uint8_t action, system_menu_item_t *
 			rom_strcpy((char *)buffer, __romstr__(STR_SETTINGS_LOADED));
 			break;
 		case 1:
-			settings_save(SETTINGS_ADDRESS_OFFSET, (uint8_t *)&g_settings, (uint8_t)sizeof(settings_t));
+			settings_save(SETTINGS_ADDRESS_OFFSET, (uint8_t *)&g_settings, (uint16_t)sizeof(settings_t));
 			rom_strcpy((char *)buffer, __romstr__(STR_SETTINGS_SAVED));
 			break;
 		case 2:

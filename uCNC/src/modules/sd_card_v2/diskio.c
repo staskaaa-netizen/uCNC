@@ -38,6 +38,12 @@
 
 #include "diskio.h"
 
+#ifdef ENABLE_LEANCAM_SD_DEBUG
+#define LC_SD_INFO(...) proto_info(__VA_ARGS__)
+#else
+#define LC_SD_INFO(...) ((void)0)
+#endif
+
 #ifndef MMCSD_MAX_NCR
 #define MMCSD_MAX_NCR 255
 #endif
@@ -441,8 +447,12 @@ DSTATUS disk_initialize(BYTE pdrv)
 {
 	uint8_t cleanup __attribute__((__cleanup__(mmcsd_release))) = 1;
 	spi_config_t conf = {0};
+	LC_SD_INFO("SD:disk init begin pdrv=%u interface=%d dma=%d", (uint32_t)pdrv, SD_CARD_INTERFACE, SD_CARD_SPI_DMA ? 1 : 0);
 	softspi_config(SD_SPI_PORT, conf, 100000UL);
-	mcu_clear_output(SD_SPI_CS);
+	LC_SD_INFO("SD:spi configured slow");
+	mcu_config_output(SD_SPI_CS);
+	mcu_set_output(SD_SPI_CS);
+	LC_SD_INFO("SD:cs configured high");
 
 	uint8_t resp[4], crc41;
 	uint32_t high_arg;
@@ -461,6 +471,7 @@ DSTATUS disk_initialize(BYTE pdrv)
 	// flushes transmision
 	for (uint8_t j = 3; j != 0; j--)
 	{
+		LC_SD_INFO("SD:CMD0 attempt=%u", (uint32_t)(4 - j));
 		mcu_set_output(SD_SPI_CS);
 		for (uint8_t i = 10; i != 0; i--)
 		{
@@ -471,14 +482,16 @@ DSTATUS disk_initialize(BYTE pdrv)
 		if (mmcsd_command(0, 0x00, 0x95) == 0x01)
 		{
 			mmcsd_card.detected = 1;
+			LC_SD_INFO("SD:CMD0 ok");
 			break;
 		}
 
-		DEBUGSTR("failed to init card");
+		LC_SD_INFO("SD:CMD0 failed");
 	}
 
 	if (!mmcsd_card.detected)
 	{
+		LC_SD_INFO("SD:disk init no card response");
 		return STA_NOINIT;
 	}
 
@@ -491,17 +504,21 @@ DSTATUS disk_initialize(BYTE pdrv)
 	if (mmcsd_command(8, 0x1AA, 0x87) == R1(R1_IDLE))
 	{
 		mmcsd_response(resp, 4, 0);
+		LC_SD_INFO("SD:CMD8 resp=%02x %02x %02x %02x", resp[0], resp[1], resp[2], resp[3]);
 		// card is not v2 or not usable
 		if (!(resp[2] & 0x01) || resp[3] != 0xAA)
 		{
-			DEBUGSTR("SD card not v2 or not usable");
+			LC_SD_INFO("SD:CMD8 unusable");
 			return STA_NOINIT;
 		}
 		// card is v2 and usable
 		mmcsd_card.card_type = SDv2;
 		crc41 = 0x77;
 		high_arg = 0x40000000;
-		DEBUGSTR("SD card is v2+");
+		LC_SD_INFO("SD:v2 card");
+	}
+	else {
+		LC_SD_INFO("SD:CMD8 not idle/v1 path");
 	}
 
 	// CMD55 is a specific SD card command
@@ -510,14 +527,14 @@ DSTATUS disk_initialize(BYTE pdrv)
 	{
 		if (timeout < mcu_millis())
 		{
-			DEBUGSTR("SD card failed ACMD41");
+			LC_SD_INFO("SD:ACMD41 timeout, trying CMD1");
 			mmcsd_card.card_type = MMCv3;
 			timeout = MMCSD_TIMEOUT;
 			while (mmcsd_command(1, 0x00, 0xF9))
 			{
 				if (timeout < mcu_millis())
 				{
-					DEBUGSTR("SD card failed CMD1");
+					LC_SD_INFO("SD:CMD1 timeout");
 					return STA_NOINIT;
 				}
 			}
@@ -530,16 +547,18 @@ DSTATUS disk_initialize(BYTE pdrv)
 		mmcsd_card.card_type = SDv1;
 	}
 
-	DEBUGSTR("SD card type is");
-	DEBUGINT(mmcsd_card.card_type);
+	LC_SD_INFO("SD:type=%u", (uint32_t)mmcsd_card.card_type);
 
 	// checks if it's high density card (if returns error retries with arg = 0)
 	disk_ioctl(pdrv, MMC_GET_OCR, resp);
 
 	if (CHECKBIT(resp[0], 6))
 	{
-		DEBUGSTR("SD card is high density");
+		LC_SD_INFO("SD:high density");
 		mmcsd_card.is_highdensity = 1;
+	}
+	else {
+		LC_SD_INFO("SD:standard density");
 	}
 
 	// turn off crc if cmd available
@@ -571,9 +590,9 @@ DSTATUS disk_initialize(BYTE pdrv)
 	mmcsd_card.size = mmcsd_card.sectors << 9;
 	mmcsd_card.initialized = 1;
 
-	DEBUGSTR("SD card size");
-	DEBUGINT(mmcsd_card.size);
+	LC_SD_INFO("SD:size=%lu sectors=%lu", (uint32_t)mmcsd_card.size, (uint32_t)mmcsd_card.sectors);
 	mmcsd_spi_speed(true);
+	LC_SD_INFO("SD:disk init ok");
 	return 0;
 }
 

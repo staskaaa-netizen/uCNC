@@ -2395,6 +2395,19 @@ typedef uint16_t step_t;
 #endif
 #endif
 
+#ifdef G33_ENCODER
+// G33 needs parser/main-loop hooks and realtime synchronized motion support.
+#ifndef ENABLE_PARSER_MODULES
+#define ENABLE_PARSER_MODULES
+#endif
+#ifndef ENABLE_MAIN_LOOP_MODULES
+#define ENABLE_MAIN_LOOP_MODULES
+#endif
+#ifndef ENABLE_RT_SYNC_MOTIONS
+#define ENABLE_RT_SYNC_MOTIONS
+#endif
+#endif
+
 #ifdef ENABLE_PLASMA_THC
 // forces modes
 #ifndef ENABLE_TOOL_PID_CONTROLLER

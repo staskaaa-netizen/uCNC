@@ -1,6 +1,8 @@
-#include "leancam_psram.h"
+#include "lvds_psram.h"
 
 #include <string.h>
+
+#include "../../cnc.h"
 
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
@@ -11,6 +13,25 @@
 
 static bool g_psram_available;
 static uint32_t g_psram_clock_hz;
+
+#ifndef LVDS_PSRAM_INIT_ATTEMPTS
+#define LVDS_PSRAM_INIT_ATTEMPTS 3
+#endif
+
+#ifndef LVDS_PSRAM_POST_INIT_DELAY_MS
+#define LVDS_PSRAM_POST_INIT_DELAY_MS 0
+#endif
+
+#ifndef LVDS_PSRAM_RETRY_DELAY_MS
+#define LVDS_PSRAM_RETRY_DELAY_MS 0
+#endif
+
+#if LVDS_PSRAM_POST_INIT_DELAY_MS > 0 || LVDS_PSRAM_RETRY_DELAY_MS > 0
+static void lvds_psram_delay_ms(uint32_t ms)
+{
+    cnc_delay_ms(ms);
+}
+#endif
 
 static void __no_inline_not_in_flash_func(psram_qmi_init)(uint cs_pin)
 {
@@ -78,7 +99,7 @@ static void __no_inline_not_in_flash_func(psram_qmi_init)(uint cs_pin)
 
 static bool psram_test(void)
 {
-    volatile uint32_t *p = (volatile uint32_t *)LC_PSRAM_BASE;
+    volatile uint32_t *p = (volatile uint32_t *)LVDS_PSRAM_BASE;
     const uint32_t old0 = p[0];
     const uint32_t old1 = p[1];
     const uint32_t a = 0x13572468u;
@@ -93,35 +114,39 @@ static bool psram_test(void)
     return ok;
 }
 
-bool lc_psram_init(void)
+bool lvds_psram_init(void)
 {
     g_psram_available = false;
     g_psram_clock_hz = 0;
 
-    for (int attempt = 0; attempt < 5; ++attempt) {
-        psram_qmi_init(LC_PSRAM_CS_PIN);
-        sleep_ms(20);
+    for (int attempt = 0; attempt < LVDS_PSRAM_INIT_ATTEMPTS; ++attempt) {
+        psram_qmi_init(LVDS_PSRAM_CS_PIN);
+#if LVDS_PSRAM_POST_INIT_DELAY_MS > 0
+        lvds_psram_delay_ms((uint32_t)LVDS_PSRAM_POST_INIT_DELAY_MS);
+#endif
         if (psram_test()) {
             g_psram_available = true;
             return true;
         }
-        sleep_ms(80);
+#if LVDS_PSRAM_RETRY_DELAY_MS > 0
+        lvds_psram_delay_ms((uint32_t)LVDS_PSRAM_RETRY_DELAY_MS);
+#endif
     }
 
     return false;
 }
 
-bool lc_psram_available(void)
+bool lvds_psram_available(void)
 {
     return g_psram_available;
 }
 
-uint32_t lc_psram_clock_hz(void)
+uint32_t lvds_psram_clock_hz(void)
 {
     return g_psram_clock_hz;
 }
 
-void *lc_psram_ptr(size_t offset)
+void *lvds_psram_ptr(size_t offset)
 {
-    return (void *)(LC_PSRAM_BASE + offset);
+    return (void *)(LVDS_PSRAM_BASE + offset);
 }

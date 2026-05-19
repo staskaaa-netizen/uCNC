@@ -77,6 +77,7 @@ extern "C"
 	bool encoder_get_index_stats(uint8_t i, int32_t *last, int32_t *min, int32_t *max, uint32_t *count);
 	bool encoder_get_index_live_delta(uint8_t i, int32_t *delta);
 	bool encoder_get_index_debug_line(uint8_t i, char *line, uint32_t line_len, uint32_t *seq);
+	void enc0_virtual_index_unarm(void);
 	int32_t enc_custom_read(uint8_t i);
 
 #ifdef __cplusplus

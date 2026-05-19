@@ -122,7 +122,7 @@ static void lc_publish_msg(const char *fmt, ...)
         va_end(ap);
     }
 
-    ui_snapshot_build_live();
+    leancam_bridge_request_render();
 }
 
 static int lc_stricmp_local(const char *a, const char *b)
@@ -685,7 +685,7 @@ static void lc_generate_selected_file_gcode(void)
     if (!leancam_files_load(in_path, &prog))
     {
         lc_set_msg("LC: load failed");
-        ui_snapshot_build_live();
+        leancam_bridge_request_render();
         return;
     }
 
@@ -694,14 +694,14 @@ static void lc_generate_selected_file_gcode(void)
     if (r != LC_GCODE_OK)
     {
         lc_set_msgf("LC: L%d %.36s", fail_line, err[0] ? err : lc_gcode_result_name(r));
-        ui_snapshot_build_live();
+        leancam_bridge_request_render();
         return;
     }
 
     if (made <= 0)
     {
         lc_set_msg("LC: no cycles");
-        ui_snapshot_build_live();
+        leancam_bridge_request_render();
         return;
     }
 
@@ -713,7 +713,7 @@ static void lc_generate_selected_file_gcode(void)
     {
         cnc_set_file_io_critical(false);
         lc_set_msg("LC: gcode open failed");
-        ui_snapshot_build_live();
+        leancam_bridge_request_render();
         return;
     }
 
@@ -763,7 +763,7 @@ static void lc_generate_selected_file_gcode(void)
     {
         (void)fs_remove(out_path);
         lc_set_msgf("LC: L%d %.36s", i + 1, err[0] ? err : lc_gcode_result_name(r));
-        ui_snapshot_build_live();
+        leancam_bridge_request_render();
         return;
     }
 
@@ -771,7 +771,11 @@ static void lc_generate_selected_file_gcode(void)
     lc_refresh_files();
     lc_set_msgf("LC: saved %s", lc_basename(out_path));
     lc_open_nc_viewer(out_path);
-    ui_snapshot_build_live();
+    leancam_bridge_request_render();
+}
+
+void __attribute__((weak)) leancam_bridge_request_render(void)
+{
 }
 
 static void lc_autosave(void)
@@ -1144,7 +1148,7 @@ void leancam_bridge_init(void)
     lc_set_msg("LC: init");
 
 #ifdef LEANCAM_RP2350_STANDALONE_DEMO
-#ifdef ENABLE_LEANCAM_RP2350_SD
+#ifdef ENABLE_SD_CARD_V2
     g_lc_mode = LC_MODE_FILES;
     g_next_file_refresh_ms = mcu_millis() + 250u;
     lc_set_msg("LC: waiting for SD");
@@ -1460,7 +1464,7 @@ static void lc_run_selected_line(void)
     {
         cnc_set_file_io_critical(false);
         lc_set_msg("LC: lrun open failed");
-        ui_snapshot_build_live();
+        leancam_bridge_request_render();
         return;
     }
 

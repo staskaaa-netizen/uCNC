@@ -11,7 +11,7 @@
 #define USE_DRAWCAN12 1
 #define USE_DRAWCAN16 1
 
-#include "leancam_hstx_config.h"
+
 
 #ifdef CONFIG_DEF_H
 #include CONFIG_DEF_H

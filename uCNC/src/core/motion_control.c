@@ -1368,7 +1368,7 @@ uint8_t mc_build_hmap(float *target, float *offset, float retract_h, motion_data
 	memcpy(hmap_offsets, new_hmap_offsets, sizeof(new_hmap_offsets));
 #ifdef H_MAPPING_EEPROM_STORE_ENABLED
 	// store the new map
-	settings_save(SETTINGS_ADDRESS_OFFSET, (uint8_t *)&g_settings, (uint8_t)sizeof(settings_t));
+	settings_save(SETTINGS_ADDRESS_OFFSET, (uint8_t *)&g_settings, (uint16_t)sizeof(settings_t));
 #endif
 
 	// print map

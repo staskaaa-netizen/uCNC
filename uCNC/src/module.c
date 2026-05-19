@@ -45,8 +45,8 @@ static FORCEINLINE void load_modules(void)
 #endif
 #ifdef LOAD_MODULES_OVERRIDE
 	LOAD_MODULES_OVERRIDE();
-#elif defined(ENABLE_LEANCAM_RP2350_HDMI)
-	LOAD_MODULE(leancam_rp2350_hdmi);
+#elif defined(ENABLE_LVDS_RENDERER)
+	LOAD_MODULE(lvds_renderer);
 #endif
 }
 

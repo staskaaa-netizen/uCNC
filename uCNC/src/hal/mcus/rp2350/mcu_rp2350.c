@@ -857,9 +857,14 @@ void mcu_spi2_config(spi_config_t config, uint32_t frequency)
 {
 	rp2350_spi2_config = config;
 	spi_deinit(SPI2_HW);
-	spi_set_baudrate(SPI2_HW, frequency);
+	spi_init(SPI2_HW, frequency);
+	gpio_set_function(SPI2_CLK_BIT, GPIO_FUNC_SPI);
+	gpio_set_function(SPI2_SDO_BIT, GPIO_FUNC_SPI);
+	gpio_set_function(SPI2_SDI_BIT, GPIO_FUNC_SPI);
+#ifdef SPI2_CS_BIT
+	gpio_init(SPI2_CS_BIT);
+#endif
 	spi_set_format(SPI2_HW, 8, ((config.mode >> 1) & 0x01), (config.mode & 0x01), SPI_MSB_FIRST);
-	mcu_spi2_init();
 }
 
 uint8_t mcu_spi2_xmit(uint8_t data)
@@ -902,7 +907,7 @@ bool mcu_spi2_bulk_transfer(const uint8_t *out, uint8_t *in, uint16_t len)
 
 			dma_channel_config c = dma_channel_get_default_config(dma_tx);
 			channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
-			channel_config_set_dreq(&c, spi_get_dreq(spi_default, true));
+			channel_config_set_dreq(&c, spi_get_dreq(SPI2_HW, true));
 			dma_channel_configure(dma_tx, &c,
 														&spi_get_hw(SPI2_HW)->dr, // write address
 														out,										 // read address
@@ -917,7 +922,7 @@ bool mcu_spi2_bulk_transfer(const uint8_t *out, uint8_t *in, uint16_t len)
 				dma_rx = dma_claim_unused_channel(true);
 				c = dma_channel_get_default_config(dma_rx);
 				channel_config_set_transfer_data_size(&c, DMA_SIZE_8);
-				channel_config_set_dreq(&c, spi_get_dreq(spi_default, false));
+				channel_config_set_dreq(&c, spi_get_dreq(SPI2_HW, false));
 				channel_config_set_read_increment(&c, false);
 				channel_config_set_write_increment(&c, true);
 				dma_channel_configure(dma_rx, &c,

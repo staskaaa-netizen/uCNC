@@ -12,8 +12,7 @@ extern "C" {
 void leancam_bridge_init(void);
 void leancam_bridge_tick(void);
 void leancam_bridge_handle_key(ui_key_t key);
-
-
+void leancam_bridge_request_render(void);
 
 /* Non-zero when LeanCam program/draft view owns process-menu keys. */
 int leancam_bridge_wants_process_menu(void);

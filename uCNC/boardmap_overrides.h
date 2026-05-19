@@ -15,10 +15,10 @@ extern "C"
 
     GPIO2/GPIO3 are reserved for the external I2C keyboard.
 
-    Reserved HDMI HSTX pins from the working Waveshare800x600 DispHSTX setup:
+    Reserved LVDS HSTX pins from the working Sharp 800x600 setup:
     D2 12/13, CLK 14/15, D1 16/17, D0 18/19.
 
-    Onboard SD socket wiring, reserved for the later uCNC SD layer:
+    Onboard SD socket wiring:
     spi1, SCK 30, MOSI/CMD 31, MISO/D0 40, CS/D3 43.
 */
 
@@ -61,8 +61,8 @@ extern "C"
 
 /* Limit inputs. */
 #define LIMIT_X_BIT 5
-#define LIMIT_Y_BIT 9
-#define LIMIT_Z_BIT 21
+#define LIMIT_Y_BIT 255
+#define LIMIT_Z_BIT 9
 
 #define LIMIT_X_PULLUP
 #define LIMIT_Y_PULLUP
@@ -78,19 +78,34 @@ extern "C"
 
 /* Simple spindle/tool outputs. */
 #define PWM0_BIT 22
-#define DOUT0_BIT 26
+#define DOUT0_BIT 255
 
 /* Activity LED. */
-#define DOUT31_BIT 255
+#define DOUT31_BIT 24
 
-/* Onboard SD socket: spi1 / uCNC SPI2, parked for now. */
-/* #define SPI2_CLK_BIT 30 */
-/* #define SPI2_SDO_BIT 31 */
-/* #define SPI2_SDI_BIT 40 */
-/* #define SPI2_CS_BIT 43 */
-/* #define SPI2_PORT 1 */
 
-/* Keep expansion features off for the RP2350 HDMI stage. */
+#define CAM_KB_GPIO_SCL 2
+
+#define CAM_KB_GPIO_SDA 3
+
+/* Onboard SD socket: spi1 / uCNC SPI2. */
+#define SPI2_CLK_BIT 30
+#define SPI2_SDO_BIT 31
+#define SPI2_SDI_BIT 40
+#define SPI2_CS_BIT 43
+#define SPI2_PORT 1
+
+/* Same onboard SD pins when sd_card_v2 uses software SPI. */
+#define DOUT30_BIT 30 /* CLK */
+#define DOUT29_BIT 31 /* MOSI */
+#define DIN29_BIT 40  /* MISO */
+#define SPI_CS_BIT 43 /* CS */
+
+#ifdef ENABLE_SD_CARD_V2
+/* SD uses the onboard socket pins above. */
+#endif
+
+/* Keep expansion features off for the RP2350 LVDS stage. */
 #define IC74HC595_COUNT 0
 #define IC74HC165_COUNT 0
 

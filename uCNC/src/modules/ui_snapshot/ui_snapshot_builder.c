@@ -35,7 +35,7 @@ SemaphoreHandle_t g_ui_snapshot_mutex = NULL;
 #endif
 
 #ifndef UI_SNAPSHOT_UPDATE_MS
-#define UI_SNAPSHOT_UPDATE_MS 30
+#define UI_SNAPSHOT_UPDATE_MS 50
 #endif
 
 static char g_ui_popup_text[UI_SNAPSHOT_POPUP_LEN] = {0};

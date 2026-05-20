@@ -113,6 +113,7 @@
 
 static volatile int32_t itp_sync_step_counter;		// step distance counter for synched motions
 static volatile uint8_t synched_motion_status;		// synched motion status/phase
+static volatile bool g33_cycle_active;				// true while G33 is preparing, waiting index, or running
 static volatile int32_t spindle_index_counter;		// spindle index pulse counter
 static int32_t spindle_index_counter_start;			// spindle index pulse initial offset when motion starts
 static volatile int32_t spindle_index_step_counter; // step distance counter when the spindle index pulses
@@ -140,6 +141,38 @@ static float motion_total_distance;
 static int32_t current_error;
 static float rpm_to_stepfeed_constant;
 static uint32_t enc_res;
+
+bool g33_els_is_active(void)
+{
+	bool active;
+	ATOMIC_CODEBLOCK
+	{
+		active = g33_cycle_active || synched_motion_status != SYNC_DISABLED;
+	}
+	return active;
+}
+
+bool g33_els_get_sync(int32_t *start_ec, uint32_t *cpr)
+{
+	bool active;
+	ATOMIC_CODEBLOCK
+	{
+		active = g33_cycle_active || synched_motion_status != SYNC_DISABLED;
+		if (start_ec)
+		{
+#ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
+			*start_ec = spindle_hw_motion_origin;
+#else
+			*start_ec = spindle_index_counter_start;
+#endif
+		}
+		if (cpr)
+		{
+			*cpr = enc_res;
+		}
+	}
+	return active;
+}
 
 #if (MCU == MCU_VIRTUAL_WIN)
 // used with the virtual emulator to simulate pulses
@@ -410,6 +443,7 @@ bool g33_exec(void *args)
 
 		// // update tool
 		// mc_update_tools(ptr->block_data);
+		g33_cycle_active = true;
 
 #ifdef TOOL_WAIT_FOR_SPEED
 		// wait for spindle to reach the desired speed
@@ -423,6 +457,7 @@ bool g33_exec(void *args)
 			if (!cnc_dotasks() || (mcu_millis() - start_spindle_time) > (DELAY_ON_RESUME_SPINDLE * 1000))
 			{
 				*(ptr->error) = STATUS_SPINDLE_RPM_ERROR;
+				g33_cycle_active = false;
 				return EVENT_HANDLED;
 			}
 		}
@@ -459,6 +494,7 @@ bool g33_exec(void *args)
 				if (!cnc_dotasks())
 				{
 					*(ptr->error) = STATUS_CRITICAL_FAIL;
+					g33_cycle_active = false;
 					return EVENT_HANDLED;
 				}
 
@@ -514,6 +550,7 @@ bool g33_exec(void *args)
 				           (unsigned long)delta_t, (unsigned long)t, (long)spindle_index_counter);
 #endif
 				*(ptr->error) = STATUS_SPINDLE_RPM_ERROR;
+				g33_cycle_active = false;
 				return EVENT_HANDLED;
 			}
 #ifdef G33_DEBUG
@@ -534,6 +571,7 @@ bool g33_exec(void *args)
 		if (index_rpm < 1)
 		{
 			*(ptr->error) = STATUS_SPINDLE_RPM_ERROR;
+			g33_cycle_active = false;
 			return EVENT_HANDLED;
 		}
 
@@ -613,6 +651,7 @@ bool g33_exec(void *args)
 		if (feed > max_feed)
 		{
 			*(ptr->error) = STATUS_MAX_STEP_RATE_EXCEEDED;
+			g33_cycle_active = false;
 			return EVENT_HANDLED;
 		}
 
@@ -715,6 +754,7 @@ bool g33_exec(void *args)
 		if (mc_line(ptr->target, ptr->block_data) != STATUS_OK)
 		{
 			*(ptr->error) = STATUS_CRITICAL_FAIL;
+			g33_cycle_active = false;
 			return EVENT_HANDLED;
 		}
 
@@ -731,6 +771,7 @@ bool g33_exec(void *args)
 			if (!cnc_dotasks())
 			{
 				*(ptr->error) = STATUS_CRITICAL_FAIL;
+				g33_cycle_active = false;
 				return EVENT_HANDLED;
 			}
 		}
@@ -749,10 +790,12 @@ bool g33_exec(void *args)
 		if (itp_sync() != STATUS_OK)
 		{
 			*(ptr->error) = STATUS_CRITICAL_FAIL;
+			g33_cycle_active = false;
 			return EVENT_HANDLED;
 		}
 
 		synched_motion_status = SYNC_DISABLED;
+		g33_cycle_active = false;
 
 // encoder_dettach_index_cb();
 #if (G33_ENCODER == ENC0)

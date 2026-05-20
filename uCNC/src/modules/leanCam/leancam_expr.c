@@ -98,6 +98,7 @@ static int lc_strip_default_expr(const char *raw,
 static int lc_resolve_value_from_line(const char *line,
                                       const char *field,
                                       const char *setup_line,
+                                      const char *tool_line,
                                       const char *this_line,
                                       char *out,
                                       uint32_t out_len,
@@ -105,6 +106,7 @@ static int lc_resolve_value_from_line(const char *line,
 
 static int lc_resolve_raw_value(const char *raw,
                                 const char *setup_line,
+                                const char *tool_line,
                                 const char *this_line,
                                 char *out,
                                 uint32_t out_len,
@@ -126,10 +128,13 @@ static int lc_resolve_raw_value(const char *raw,
     if (lc_strip_default_expr(raw, expr, sizeof(expr)))
     {
         if (strncmp(expr, "SETUP.", 6) == 0)
-            return lc_resolve_value_from_line(setup_line, expr + 6, setup_line, this_line, out, out_len, (uint8_t)(depth + 1u));
+            return lc_resolve_value_from_line(setup_line, expr + 6, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
+
+        if (strncmp(expr, "TOOL.", 5) == 0)
+            return lc_resolve_value_from_line(tool_line, expr + 5, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
 
         if (strncmp(expr, "THIS.", 5) == 0)
-            return lc_resolve_value_from_line(this_line, expr + 5, setup_line, this_line, out, out_len, (uint8_t)(depth + 1u));
+            return lc_resolve_value_from_line(this_line, expr + 5, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
 
         ui_snapshot_strcpy(out, expr, out_len);
         return out[0] != 0;
@@ -142,6 +147,7 @@ static int lc_resolve_raw_value(const char *raw,
 static int lc_resolve_value_from_line(const char *line,
                                       const char *field,
                                       const char *setup_line,
+                                      const char *tool_line,
                                       const char *this_line,
                                       char *out,
                                       uint32_t out_len,
@@ -162,7 +168,17 @@ static int lc_resolve_value_from_line(const char *line,
     if (!lc_copy_span(raw, sizeof(raw), open + 1, close))
         return 0;
 
-    return lc_resolve_raw_value(raw, setup_line, this_line, out, out_len, depth);
+    return lc_resolve_raw_value(raw, setup_line, tool_line, this_line, out, out_len, depth);
+}
+
+int leancam_expr_resolve_field_value(const char *raw,
+                                     const char *setup_line,
+                                     const char *tool_line,
+                                     const char *this_line,
+                                     char *out,
+                                     uint32_t out_len)
+{
+    return lc_resolve_raw_value(raw, setup_line, tool_line, this_line, out, out_len, 0);
 }
 
 static void lc_append_span(char *dst, uint32_t dst_len, uint32_t *pos, const char *a, const char *b)
@@ -215,6 +231,7 @@ void leancam_expr_build_draft_display(char *dst,
                                       const char *input,
                                       uint8_t active_index,
                                       const char *setup_line,
+                                      const char *tool_line,
                                       const char *this_line,
                                       uint8_t *hi_start,
                                       uint8_t *hi_end)
@@ -264,7 +281,7 @@ void leancam_expr_build_draft_display(char *dst,
         if (idx == active_index && input[0])
             ui_snapshot_strcpy(shown, input, sizeof(shown));
         else
-            (void)lc_resolve_raw_value(raw, setup_line, this_line, shown, sizeof(shown), 0);
+            (void)lc_resolve_raw_value(raw, setup_line, tool_line, this_line, shown, sizeof(shown), 0);
 
         lc_append_cstr(dst, dst_len, &pos, shown);
 
@@ -275,7 +292,7 @@ void leancam_expr_build_draft_display(char *dst,
             uint32_t old_len;
 
             old_shown[0] = 0;
-            (void)lc_resolve_raw_value(raw, setup_line, this_line, old_shown, sizeof(old_shown), 0);
+            (void)lc_resolve_raw_value(raw, setup_line, tool_line, this_line, old_shown, sizeof(old_shown), 0);
             old_len = (uint32_t)strlen(old_shown);
 
             while (min_len < old_len && pos + 1u < dst_len)

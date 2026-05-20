@@ -14,9 +14,17 @@ void leancam_expr_build_draft_display(char *dst,
                                       const char *input,
                                       uint8_t active_index,
                                       const char *setup_line,
+                                      const char *tool_line,
                                       const char *this_line,
                                       uint8_t *hi_start,
                                       uint8_t *hi_end);
+
+int leancam_expr_resolve_field_value(const char *raw,
+                                     const char *setup_line,
+                                     const char *tool_line,
+                                     const char *this_line,
+                                     char *out,
+                                     uint32_t out_len);
 
 #ifdef __cplusplus
 }

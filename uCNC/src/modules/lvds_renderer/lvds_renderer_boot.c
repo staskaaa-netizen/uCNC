@@ -68,7 +68,9 @@ DECL_MODULE(lvds_renderer)
 
 #if LEANCAM_USE_PSRAM_FB || LEANCAM_USE_PSRAM_BACKBUFFER || LEANCAM_USE_PSRAM_LIVE_SIM
     bool psram_ok = lvds_psram_init();
+#if LVDS_RENDERER_WATCHDOG_MS > 0
     watchdog_update();
+#endif
     proto_info("LVDS:psram init=%d available=%d", psram_ok ? 1 : 0,
                lvds_psram_available() ? 1 : 0);
 #else

@@ -121,7 +121,7 @@ extern "C"
 #define LVDS_HEIGHT 600
 #define LVDS_SYS_CLOCK_KHZ 280000
 #define LVDS_HSTX_PLL_KHZ 280000
-#define LVDS_HSTX_CLOCK_DIV 3
+#define LVDS_HSTX_CLOCK_DIV 2
 
 // Ascending HSTX GPIO pinout, matching lvds_hstx.c.
 
@@ -136,8 +136,8 @@ extern "C"
 
 #endif
 
-/* Single RP2350 LeanCam target: encoder/G33 + SD + LVDS renderer. */
-#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); LOAD_MODULE(lvds_renderer); })
+/* Single RP2350 LeanCam target: encoder/G33 + SD + internal flash FS + LVDS renderer. */
+#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); LOAD_MODULE(rp2350_flash_fs); LOAD_MODULE(lvds_renderer); })
 
 #ifdef __cplusplus
 }

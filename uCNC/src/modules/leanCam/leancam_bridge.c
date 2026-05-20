@@ -64,6 +64,7 @@ static bool g_files_ready = false;
 static uint32_t g_next_file_refresh_ms = 0;
 
 static void lc_open_nc_viewer(const char *path);
+static int lc_setup_line(const char **line_out);
 
 typedef struct
 {
@@ -1684,10 +1685,12 @@ static int lc_accept_active_field_bridge_owned(void)
     const char *open;
     const char *close;
     char accepted[LEANCAM_INPUT_MAX];
+    char raw[LEANCAM_INPUT_MAX];
     uint32_t n;
     uint8_t field_count;
-    bool editing_existing;
-    int replace_index;
+    int draft_index;
+    const char *setup = NULL;
+    const char *tool = NULL;
 
     if (!g_leancam_ui.draft_active) return 0;
 
@@ -1703,11 +1706,26 @@ static int lc_accept_active_field_bridge_owned(void)
     }
     else
     {
-        /* Empty input means keep existing/default text inside braces. */
+        /* Empty input accepts the current resolved value. This prevents default
+         * expressions such as (TOOL.R_DOC) from being saved into .lcam lines.
+         */
         n = (uint32_t)(close - open - 1);
-        if (n >= sizeof(accepted)) n = sizeof(accepted) - 1u;
-        memcpy(accepted, open + 1, n);
-        accepted[n] = 0;
+        if (n >= sizeof(raw)) n = sizeof(raw) - 1u;
+        memcpy(raw, open + 1, n);
+        raw[n] = 0;
+
+        if (g_leancam_ui.draft_replace_index >= 0)
+            draft_index = g_leancam_ui.draft_replace_index;
+        else
+            draft_index = g_leancam_ui.draft_insert_after + 1;
+        (void)lc_setup_line(&setup);
+        tool = lc_find_prefix_in_program(&g_leancam_ui.prog, draft_index, "TOOL|");
+        if (!leancam_expr_resolve_field_value(raw, setup, tool, g_leancam_ui.draft_line, accepted, sizeof(accepted)) ||
+            !accepted[0])
+        {
+            lc_set_msg("LC: unresolved default");
+            return 0;
+        }
     }
 
     /* IMPORTANT:
@@ -1723,9 +1741,6 @@ static int lc_accept_active_field_bridge_owned(void)
 
     lc_clear_input_buf();
 
-    editing_existing = (g_leancam_ui.draft_replace_index >= 0);
-    replace_index = g_leancam_ui.draft_replace_index;
-
     /* Braces intentionally remain in the saved .lcam line, so field_count
      * does not decrease. Advance the single bridge-owned active field index.
      * When it reaches field_count, no field is highlighted; # commits.
@@ -1734,16 +1749,6 @@ static int lc_accept_active_field_bridge_owned(void)
         g_draft_field_index++;
     else
         g_draft_field_index = field_count;
-
-    if (editing_existing &&
-        replace_index >= 0 &&
-        replace_index < g_leancam_ui.prog.count)
-    {
-        strncpy(g_leancam_ui.prog.lines[replace_index], g_leancam_ui.draft_line, MAX_LEN - 1);
-        g_leancam_ui.prog.lines[replace_index][MAX_LEN - 1] = 0;
-        g_leancam_ui.cur_line = replace_index;
-        lc_autosave();
-    }
 
     return 1;
 }
@@ -2121,6 +2126,7 @@ static void lc_snapshot_program(ui_snapshot_frame_t *f)
                                              g_leancam_ui.input_buf,
                                              g_draft_field_index,
                                              setup,
+                                             tool,
                                              g_leancam_ui.draft_line,
                                              &hi_start,
                                              &hi_end);

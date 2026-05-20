@@ -245,6 +245,13 @@ static int lc_field_float3(const char *line, const char *a, const char *b, const
     return lc_field_float(line, c, out);
 }
 
+static int lc_field_text3(const char *line, const char *a, const char *b, const char *c, char *out, unsigned out_len)
+{
+    return lc_get_field_text(line, a, out, out_len) ||
+           lc_get_field_text(line, b, out, out_len) ||
+           lc_get_field_text(line, c, out, out_len);
+}
+
 static int lc_field_tool_diameter(const char *line, float *out)
 {
     return lc_field_float3(line, "TD", "TOOL_DIAMETER", "TOOL_DIA", out) ||
@@ -1166,6 +1173,7 @@ static lc_gcode_result_t lc_run_thread(const char *line,
     float taper = 0.0f;
     float n_value = 0.0f;
     float strategy_value = 1.0f;
+    char field_text[32];
     float pass_depth;
     float last_depth = -1.0f;
     float xsafe;
@@ -1191,7 +1199,9 @@ static lc_gcode_result_t lc_run_thread(const char *line,
             !lc_field_float2(line, "D1", "OUTSIDE_DIAMETER", &d_start) &&
             has_nominal)
             d_start = nominal;
-        (void)lc_field_float3(line, "D2", "MINOR", "ID", &d_end);
+        if (lc_field_text3(line, "D2", "MINOR", "ID", field_text, sizeof(field_text)) &&
+            !lc_parse_float_text(field_text, &d_end))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "THR_OD: bad D2/MINOR");
         if (d_end <= 0.0f && has_nominal)
             d_end = nominal - (1.22687f * pitch);
     }
@@ -1201,7 +1211,9 @@ static lc_gcode_result_t lc_run_thread(const char *line,
             !lc_field_float2(line, "D1", "INSIDE_DIAMETER", &d_start) &&
             has_nominal)
             d_start = nominal - (1.08253f * pitch);
-        (void)lc_field_float3(line, "D2", "MAJOR", "OD", &d_end);
+        if (lc_field_text3(line, "D2", "MAJOR", "OD", field_text, sizeof(field_text)) &&
+            !lc_parse_float_text(field_text, &d_end))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "THR_ID: bad D2/MAJOR");
         if (d_end <= 0.0f && has_nominal)
             d_end = nominal;
     }
@@ -1215,9 +1227,20 @@ static lc_gcode_result_t lc_run_thread(const char *line,
 
     if (!lc_field_float3(line, "CLR", "CLEAR", "TOOL_CLEARANCE", &tc))
         lc_setup_float3(setup, "CLR", "CLEAR", "TOOL_CLEARANCE", 1.0f, &tc);
-    if (!lc_field_float3(line, "DOC", "J", "DEPTH_OF_CUT", &doc) &&
-        tool && !lc_field_float3(tool, "R_DOC", "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc))
+    if (lc_field_text3(line, "DOC", "J", "DEPTH_OF_CUT", field_text, sizeof(field_text)))
+    {
+        if (!lc_parse_float_text(field_text, &doc))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: bad DOC", cycle);
+    }
+    else if (tool && lc_field_text3(tool, "R_DOC", "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", field_text, sizeof(field_text)))
+    {
+        if (!lc_parse_float_text(field_text, &doc))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: bad tool R_DOC", cycle);
+    }
+    else
+    {
         doc = 0.2f;
+    }
     if (!lc_field_float2(line, "LEAD", "LEAD_IN", &lead))
         lead = pitch;
     (void)lc_field_float3(line, "TAPER", "D_TAPER", "TAPER_DIAMETER", &taper);

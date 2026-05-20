@@ -17,6 +17,14 @@
 #define LVDS_RENDERER_MS 20
 #endif
 
+#ifndef LVDS_RENDERER_AUTO_LIVE_SIM
+#define LVDS_RENDERER_AUTO_LIVE_SIM 1
+#endif
+
+#ifndef LVDS_RENDERER_LIVE_SPLIT_PANEL
+#define LVDS_RENDERER_LIVE_SPLIT_PANEL 0
+#endif
+
 #define LC_RENDER_MODE_FILES 0
 #define LC_RENDER_MODE_NC_VIEW 4
 
@@ -79,15 +87,23 @@
 #define LC_LIVE_SIM_W 680
 #define LC_LIVE_SIM_H 380
 #define LC_LIVE_SIM_PSRAM_OFFSET (512u * 1024u)
+#define LC_THREAD_FLANK_TAN30_NUM 577
+#define LC_THREAD_FLANK_TAN30_DEN 1000
+#define LC_THREAD_INSERT_TAN60_NUM 1732
+#define LC_THREAD_INSERT_TAN60_DEN 1000
 #define LC_PREVIEW_LABEL_FONT LVDS_FONT_NORMAL
 #define LC_PREVIEW_LABEL_H 18
 #define LC_LEFT_PANE_X 10
 #define LC_LEFT_PANE_W 392
 #define LC_RIGHT_PANE_X 412
 #define LC_RIGHT_PANE_W 372
-#define LC_TEXT_X (LC_RIGHT_PANE_X + 14)
+#define LC_RIGHT_CELL_X (LC_RIGHT_PANE_X - 2)
+#define LC_RIGHT_CELL_W (LC_RIGHT_PANE_W + 6)
+#define LC_TEXT_X (LC_RIGHT_PANE_X + 4)
 #define LC_PREVIEW_X (LC_LEFT_PANE_X + 14)
 #define LC_RENDER_MODE_DRAFT 3
+#define LC_RIGHT_TEXT_COLS 45
+#define LC_FOOTER_TEXT_COLS 80
 
 #ifndef lvds_renderer_LIVE_RT_X_RADIUS
 #define lvds_renderer_LIVE_RT_X_RADIUS 1
@@ -103,7 +119,14 @@ static float g_live_sim_last_x;
 static float g_live_sim_last_z;
 static bool g_live_sim_has_last;
 static bool g_live_sim_static_drawn;
+static bool g_live_sim_full_screen;
+static bool g_live_thread_z_set;
+static float g_live_thread_start_z;
+static float g_live_thread_pitch;
+static float g_live_thread_next_cut_z;
+static int g_live_thread_z_dir;
 static bool g_live_tool_rect_valid;
+static bool g_live_tool_rect_thread;
 static int g_live_tool_rect_x;
 static int g_live_tool_rect_y;
 static int g_live_tool_rect_w;
@@ -623,11 +646,23 @@ static int lc_live_sim_my(const lc_sim_view_t *view, float d)
     return lc_clampi(py, 0, LC_LIVE_SIM_H - 1);
 }
 
+static bool lc_live_line_is_thread(const char *line);
+
 static bool lc_live_sim_running(const ui_snapshot_frame_t *frame)
 {
-    //todo add here real screen switch selection matrix. ie this false does allow to see tool movenet on sim preview without removing stock. nice feature. 
-    //return false ; 
-    return frame && (frame->motion_active || (frame->state & (EXEC_RUN | EXEC_HOLD)));
+    if (!frame) {
+        return false;
+    }
+    if (frame->g33_active || frame->g33_sync_valid) {
+        return true;
+    }
+#if LVDS_RENDERER_AUTO_LIVE_SIM
+    return frame && (frame->motion_active ||
+                     (frame->state & (EXEC_RUN | EXEC_HOLD)));
+#else
+    (void)frame;
+    return false;
+#endif
 }
 
 static float lc_live_runtime_x_to_diam(float runtime_x)
@@ -644,6 +679,26 @@ static bool lc_live_sim_is_id_cycle(const ui_snapshot_frame_t *frame)
 {
     const char *line = frame ? frame->leancam_preview_line : NULL;
     return lc_is_cycle(line, "ID") || lc_is_cycle(line, "THR_ID");
+}
+
+static bool lc_live_line_is_thread(const char *line)
+{
+    if (!line || !line[0]) {
+        return false;
+    }
+    return lc_is_cycle(line, "THR_OD") ||
+           lc_is_cycle(line, "THR_ID") ||
+           lc_is_cycle(line, "THREAD") ||
+           strstr(line, "G33") != NULL ||
+           strstr(line, "g33") != NULL;
+}
+
+static bool lc_live_sim_is_threading(const ui_snapshot_frame_t *frame)
+{
+    if (!frame) {
+        return false;
+    }
+    return frame->g33_active || lc_live_line_is_thread(frame->leancam_preview_line);
 }
 
 static void lc_sim_draw_face_start_group(const lc_sim_view_t *view,
@@ -692,7 +747,7 @@ static int lc_live_doc_px(const ui_snapshot_frame_t *frame, const lc_sim_view_t 
     return lc_clampi((int)((doc * view->scale * scale_factor) + 1.5f), 4, 48);
 }
 
-static void lc_live_sim_reset(const ui_snapshot_frame_t *frame)
+static void lc_live_sim_reset(const ui_snapshot_frame_t *frame, bool full_screen)
 {
     if (!g_live_sim_mask || !frame) {
         g_live_sim_ready = false;
@@ -700,7 +755,7 @@ static void lc_live_sim_reset(const ui_snapshot_frame_t *frame)
     }
 
     lc_sim_read_setup(frame, &g_live_sim_setup);
-    lc_sim_build_view(&g_live_sim_setup, &g_live_sim_view, true);
+    lc_sim_build_view(&g_live_sim_setup, &g_live_sim_view, full_screen);
     memset(g_live_sim_mask, 0, LC_LIVE_SIM_W * LC_LIVE_SIM_H);
 
     int material_top = g_live_sim_setup.id > 0.0f ? lc_live_sim_my(&g_live_sim_view, g_live_sim_setup.id) : 0;
@@ -713,8 +768,11 @@ static void lc_live_sim_reset(const ui_snapshot_frame_t *frame)
     ui_snapshot_strcpy(g_live_sim_setup_line, frame->leancam_setup_line, sizeof(g_live_sim_setup_line));
     g_live_sim_has_last = false;
     g_live_sim_static_drawn = false;
+    g_live_thread_z_set = false;
     g_live_tool_rect_valid = false;
+    g_live_tool_rect_thread = false;
     g_live_chuck_collision_valid = false;
+    g_live_sim_full_screen = full_screen;
     g_live_sim_ready = true;
 }
 
@@ -722,7 +780,9 @@ static void lc_live_sim_force_redraw(void)
 {
     g_live_sim_has_last = false;
     g_live_sim_static_drawn = false;
+    g_live_thread_z_set = false;
     g_live_tool_rect_valid = false;
+    g_live_tool_rect_thread = false;
     g_live_chuck_collision_valid = false;
 }
 
@@ -747,10 +807,169 @@ static void lc_live_sim_remove_rect(int x1, int y1, int x2, int y2)
     }
 }
 
+static void lc_live_sim_remove_thread_front(int lane_x,
+                                            int tool_x,
+                                            int tip_y,
+                                            int h,
+                                            int dir)
+{
+    int half_h;
+    int front_x;
+
+    if (!g_live_sim_mask || !g_live_sim_ready) {
+        return;
+    }
+
+    if (h < 2) h = 2;
+    half_h = h / 2;
+    if (half_h < 1) half_h = 1;
+    front_x = dir < 0 ? tool_x : tool_x + 1;
+
+    for (int y = 0; y <= half_h; ++y) {
+        int yy = tip_y + y;
+        int span;
+        if (yy < 0 || yy >= LC_LIVE_SIM_H) {
+            continue;
+        }
+        span = (int)(((int32_t)y * LC_THREAD_FLANK_TAN30_NUM) / LC_THREAD_FLANK_TAN30_DEN);
+        if (dir < 0) {
+            lc_live_sim_remove_rect(lane_x - span, yy, front_x, yy);
+        } else {
+            lc_live_sim_remove_rect(front_x, yy, lane_x + span, yy);
+        }
+    }
+}
+
+static bool lc_live_thread_z_params(const ui_snapshot_frame_t *frame, float *start_z, float *pitch, int *dir)
+{
+    float z1 = 0.0f;
+    float z2 = 0.0f;
+    float p = 0.0f;
+    bool have_z1;
+    bool have_z2;
+
+    if (!frame) {
+        return false;
+    }
+
+    if (!lc_field_float3(frame->leancam_preview_line, "P", "PITCH", "K", &p)) {
+        return false;
+    }
+    p = lc_absf(p);
+    if (p <= 0.0f) {
+        return false;
+    }
+
+    have_z1 = lc_field_float2(frame->leancam_preview_line, "Z1", "Z_START", &z1);
+    have_z2 = lc_field_float2(frame->leancam_preview_line, "Z2", "Z_END", &z2);
+    if (!have_z1) {
+        z1 = g_live_sim_last_z;
+    }
+
+    if (start_z) *start_z = z1;
+    if (pitch) *pitch = p;
+    if (dir) {
+        if (have_z2 && z2 < z1) {
+            *dir = -1;
+        } else if (have_z2 && z2 > z1) {
+            *dir = 1;
+        } else {
+            *dir = (g_live_sim_last_z > z1) ? -1 : 1;
+        }
+    }
+    return true;
+}
+
+static bool lc_live_thread_phase_allows_cut(const ui_snapshot_frame_t *frame, float z_pos, float *cut_z)
+{
+    float start_z = 0.0f;
+    float pitch = 0.0f;
+    int dir = 1;
+
+    if (cut_z) {
+        *cut_z = z_pos;
+    }
+    if (!lc_live_thread_z_params(frame, &start_z, &pitch, &dir)) {
+        return false;
+    }
+
+    if (!g_live_thread_z_set ||
+        lc_absf(g_live_thread_start_z - start_z) > 0.0001f ||
+        lc_absf(g_live_thread_pitch - pitch) > 0.0001f ||
+        g_live_thread_z_dir != dir) {
+        g_live_thread_start_z = start_z;
+        g_live_thread_pitch = pitch;
+        g_live_thread_z_dir = dir;
+        g_live_thread_next_cut_z = start_z;
+        g_live_thread_z_set = true;
+    } else if ((dir < 0 && z_pos > start_z) ||
+               (dir > 0 && z_pos < start_z)) {
+        g_live_thread_next_cut_z = start_z;
+        return false;
+    }
+
+    if (dir < 0) {
+        if (z_pos > g_live_thread_next_cut_z) {
+            return false;
+        }
+        if (cut_z) {
+            *cut_z = g_live_thread_next_cut_z;
+        }
+        for (int guard = 0; guard < 256 && z_pos <= g_live_thread_next_cut_z; ++guard) {
+            g_live_thread_next_cut_z -= pitch;
+        }
+    } else {
+        if (z_pos < g_live_thread_next_cut_z) {
+            return false;
+        }
+        if (cut_z) {
+            *cut_z = g_live_thread_next_cut_z;
+        }
+        for (int guard = 0; guard < 256 && z_pos >= g_live_thread_next_cut_z; ++guard) {
+            g_live_thread_next_cut_z += pitch;
+        }
+    }
+
+    return true;
+}
+
+static bool lc_live_sim_cut_thread_lanes(const ui_snapshot_frame_t *frame,
+                                         int is_id,
+                                         float z0,
+                                         float z1,
+                                         int mx0,
+                                         int mx1,
+                                         int my1,
+                                         int doc_z_px,
+                                         int doc_x_px)
+{
+    float cut_z = z1;
+    int dir = 1;
+    int cut_mx;
+    int tool_front_x;
+    int flank_tip_y;
+
+    (void)z0;
+    (void)mx0;
+
+    if (!lc_live_thread_phase_allows_cut(frame, z1, &cut_z)) {
+        return false;
+    }
+    (void)lc_live_thread_z_params(frame, NULL, NULL, &dir);
+
+    cut_mx = lc_live_sim_mx(&g_live_sim_view, cut_z);
+    tool_front_x = dir < 0 ? (mx1 - doc_z_px) : (mx1 + doc_z_px);
+    flank_tip_y = is_id ? my1 : my1 + doc_x_px;
+    lc_live_sim_remove_thread_front(cut_mx, tool_front_x, flank_tip_y, doc_x_px, dir);
+
+    return true;
+}
+
 static void lc_live_sim_cut_swept_rect(const ui_snapshot_frame_t *frame, float x0, float z0, float x1, float z1)
 {
     float d0 = lc_live_runtime_x_to_diam(x0);
     float d1 = lc_live_runtime_x_to_diam(x1);
+    bool is_thread = lc_live_sim_is_threading(frame);
     int mx0 = lc_live_sim_mx(&g_live_sim_view, z0);
     int mx1 = lc_live_sim_mx(&g_live_sim_view, z1);
     int my0 = lc_live_sim_my(&g_live_sim_view, d0);
@@ -760,6 +979,21 @@ static void lc_live_sim_cut_swept_rect(const ui_snapshot_frame_t *frame, float x
     int pad = 1;
 
     if (d0 > g_live_sim_view.stock_od && d1 > g_live_sim_view.stock_od) {
+        return;
+    }
+
+    if (is_thread) {
+        int doc_z_px = lc_live_doc_px(frame, &g_live_sim_view, 1.0f);
+        int doc_x_px = lc_live_doc_px(frame, &g_live_sim_view, 0.7f);
+        (void)lc_live_sim_cut_thread_lanes(frame,
+                                           lc_live_sim_is_id_cycle(frame),
+                                           z0,
+                                           z1,
+                                           mx0,
+                                           mx1,
+                                           my1,
+                                           doc_z_px,
+                                           doc_x_px);
         return;
     }
 
@@ -791,6 +1025,13 @@ static bool lc_live_sim_context_changed(const ui_snapshot_frame_t *frame)
     }
     return strcmp(g_live_sim_line, frame->leancam_preview_line) != 0 ||
            strcmp(g_live_sim_setup_line, frame->leancam_setup_line) != 0;
+}
+
+static bool lc_live_sim_needs_reset(const ui_snapshot_frame_t *frame, bool full_screen)
+{
+    return !g_live_sim_ready ||
+           g_live_sim_full_screen != full_screen ||
+           lc_live_sim_context_changed(frame);
 }
 
 static void lc_live_sim_update_cut(const ui_snapshot_frame_t *frame)
@@ -1386,6 +1627,31 @@ static void lc_sim_draw_live_tool(const ui_snapshot_frame_t *frame, const lc_sim
     lvds_hstx_rect(zx - 7, dy - 7, 15, 15, LC_PREVIEW_TOOL_OUTLINE);
 }
 
+static void lc_live_draw_thread_tool_triangle(int tip_x, int tip_y, int w, int h, lvds_color_t fill)
+{
+    int half_h;
+    int base_x;
+
+    if (w < 2) w = 2;
+    if (h < 2) h = 2;
+
+    half_h = h / 2;
+    if (half_h < 1) half_h = 1;
+    base_x = tip_x + (int)(((int32_t)half_h * LC_THREAD_INSERT_TAN60_NUM) / LC_THREAD_INSERT_TAN60_DEN);
+    if (base_x > tip_x + w - 1) {
+        base_x = tip_x + w - 1;
+    }
+
+    for (int y = -half_h; y <= half_h; ++y) {
+        int yy = tip_y - y;
+        int from_x = tip_x + (int)(((int32_t)lc_absf((float)y) * LC_THREAD_INSERT_TAN60_NUM) / LC_THREAD_INSERT_TAN60_DEN);
+        if (from_x > base_x) {
+            from_x = base_x;
+        }
+        lvds_hstx_line(tip_x+w, yy, from_x, yy, fill);
+    }
+}
+
 static void lc_live_draw_tool(const ui_snapshot_frame_t *frame, const lc_sim_view_t *view)
 {
     float z;
@@ -1419,11 +1685,24 @@ static void lc_live_draw_tool(const ui_snapshot_frame_t *frame, const lc_sim_vie
                             LC_LIVE_BG);
     }
 
-    lvds_hstx_fill_rect(x0, y0, size, size, LC_LIVE_TOOL_MARK);
-    g_live_tool_rect_x = x0;
-    g_live_tool_rect_y = y0;
-    g_live_tool_rect_w = size;
-    g_live_tool_rect_h = size;
+    if (lc_live_sim_is_threading(frame)) {
+        int half_h = size / 2;
+        int tip_x = lc_clampi(zx, view->x0 + 2, view->x1 - size - 2);
+        int tip_y = lc_clampi(dy, view->y0 + half_h + 2, view->y1 - half_h - 2);
+        lc_live_draw_thread_tool_triangle(tip_x, tip_y, size, size, LC_LIVE_TOOL_MARK);
+        g_live_tool_rect_thread = true;
+        g_live_tool_rect_x = tip_x;
+        g_live_tool_rect_y = tip_y - half_h - 1;
+        g_live_tool_rect_w = size + 2;
+        g_live_tool_rect_h = size + 2;
+    } else {
+        lvds_hstx_fill_rect(x0, y0, size, size, LC_LIVE_TOOL_MARK);
+        g_live_tool_rect_thread = false;
+        g_live_tool_rect_x = x0;
+        g_live_tool_rect_y = y0;
+        g_live_tool_rect_w = size;
+        g_live_tool_rect_h = size;
+    }
     g_live_tool_rect_valid = true;
 }
 
@@ -1762,6 +2041,51 @@ static void draw_fullscreen_preview(const ui_snapshot_frame_t *frame)
     lc_text_clip(330, 566, frame->leancam_preview_line, 54, LC_PREVIEW_LABEL_FG, LC_PREVIEW_PANEL_BG, LVDS_FONT_SMALL);
 }
 
+static void draw_split_live_preview(const ui_snapshot_frame_t *frame)
+{
+    uint32_t t0;
+    uint32_t t1;
+    bool chuck_collision = false;
+
+    if (!g_live_sim_mask) {
+        g_live_sim_mask = lvds_psram_available() ? (uint8_t *)lvds_psram_ptr(LC_LIVE_SIM_PSRAM_OFFSET) : NULL;
+    }
+
+    if (lc_live_sim_needs_reset(frame, false)) {
+        lc_live_sim_reset(frame, false);
+    } else if (!g_live_sim_was_running) {
+        lc_live_sim_force_redraw();
+    }
+
+    t0 = mcu_micros();
+    lvds_hstx_fill_rect(LC_LEFT_PANE_X + 2, 86, LC_LEFT_PANE_W - 16, 458, LC_LIVE_BG);
+    g_prof_clear_us += mcu_micros() - t0;
+
+    if (g_live_sim_ready) {
+        chuck_collision = lc_live_tool_hits_chuck(frame, &g_live_sim_view, &g_live_sim_setup);
+        lc_live_sim_update_cut(frame);
+
+        t0 = mcu_micros();
+        lc_live_sim_draw_material();
+        t1 = mcu_micros();
+        g_live_prof_material_us = t1 - t0;
+
+        t0 = mcu_micros();
+        lvds_hstx_text(g_live_sim_view.z0_x - 12, g_live_sim_view.stock_top - 24, "Z0", LC_LIVE_LABEL_FG, LC_LIVE_PANEL_BG, LVDS_FONT_NORMAL);
+        lc_sim_draw_live_chuck(&g_live_sim_view, &g_live_sim_setup, chuck_collision);
+        lc_live_draw_tool(frame, &g_live_sim_view);
+        t1 = mcu_micros();
+        g_live_prof_overlay_us = t1 - t0;
+    } else {
+        t0 = mcu_micros();
+        lc_text_clip(LC_PREVIEW_X, 128, "Live sim needs PSRAM", 28, LC_LIVE_COLLISION, LC_LIVE_PANEL_BG, LVDS_FONT_NORMAL);
+        lc_sim_draw_preview_ex(frame, false);
+        t1 = mcu_micros();
+        g_live_prof_material_us = 0;
+        g_live_prof_overlay_us = t1 - t0;
+    }
+}
+
 static void draw_live_run_preview(const ui_snapshot_frame_t *frame)
 {
     uint32_t t0;
@@ -1772,9 +2096,8 @@ static void draw_live_run_preview(const ui_snapshot_frame_t *frame)
         g_live_sim_mask = lvds_psram_available() ? (uint8_t *)lvds_psram_ptr(LC_LIVE_SIM_PSRAM_OFFSET) : NULL;
     }
 
-    if (!g_live_sim_ready ||
-        (g_live_sim_was_running && lc_live_sim_context_changed(frame))) {
-        lc_live_sim_reset(frame);
+    if (lc_live_sim_needs_reset(frame, true)) {
+        lc_live_sim_reset(frame, true);
     } else if (!g_live_sim_was_running) {
         lc_live_sim_force_redraw();
     }
@@ -1858,6 +2181,17 @@ static const char *exec_state_text(uint8_t state)
     }
 }
 
+static const char *frame_state_text(const ui_snapshot_frame_t *frame)
+{
+    if (!frame) {
+        return "BOOT";
+    }
+    if (frame->g33_active || frame->g33_sync_valid) {
+        return "G33";
+    }
+    return exec_state_text(frame->state);
+}
+
 static void draw_perf_meter(int x, int y, lvds_color_t fg, lvds_color_t bg)
 {
     char perf[56];
@@ -1892,6 +2226,36 @@ static void draw_normal_meters_only(void)
     g_prof_footer_us = mcu_micros() - t0;
 }
 
+static void draw_normal_preview_only(const ui_snapshot_frame_t *frame)
+{
+    uint32_t t0;
+    bool split_live = lc_live_sim_running(frame) && LVDS_RENDERER_LIVE_SPLIT_PANEL;
+
+    g_prof_rows_us = 0;
+    g_prof_footer_us = 0;
+
+    t0 = mcu_micros();
+    if (!split_live) {
+        lvds_hstx_fill_rect(LC_LEFT_PANE_X + 2, 86, LC_LEFT_PANE_W - 16, 458, LC_COL_BG);
+    }
+    g_prof_clear_us = mcu_micros() - t0;
+
+    t0 = mcu_micros();
+    if (split_live) {
+        draw_split_live_preview(frame);
+    } else {
+        lc_sim_draw_preview(frame);
+    }
+    lc_text_clip(LC_PREVIEW_X, 522, frame->leancam_active_field,
+                 34, LC_COL_VALUE, LC_COL_BG, LVDS_FONT_SMALL);
+    g_prof_preview_us = mcu_micros() - t0;
+
+    t0 = mcu_micros();
+    draw_block_meter(350, 552, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
+    draw_perf_meter(610, 574, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
+    g_prof_footer_us = mcu_micros() - t0;
+}
+
 static void draw_bar(const ui_snapshot_frame_t *frame)
 {
     static bool header_bg_ready;
@@ -1916,8 +2280,8 @@ static void draw_bar(const ui_snapshot_frame_t *frame)
         lvds_hstx_fill_rect(0, 0, LVDS_HSTX_WIDTH, 42, LC_COL_TOP);
         header_bg_ready = true;
     }
-    snprintf(buf, sizeof(buf), "%-5s X:%7.3f Z:%7.3f F:%5.1f S:%u",
-             frame ? exec_state_text(frame->state) : "BOOT",
+    snprintf(buf, sizeof(buf), "%-5s X:%7.3f Z:%7.3f F:%5.1f S:%-6u   ",
+             frame_state_text(frame),
              (double)x, (double)z, (double)feed, spindle);
     lvds_hstx_text(12, 10, buf, LC_COL_TEXT, LC_COL_TOP, LVDS_FONT_LARGE);
 }
@@ -2007,6 +2371,7 @@ static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
     int i;
     int y = 86;
     int max_blocks = 7;
+    bool split_live = lc_live_sim_running(frame) && LVDS_RENDERER_LIVE_SPLIT_PANEL;
     bool compact_rows = frame->leancam_mode == LC_RENDER_MODE_FILES ||
                         frame->leancam_mode == LC_RENDER_MODE_NC_VIEW;
 
@@ -2030,25 +2395,29 @@ static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
             lvds_color_t bg = frame->leancam_line_selected[i] ? LC_COL_SELECT : LC_COL_BG;
 
             if (frame->leancam_line_selected[i]) {
-                lvds_hstx_fill_rect(LC_RIGHT_PANE_X + 8, y - 2, LC_RIGHT_PANE_W - 16, 19, bg);
-                lvds_hstx_rect(LC_RIGHT_PANE_X + 8, y - 2, LC_RIGHT_PANE_W - 16, 19, LC_COL_HI);
+                lvds_hstx_fill_rect(LC_RIGHT_CELL_X, y - 2, LC_RIGHT_CELL_W, 19, bg);
+                lvds_hstx_rect(LC_RIGHT_CELL_X, y - 2, LC_RIGHT_CELL_W, 19, LC_COL_HI);
             }
-            lc_text_clip(LC_TEXT_X, y, frame->leancam_lines[i], 43, fg, bg, LVDS_FONT_NORMAL);
+            lc_text_clip(LC_TEXT_X, y, frame->leancam_lines[i], LC_RIGHT_TEXT_COLS, fg, bg, LVDS_FONT_NORMAL);
             y += 20;
             max_rows--;
         }
         g_prof_rows_us = mcu_micros() - t0;
 
         t0 = mcu_micros();
-        lc_sim_draw_preview(frame);
+        if (split_live) {
+            draw_split_live_preview(frame);
+        } else {
+            lc_sim_draw_preview(frame);
+        }
         lc_text_clip(LC_PREVIEW_X, 522, frame->leancam_active_field,
                      34, LC_COL_VALUE, LC_COL_BG, LVDS_FONT_SMALL);
         g_prof_preview_us = mcu_micros() - t0;
 
         t0 = mcu_micros();
         lvds_hstx_fill_rect(0, 548, LVDS_HSTX_WIDTH, 52, LC_COL_FOOTER_BG);
-        lc_text_clip(12, 552, frame->leancam_message, 78, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
-        lc_text_clip(12, 574, frame->leancam_helper, 78, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+        lc_text_clip(12, 552, frame->leancam_message, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+        lc_text_clip(12, 574, frame->leancam_helper, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
         draw_block_meter(350, 552, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
         draw_perf_meter(610, 574, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
         g_prof_footer_us = mcu_micros() - t0;
@@ -2077,18 +2446,18 @@ static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
                                             &hi_start, &hi_end, 45);
             }
             if (frame->leancam_line_selected[i]) {
-                lvds_hstx_fill_rect(LC_RIGHT_PANE_X + 8, y - 3, LC_RIGHT_PANE_W - 16, 64, row_bg);
-                lvds_hstx_rect(LC_RIGHT_PANE_X + 8, y - 3, LC_RIGHT_PANE_W - 16, 64, LC_COL_HI);
+                lvds_hstx_fill_rect(LC_RIGHT_CELL_X, y - 3, LC_RIGHT_CELL_W, 64, row_bg);
+                lvds_hstx_rect(LC_RIGHT_CELL_X, y - 3, LC_RIGHT_CELL_W, 64, LC_COL_HI);
             }
-            lc_text_clip(LC_TEXT_X, y, title, 43, fg, row_bg, LVDS_FONT_NORMAL);
+            lc_text_clip(LC_TEXT_X, y, title, LC_RIGHT_TEXT_COLS, fg, row_bg, LVDS_FONT_NORMAL);
             y += 18;
-            lc_text_clip(LC_TEXT_X, y, header, 43, fg, row_bg, LVDS_FONT_NORMAL);
+            lc_text_clip(LC_TEXT_X, y, header, LC_RIGHT_TEXT_COLS, fg, row_bg, LVDS_FONT_NORMAL);
             y += 20;
             draw_value_with_highlight(LC_TEXT_X, y, value,
                                       tl.has_hi,
                                       hi_start,
                                       hi_end,
-                                      43,
+                                      LC_RIGHT_TEXT_COLS,
                                       row_bg);
             y += 26;
             //lvds_hstx_line(24, y - 10, 388, y - 10, LC_COL_PANEL);
@@ -2099,10 +2468,10 @@ static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
                 draw_value_with_highlight(LC_TEXT_X, y, frame->leancam_lines[i], true,
                                           frame->leancam_field_hi_start[i],
                                           frame->leancam_field_hi_end[i],
-                                          43,
+                                          LC_RIGHT_TEXT_COLS,
                                           LC_COL_BG);
             } else {
-                lc_text_clip(LC_TEXT_X, y, frame->leancam_lines[i], 43, fg, LC_COL_BG, LVDS_FONT_NORMAL);
+                lc_text_clip(LC_TEXT_X, y, frame->leancam_lines[i], LC_RIGHT_TEXT_COLS, fg, LC_COL_BG, LVDS_FONT_NORMAL);
             }
             y += 22;
             max_blocks--;
@@ -2111,15 +2480,19 @@ static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
     g_prof_rows_us = mcu_micros() - t0;
 
     t0 = mcu_micros();
-    lc_sim_draw_preview(frame);
+    if (split_live) {
+        draw_split_live_preview(frame);
+    } else {
+        lc_sim_draw_preview(frame);
+    }
     lc_text_clip(LC_PREVIEW_X, 522, frame->leancam_active_field,
                  34, LC_COL_VALUE, LC_COL_BG, LVDS_FONT_SMALL);
     g_prof_preview_us = mcu_micros() - t0;
 
     t0 = mcu_micros();
     lvds_hstx_fill_rect(0, 548, LVDS_HSTX_WIDTH, 52, LC_COL_FOOTER_BG);
-    lc_text_clip(12, 552, frame->leancam_message, 78, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
-    lc_text_clip(12, 574, frame->leancam_helper, 78, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+    lc_text_clip(12, 552, frame->leancam_message, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+    lc_text_clip(12, 574, frame->leancam_helper, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
     draw_block_meter(350, 552, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
     draw_perf_meter(610, 574, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
     g_prof_footer_us = mcu_micros() - t0;
@@ -2160,6 +2533,22 @@ static bool normal_body_changed(const ui_snapshot_frame_t *frame)
         return true;
     }
     return false;
+}
+
+static bool normal_preview_cursor_changed(const ui_snapshot_frame_t *frame)
+{
+    const ui_snapshot_frame_t *old = &g_normal_body_frame;
+
+    if (!g_normal_body_valid || !frame) {
+        return false;
+    }
+    if (frame->axes_valid != old->axes_valid) {
+        return true;
+    }
+    if (!frame->axes_valid) {
+        return false;
+    }
+    return frame->axis[0] != old->axis[0] || frame->axis[2] != old->axis[2];
 }
 
 static void remember_normal_body(const ui_snapshot_frame_t *frame)
@@ -2204,7 +2593,7 @@ void lvds_renderer_draw_poll(void)
         return;
     }
 
-    if (lc_live_sim_running(frame)) {
+    if (lc_live_sim_running(frame) && !LVDS_RENDERER_LIVE_SPLIT_PANEL) {
         g_normal_body_valid = false;
         lvds_hstx_direct_scanout(false);
         start_us = mcu_micros();
@@ -2220,12 +2609,16 @@ void lvds_renderer_draw_poll(void)
         draw_fullscreen_preview(frame);
     } else {
         bool body_changed = normal_body_changed(frame);
+        bool cursor_changed = normal_preview_cursor_changed(frame);
         lvds_hstx_direct_scanout(false);
         start_us = mcu_micros();
         draw_bar(frame);
         g_prof_header_us = mcu_micros() - start_us;
         if (body_changed) {
             draw_leancam_rows(frame);
+            remember_normal_body(frame);
+        } else if (cursor_changed) {
+            draw_normal_preview_only(frame);
             remember_normal_body(frame);
         } else {
             draw_normal_meters_only();

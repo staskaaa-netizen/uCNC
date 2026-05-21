@@ -1,4 +1,6 @@
 #include "lvds_renderer_state.h"
+#include "lvds_renderer.h"
+#include "lvds_hstx.h"
 
 #include "../../cnc.h"
 #include "../encoder.h"
@@ -138,6 +140,19 @@ static void lc_build_frame(ui_snapshot_frame_t *frame, uint32_t seq)
 void leancam_bridge_request_render(void)
 {
     g_lvds_frame_dirty = true;
+}
+
+void leancam_bridge_after_autosave(void)
+{
+    lvds_hstx_debug_dump("after-save");
+    lvds_hstx_debug_probe("after-save", 2000u);
+    lvds_renderer_trace_next_frames(2);
+    g_lvds_frame_dirty = true;
+}
+
+void leancam_files_debug_probe(const char *stage)
+{
+    lvds_hstx_debug_probe(stage, 500u);
 }
 
 void lvds_renderer_state_init(void)

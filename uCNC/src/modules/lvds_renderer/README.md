@@ -11,6 +11,10 @@ Current status:
 - DMA feeds prepared scanlines to HSTX
 - core0 keeps running uCNC and the LeanCam renderer
 - PSRAM draw buffer is enabled for LeanCam drawing; scanout uses SRAM
+- LeanCam UI data arrives through `ui_snapshot`; the renderer does not parse
+  files or own LeanCam editing state
+- live-run preview is visual only; it does not affect G-code execution or
+  machine safety logic
 
 PlatformIO target:
 
@@ -57,3 +61,10 @@ and rejected because it was slow and caused sync loss on the panel.
 
 Do not poll `fs_file_run_active()` from the LVDS renderer state path. On this
 RP2350 SD/LVDS setup that call can deadlock during the live renderer loop.
+
+LeanCam renderer scope:
+
+- normal editor rows and right-side stock/cycle preview
+- tool catalog preview for `TOOL|...` entries
+- full-screen live material-removal view while running/holding
+- no PROCESS or T+P catalog preview path in the current minimal model

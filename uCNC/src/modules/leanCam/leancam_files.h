@@ -20,8 +20,11 @@ bool leancam_files_busy(void);
 
 bool leancam_files_save(const char *path, const program_t *p);
 bool leancam_files_load(const char *path, program_t *p);
+void leancam_files_debug_probe(const char *stage);
 
 bool leancam_files_refresh(const char *dir);
+void leancam_files_set_show_all(bool show_all);
+bool leancam_files_show_all(void);
 int  leancam_files_count(void);
 const char *leancam_files_name(int index);
 bool leancam_files_build_path(const char *dir, int index, char *out, int out_sz);

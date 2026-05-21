@@ -1,5 +1,6 @@
 #include "../../cnc.h"
 #include "lvds_hstx.h"
+#include "../../interface/grbl_stream.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -85,6 +86,12 @@ static bool g_direct_scanout = true;
 static bool g_dirty;
 static int g_last_error;
 static volatile bool g_core1_ready;
+static volatile bool g_recover_request;
+static volatile bool g_recover_done;
+static volatile uint32_t g_core1_heartbeat;
+static volatile uint32_t g_core1_loop_count;
+static volatile uint32_t g_dma_done_count;
+static volatile uint32_t g_recover_count;
 
 static uint16_t rgb_to_565(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -247,6 +254,7 @@ static void __no_inline_not_in_flash_func(compute_active_line)(uint16_t y, uint8
 }
 
 static uint g_v_scanline = 2;
+static void init_hstx(void);
 
 static void __no_inline_not_in_flash_func(prepare_next_dma_line)(uint ch_num)
 {
@@ -283,6 +291,15 @@ static void __no_inline_not_in_flash_func(poll_dma_scanout)(void)
 
     while (1) {
         uint32_t done = dma_hw->intr & (ping_bit | pong_bit);
+        g_core1_loop_count++;
+
+        if (g_recover_request) {
+            g_recover_count++;
+            init_hstx();
+            g_recover_request = false;
+            g_recover_done = true;
+            continue;
+        }
 
         if (!done) {
             tight_loop_contents();
@@ -291,11 +308,15 @@ static void __no_inline_not_in_flash_func(poll_dma_scanout)(void)
         if (done & ping_bit) {
             dma_hw->intr = ping_bit;
             prepare_next_dma_line(LVDS_HSTX_DMACH_PING);
+            g_dma_done_count++;
+            g_core1_heartbeat++;
         }
 
         if (done & pong_bit) {
             dma_hw->intr = pong_bit;
             prepare_next_dma_line(LVDS_HSTX_DMACH_PONG);
+            g_dma_done_count++;
+            g_core1_heartbeat++;
         }
     }
 }
@@ -411,6 +432,12 @@ bool lvds_hstx_init(void)
     g_backbuffer_active = false;
     g_direct_scanout = true;
     g_dirty = false;
+    g_recover_request = false;
+    g_recover_done = false;
+    g_core1_heartbeat = 0;
+    g_core1_loop_count = 0;
+    g_dma_done_count = 0;
+    g_recover_count = 0;
 #if LEANCAM_USE_PSRAM_BACKBUFFER
     if (lvds_psram_available()) {
         g_draw_buffer = (uint8_t *)lvds_psram_ptr(0);
@@ -432,6 +459,129 @@ bool lvds_hstx_init(void)
     g_display_started = true;
     g_last_error = 0;
     lvds_hstx_clear(0);
+    return true;
+}
+
+void lvds_hstx_debug_dump(const char *tag)
+{
+    uint32_t ping_ctrl = dma_hw->ch[LVDS_HSTX_DMACH_PING].ctrl_trig;
+    uint32_t pong_ctrl = dma_hw->ch[LVDS_HSTX_DMACH_PONG].ctrl_trig;
+    uint32_t ping_count = dma_hw->ch[LVDS_HSTX_DMACH_PING].transfer_count;
+    uint32_t pong_count = dma_hw->ch[LVDS_HSTX_DMACH_PONG].transfer_count;
+    uint32_t ping_read = dma_hw->ch[LVDS_HSTX_DMACH_PING].read_addr;
+    uint32_t pong_read = dma_hw->ch[LVDS_HSTX_DMACH_PONG].read_addr;
+
+    if (!tag) {
+        tag = "?";
+    }
+
+    grbl_stream_printf(__romstr__("[MSG:HSTX %s err=%d start=%u core1=%u hb=%lu dma=%lu rec=%lu v=%lu dirty=%u direct=%u bb=%u]\r\n"),
+                       tag,
+                       g_last_error,
+                       g_display_started ? 1u : 0u,
+                       g_core1_ready ? 1u : 0u,
+                       (unsigned long)g_core1_heartbeat,
+                       (unsigned long)g_dma_done_count,
+                       (unsigned long)g_recover_count,
+                       (unsigned long)g_v_scanline,
+                       g_dirty ? 1u : 0u,
+                       g_direct_scanout ? 1u : 0u,
+                       g_backbuffer_active ? 1u : 0u);
+    grbl_stream_printf(__romstr__("[MSG:HSTX core loop=%lu]\r\n"),
+                       (unsigned long)g_core1_loop_count);
+    grbl_stream_printf(__romstr__("[MSG:HSTX regs csr=%lu fifo=%lu intr=%lu ints1=%lu inte1=%lu bus=%lu]\r\n"),
+                       (unsigned long)hstx_ctrl_hw->csr,
+                       (unsigned long)hstx_fifo_hw->stat,
+                       (unsigned long)dma_hw->intr,
+                       (unsigned long)dma_hw->ints1,
+                       (unsigned long)dma_hw->inte1,
+                       (unsigned long)bus_ctrl_hw->priority);
+    grbl_stream_printf(__romstr__("[MSG:HSTX dma ping=%lu/%lu/%lu pong=%lu/%lu/%lu]\r\n"),
+                       (unsigned long)ping_ctrl,
+                       (unsigned long)ping_count,
+                       (unsigned long)ping_read,
+                       (unsigned long)pong_ctrl,
+                       (unsigned long)pong_count,
+                       (unsigned long)pong_read);
+}
+
+void lvds_hstx_debug_probe(const char *tag, uint32_t wait_us)
+{
+    uint32_t loop0 = g_core1_loop_count;
+    uint32_t hb0 = g_core1_heartbeat;
+    uint32_t dma0 = g_dma_done_count;
+    uint32_t intr0 = dma_hw->intr;
+    uint32_t v0 = g_v_scanline;
+    uint32_t loop1;
+    uint32_t hb1;
+    uint32_t dma1;
+
+    if (!tag) {
+        tag = "?";
+    }
+    if (wait_us) {
+        busy_wait_us(wait_us);
+    }
+    loop1 = g_core1_loop_count;
+    hb1 = g_core1_heartbeat;
+    dma1 = g_dma_done_count;
+    grbl_stream_printf(__romstr__("[MSG:HSTX probe %s us=%lu loop=%lu/%lu hb=%lu/%lu dma=%lu/%lu v=%lu/%lu intr=%lu/%lu]\r\n"),
+                       tag,
+                       (unsigned long)wait_us,
+                       (unsigned long)loop0,
+                       (unsigned long)loop1,
+                       (unsigned long)hb0,
+                       (unsigned long)hb1,
+                       (unsigned long)dma0,
+                       (unsigned long)dma1,
+                       (unsigned long)v0,
+                       (unsigned long)g_v_scanline,
+                       (unsigned long)intr0,
+                       (unsigned long)dma_hw->intr);
+}
+
+bool lvds_hstx_recover(void)
+{
+    uint32_t start;
+
+    if (!g_display_started) {
+        return false;
+    }
+
+    g_recover_done = false;
+    g_recover_request = true;
+    start = mcu_millis();
+    while (!g_recover_done) {
+        if ((uint32_t)(mcu_millis() - start) > 100u) {
+            g_recover_request = false;
+            break;
+        }
+        tight_loop_contents();
+    }
+
+    if (!g_recover_done) {
+        multicore_reset_core1();
+        g_core1_ready = false;
+        g_recover_request = false;
+        g_recover_done = false;
+        g_v_scanline = 2;
+        compute_active_line(0, 0);
+        compute_active_line(1, 1);
+        compute_active_line(2, 2);
+        multicore_launch_core1(core1_entry);
+        start = mcu_millis();
+        while (!g_core1_ready) {
+            if ((uint32_t)(mcu_millis() - start) > 250u) {
+                g_last_error = -21;
+                return false;
+            }
+            tight_loop_contents();
+        }
+    }
+
+    g_display_started = true;
+    g_last_error = 0;
+    g_dirty = true;
     return true;
 }
 

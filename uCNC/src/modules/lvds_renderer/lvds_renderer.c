@@ -1,6 +1,7 @@
 #include "lvds_renderer.h"
 
 #include "../../cnc.h"
+#include "../../interface/grbl_stream.h"
 #include "../ui_snapshot/ui_snapshot.h"
 #include "lvds_hstx.h"
 #include "lvds_leancam_table.h"
@@ -105,9 +106,80 @@
 #define LC_RIGHT_TEXT_COLS 45
 #define LC_FOOTER_TEXT_COLS 80
 
+#define LC_TOOL_EDITOR_LEFT_X 24
+#define LC_TOOL_EDITOR_LEFT_W 300
+#define LC_TOOL_EDITOR_RIGHT_X 340
+#define LC_TOOL_EDITOR_RIGHT_COLS 54
+
 #ifndef lvds_renderer_LIVE_RT_X_RADIUS
 #define lvds_renderer_LIVE_RT_X_RADIUS 1
 #endif
+
+#ifndef LC_LVDS_SERIAL_DEBUG
+#define LC_LVDS_SERIAL_DEBUG 1
+#endif
+
+#if LC_LVDS_SERIAL_DEBUG
+#define LC_LVDS_DBG(fmt, ...) grbl_stream_printf(__romstr__("[MSG:LVDS " fmt "]\r\n"), ##__VA_ARGS__)
+#else
+#define LC_LVDS_DBG(fmt, ...)
+#endif
+
+static bool lc_lvds_debug_line_changed(uint32_t seq, uint8_t mode, const char *line)
+{
+    static uint8_t last_mode = 255u;
+    static char last_line[UI_LC_LINE_LEN];
+
+    (void)seq;
+    if (!line) {
+        line = "";
+    }
+    if (mode != last_mode || strcmp(line, last_line) != 0) {
+        last_mode = mode;
+        ui_snapshot_strcpy(last_line, line, sizeof(last_line));
+        return true;
+    }
+    return false;
+}
+
+static bool lc_lvds_debug_branch_changed(const char *branch)
+{
+    static char last_branch[24];
+
+    if (!branch) {
+        branch = "";
+    }
+    if (strcmp(branch, last_branch) != 0) {
+        ui_snapshot_strcpy(last_branch, branch, sizeof(last_branch));
+        return true;
+    }
+    return false;
+}
+
+static bool lc_lvds_debug_preview_changed(const char *stage, const char *line)
+{
+    static char last_line[UI_LC_LINE_LEN];
+
+    (void)stage;
+    if (!stage) {
+        stage = "";
+    }
+    if (!line) {
+        line = "";
+    }
+    if (strcmp(line, last_line) != 0) {
+        ui_snapshot_strcpy(last_line, line, sizeof(last_line));
+        return true;
+    }
+    return false;
+}
+
+static uint8_t g_trace_frames_remaining;
+
+void lvds_renderer_trace_next_frames(uint8_t count)
+{
+    g_trace_frames_remaining = count;
+}
 
 static uint32_t g_last_seq;
 static uint8_t *g_live_sim_mask;
@@ -199,7 +271,6 @@ typedef struct {
 
 static lc_sim_setup_t g_live_sim_setup;
 static lc_sim_view_t g_live_sim_view;
-
 
 static const char *lc_skip_line_number(const char *s)
 {
@@ -738,7 +809,7 @@ static int lc_live_doc_px(const ui_snapshot_frame_t *frame, const lc_sim_view_t 
     const char *line = frame ? frame->leancam_preview_line : NULL;
 
     if (!lc_field_float3(line, "DOC", "R_DOC", "ROUGH_DOC", &doc) &&
-        frame && !lc_field_float3(frame->leancam_tool_line, "R_DOC", "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc)) {
+        frame && !lc_field_float3(frame->leancam_tool_line, "DOC", "R_DOC", "ROUGH_DOC", &doc)) {
         doc = 1.0f;
     }
     if (doc < 0.2f) {
@@ -1160,7 +1231,12 @@ static void lc_sim_hatch_vline(int x, int y1, int y2)
 {
     int tmp;
 
+    if (x < LC_LEFT_PANE_X || x >= LVDS_HSTX_WIDTH) {
+        return;
+    }
     if (y2 < y1) { tmp = y1; y1 = y2; y2 = tmp; }
+    y1 = lc_clampi(y1, 42, 547);
+    y2 = lc_clampi(y2, 42, 547);
     if (y2 <= y1) {
         return;
     }
@@ -1501,6 +1577,11 @@ static void lc_sim_draw_turn_shape_preview(const lc_sim_view_t *view,
     x2 = lc_sim_zx(view, shape->z2);
     if (x2 < x1) { tmp = x1; x1 = x2; x2 = tmp; }
     if (x2 <= x1) x2 = x1 + 1;
+    x1 = lc_clampi(x1, view->x0 + 2, view->x1 - 2);
+    x2 = lc_clampi(x2, view->x0 + 2, view->x1 - 2);
+    if (x2 <= x1) x2 = x1 + 1;
+    if (x2 > view->x1 - 2) x2 = view->x1 - 2;
+    if (x2 <= x1) return;
 
     base_y = lc_sim_dy(view, shape->d1);
     hatch_step = lc_clampi(spacing > 0 ? spacing : 4, 2, 12);
@@ -1588,7 +1669,7 @@ static void lc_sim_draw_turn(const lc_sim_view_t *view,
     label_dt_y = lc_sim_dy(view, shape.dt);
 
     if (lc_field_float3(line, "DOC", "R_DOC", "ROUGH_DOC", &doc) ||
-        (frame && lc_field_float3(frame->leancam_tool_line, "R_DOC", "ROUGH_DOC", "ROUGH_DEPTH_OF_CUT", &doc))) {
+        (frame && lc_field_float3(frame->leancam_tool_line, "DOC", "R_DOC", "ROUGH_DOC", &doc))) {
         spacing = lc_sim_diam_len_px(view, doc);
     }
     if (spacing <= 0) spacing = 4;
@@ -1627,29 +1708,413 @@ static void lc_sim_draw_live_tool(const ui_snapshot_frame_t *frame, const lc_sim
     lvds_hstx_rect(zx - 7, dy - 7, 15, 15, LC_PREVIEW_TOOL_OUTLINE);
 }
 
-static void lc_live_draw_thread_tool_triangle(int tip_x, int tip_y, int w, int h, lvds_color_t fill)
+static void lc_tool_active_edges(int orient, bool *left, bool *top, bool *right, bool *bottom)
 {
-    int half_h;
-    int base_x;
+    if (left) *left = (orient == 1 || orient == 4 || orient == 7 || orient == 2 || orient == 5 || orient == 8);
+    if (top) *top = (orient == 7 || orient == 8 || orient == 9 || orient == 4 || orient == 5 || orient == 6);
+    if (right) *right = (orient == 3 || orient == 6 || orient == 9 || orient == 2 || orient == 5 || orient == 8);
+    if (bottom) *bottom = (orient == 1 || orient == 2 || orient == 3 || orient == 4 || orient == 5 || orient == 6);
+}
 
-    if (w < 2) w = 2;
-    if (h < 2) h = 2;
-
-    half_h = h / 2;
-    if (half_h < 1) half_h = 1;
-    base_x = tip_x + (int)(((int32_t)half_h * LC_THREAD_INSERT_TAN60_NUM) / LC_THREAD_INSERT_TAN60_DEN);
-    if (base_x > tip_x + w - 1) {
-        base_x = tip_x + w - 1;
+static int lc_tool_tip_corner(int orient)
+{
+    switch (orient) {
+        case 4:
+        case 7:
+        case 8:
+            return 7;
+        case 6:
+        case 9:
+            return 9;
+        case 3:
+            return 3;
+        case 1:
+        case 2:
+        default:
+            return 1;
     }
+}
 
-    for (int y = -half_h; y <= half_h; ++y) {
-        int yy = tip_y - y;
-        int from_x = tip_x + (int)(((int32_t)lc_absf((float)y) * LC_THREAD_INSERT_TAN60_NUM) / LC_THREAD_INSERT_TAN60_DEN);
-        if (from_x > base_x) {
-            from_x = base_x;
+static int lc_tool_orient_from_frame(const ui_snapshot_frame_t *frame)
+{
+    float orient;
+
+    if (frame && lc_field_float(frame->leancam_tool_line, "ORIENT", &orient)) {
+        int oi = (int)(orient + (orient >= 0.0f ? 0.5f : -0.5f));
+        if (oi >= 1 && oi <= 9) {
+            return oi;
         }
-        lvds_hstx_line(tip_x+w, yy, from_x, yy, fill);
     }
+    return 3;
+}
+
+static int lc_live_tool_edge_origin(int tip, int size, bool near_edge, bool far_edge)
+{
+    if (near_edge && far_edge) {
+        return tip - (size / 2);
+    }
+    if (near_edge) {
+        return tip;
+    }
+    if (far_edge) {
+        return tip - size + 1;
+    }
+    return tip - (size / 2);
+}
+
+static void lc_tool_marker_line(int x1, int y1, int x2, int y2, lvds_color_t color, int thick)
+{
+    if (thick > 1) {
+        lvds_hstx_line_w(x1, y1, x2, y2, color, thick);
+    } else {
+        lvds_hstx_line(x1, y1, x2, y2, color);
+    }
+}
+
+static void lc_fill_triangle(int x1, int y1,
+                             int x2, int y2,
+                             int x3, int y3,
+                             lvds_color_t color)
+{
+    int min_y = y1;
+    int max_y = y1;
+
+    if (y2 < min_y) min_y = y2;
+    if (y3 < min_y) min_y = y3;
+    if (y2 > max_y) max_y = y2;
+    if (y3 > max_y) max_y = y3;
+
+    for (int y = min_y; y <= max_y; ++y) {
+        int xs[3];
+        int n = 0;
+
+        if ((y1 <= y && y < y2) || (y2 <= y && y < y1)) {
+            xs[n++] = x1 + ((x2 - x1) * (y - y1)) / (y2 - y1);
+        }
+        if ((y2 <= y && y < y3) || (y3 <= y && y < y2)) {
+            xs[n++] = x2 + ((x3 - x2) * (y - y2)) / (y3 - y2);
+        }
+        if ((y3 <= y && y < y1) || (y1 <= y && y < y3)) {
+            xs[n++] = x3 + ((x1 - x3) * (y - y3)) / (y1 - y3);
+        }
+
+        if (n >= 2) {
+            int xa = xs[0];
+            int xb = xs[1];
+            if (xa > xb) {
+                int t = xa;
+                xa = xb;
+                xb = t;
+            }
+            lvds_hstx_fill_rect(xa, y, xb - xa + 1, 1, color);
+        }
+    }
+}
+
+static void lc_draw_tool_drill_marker(int tip_x, int tip_y, int size, int thick)
+{
+    int len = MAX(8, size / 3);
+    int half = (len * 1732) / 1000; /* 120 degree included drill point. */
+    int base_x = tip_x + len;
+    lvds_color_t fill = lvds_palette_color(yellow);
+    lvds_color_t edge = lvds_palette_color(red_bright);
+
+    lc_fill_triangle(tip_x, tip_y, base_x, tip_y - half, base_x, tip_y, fill);
+    lc_fill_triangle(tip_x, tip_y, base_x, tip_y, base_x, tip_y + half, fill);
+    lc_tool_marker_line(tip_x, tip_y, base_x, tip_y - half, edge, thick);
+    lc_tool_marker_line(tip_x, tip_y, base_x, tip_y + half, edge, thick);
+    lc_tool_marker_line(base_x, tip_y - half, base_x, tip_y + half, edge, thick);
+    lc_tool_marker_line(tip_x, tip_y, base_x, tip_y, edge, 1);
+}
+
+static void lc_tool_marker_radius(int cx, int cy, int rr, int sx, int sy, lvds_color_t color, int thick)
+{
+    int last_x = cx;
+    int last_y = cy - (sy * rr);
+
+    if (rr <= 0) {
+        return;
+    }
+
+    for (int i = 1; i <= rr; ++i) {
+        int yy = (int)(sqrtf((float)(rr * rr - i * i)) + 0.5f);
+        int px = cx - (sx * i);
+        int py = cy - (sy * yy);
+        lc_tool_marker_line(last_x, last_y, px, py, color, thick);
+        last_x = px;
+        last_y = py;
+    }
+}
+
+static void lc_tool_marker_clear_radius_outside(int x, int y, int rr, int sx, int sy, lvds_color_t relief)
+{
+    int cx = x + (sx > 0 ? rr : 0);
+    int cy = y + (sy > 0 ? rr : 0);
+
+    if (rr <= 0) {
+        return;
+    }
+
+    for (int py = y; py <= y + rr; ++py) {
+        for (int px = x; px <= x + rr; ++px) {
+            int dx = px - cx;
+            int dy = py - cy;
+            if ((dx * dx) + (dy * dy) > (rr * rr)) {
+                lvds_hstx_fill_rect(px, py, 1, 1, relief);
+            }
+        }
+    }
+}
+
+static void lc_draw_tool_marker_shape(int x,
+                                      int y,
+                                      int size,
+                                      int rr,
+                                      bool left,
+                                      bool top,
+                                      bool right,
+                                      bool bottom,
+                                      int thick,
+                                      lvds_color_t relief)
+{
+    int x2 = x + size - 1;
+    int y2 = y + size - 1;
+    int left_top = (left && top) ? rr : 0;
+    int top_right = (top && right) ? rr : 0;
+    int right_bottom = (right && bottom) ? rr : 0;
+    int bottom_left = (bottom && left) ? rr : 0;
+    lvds_color_t fill = lvds_palette_color(yellow);
+    lvds_color_t edge = lvds_palette_color(red_bright);
+
+    if (size < 2) {
+        return;
+    }
+    if (rr < 0) rr = 0;
+    if (rr > size / 2) rr = size / 2;
+
+    lvds_hstx_fill_rect(x, y, size, size, fill);
+
+    if (rr > 0) {
+        if (left && top) lc_tool_marker_clear_radius_outside(x, y, rr, 1, 1, relief);
+        if (top && right) lc_tool_marker_clear_radius_outside(x2 - rr, y, rr, -1, 1, relief);
+        if (right && bottom) lc_tool_marker_clear_radius_outside(x2 - rr, y2 - rr, rr, -1, -1, relief);
+        if (bottom && left) lc_tool_marker_clear_radius_outside(x, y2 - rr, rr, 1, -1, relief);
+    }
+
+    if (left && y + left_top <= y2 - bottom_left) {
+        lc_tool_marker_line(x, y + left_top, x, y2 - bottom_left, edge, thick);
+    }
+    if (top && x + left_top <= x2 - top_right) {
+        lc_tool_marker_line(x + left_top, y, x2 - top_right, y, edge, thick);
+    }
+    if (right && y + top_right <= y2 - right_bottom) {
+        lc_tool_marker_line(x2, y + top_right, x2, y2 - right_bottom, edge, thick);
+    }
+    if (bottom && x + bottom_left <= x2 - right_bottom) {
+        lc_tool_marker_line(x + bottom_left, y2, x2 - right_bottom, y2, edge, thick);
+    }
+
+    if (rr > 0) {
+        if (left && top) lc_tool_marker_radius(x + rr, y + rr, rr, 1, 1, edge, thick);
+        if (top && right) lc_tool_marker_radius(x2 - rr, y + rr, rr, -1, 1, edge, thick);
+        if (right && bottom) lc_tool_marker_radius(x2 - rr, y2 - rr, rr, -1, -1, edge, thick);
+        if (bottom && left) lc_tool_marker_radius(x + rr, y2 - rr, rr, 1, -1, edge, thick);
+    }
+}
+
+static void lc_draw_tool_marker_panel(const ui_snapshot_frame_t *frame, int x, int y)
+{
+    char title[48];
+    float orient_f;
+    float r = 0.0f;
+    int orient = 3;
+    int size = 34;
+    int sx = x + 26;
+    int sy = y + 20;
+    int rr = 0;
+    bool left;
+    bool top;
+    bool right;
+    bool bottom;
+
+    if (!frame || strncmp(lc_skip_line_number(frame->leancam_tool_line), "TOOL|", 5) != 0) {
+        return;
+    }
+    if (lc_field_float(frame->leancam_tool_line, "ORIENT", &orient_f)) {
+        orient = (int)(orient_f + (orient_f >= 0.0f ? 0.5f : -0.5f));
+    }
+    if (orient < 1 || orient > 9) orient = 3;
+    (void)lc_field_float(frame->leancam_tool_line, "R", &r);
+    if (r > 0.0f) rr = lc_clampi((int)(r * 7.0f + 0.5f), 1, size / 2);
+    lc_tool_active_edges(orient, &left, &top, &right, &bottom);
+
+    lvds_hstx_rect(x, y, 86, 58, LC_COL_LINE);
+    snprintf(title, sizeof(title), "O%d R%.1f", orient, (double)r);
+    lc_text_clip(x + 4, y + 4, title, 10, LC_COL_DIM, LC_COL_BG, LVDS_FONT_SMALL);
+    lc_draw_tool_marker_shape(sx, sy, size, rr, left, top, right, bottom, 1, LC_COL_BG);
+}
+
+static bool lc_frame_is_tool_asset(const ui_snapshot_frame_t *frame)
+{
+    const char *line;
+
+    if (!frame) {
+        return false;
+    }
+
+    line = lc_skip_line_number(frame->leancam_preview_line);
+    if (strncmp(line, "TOOL|", 5) == 0) {
+        return true;
+    }
+
+    return strncmp(frame->leancam_title, "Tool Catalog", 12) == 0 ||
+           strncmp(frame->leancam_title, "Tool Glyph", 10) == 0;
+}
+
+static bool lc_frame_is_catalog_asset(const ui_snapshot_frame_t *frame)
+{
+    return lc_frame_is_tool_asset(frame);
+}
+
+static void lc_draw_tool_asset_preview(const ui_snapshot_frame_t *frame)
+{
+    const char *line;
+    char buf[64];
+    float v = 0.0f;
+    float r = 0.0f;
+    float doc = 2.0f;
+    float orient_f = 3.0f;
+    int orient = 3;
+    int size;
+    int sx;
+    int sy;
+    int tip_x;
+    int tip_y;
+    int tip_corner;
+    int block_x = LC_TOOL_EDITOR_LEFT_X + 16;
+    int block_y = 112;
+    int block_w = LC_TOOL_EDITOR_LEFT_W - 32;
+    int block_h = 188;
+    int rr = 0;
+    bool left;
+    bool top;
+    bool right;
+    bool bottom;
+
+    if (!frame) {
+        return;
+    }
+
+    line = frame->leancam_tool_line[0] ? frame->leancam_tool_line : frame->leancam_preview_line;
+    if (strncmp(lc_skip_line_number(line), "TOOL|", 5) != 0) {
+        lvds_hstx_fill_rect(LC_TOOL_EDITOR_LEFT_X, 86, LC_TOOL_EDITOR_LEFT_W, 458, LC_COL_BG);
+        lc_text_clip(LC_TOOL_EDITOR_LEFT_X + 16, 128, "Select or create a TOOL asset", 34,
+                     LC_COL_DIM, LC_COL_BG, LVDS_FONT_NORMAL);
+        return;
+    }
+    (void)lc_field_float(line, "R", &r);
+    (void)lc_field_float(line, "DOC", &doc);
+    (void)lc_field_float(line, "ORIENT", &orient_f);
+    orient = (int)(orient_f + (orient_f >= 0.0f ? 0.5f : -0.5f));
+    if (orient < 1 || orient > 9) orient = 3;
+    if (doc <= 0.0f) doc = 2.0f;
+    if (r < 0.0f) r = 0.0f;
+    size = lc_clampi((int)(doc * 28.0f + 0.5f), 34, 112);
+    if (r > 0.0f) rr = lc_clampi((int)((r / doc) * (float)size + 0.5f), 1, size / 2);
+    tip_x = block_x + (block_w / 2);
+    tip_y = block_y + (block_h / 2);
+    tip_corner = lc_tool_tip_corner(orient);
+    switch (tip_corner) {
+        case 7:
+            sx = tip_x;
+            sy = tip_y;
+            break;
+        case 9:
+            sx = tip_x - size + 1;
+            sy = tip_y;
+            break;
+        case 3:
+            sx = tip_x - size + 1;
+            sy = tip_y - size + 1;
+            break;
+        case 1:
+        default:
+            sx = tip_x;
+            sy = tip_y - size + 1;
+            break;
+    }
+    lc_tool_active_edges(orient, &left, &top, &right, &bottom);
+
+    lvds_hstx_fill_rect(LC_TOOL_EDITOR_LEFT_X, 86, LC_TOOL_EDITOR_LEFT_W, 458, LC_COL_BG);
+    lvds_hstx_fill_rect(block_x, block_y, block_w, block_h, LC_PREVIEW_STOCK_FG);
+    lvds_hstx_line(block_x + 6, tip_y, block_x + block_w - 7, tip_y, LC_PREVIEW_AXIS_FG);
+    lvds_hstx_line(tip_x, block_y + 6, tip_x, block_y + block_h - 7, LC_PREVIEW_AXIS_FG);
+    lc_text_clip(tip_x + 4, block_y + 8, "X0", 4, LC_PREVIEW_AXIS_FG, LC_PREVIEW_STOCK_FG, LVDS_FONT_SMALL);
+    lc_text_clip(block_x + block_w - 28, tip_y + 4, "Z0", 4, LC_PREVIEW_AXIS_FG, LC_PREVIEW_STOCK_FG, LVDS_FONT_SMALL);
+    if (orient == 5) {
+        lc_draw_tool_drill_marker(tip_x, tip_y, size, 2);
+    } else {
+        lc_draw_tool_marker_shape(sx, sy, size, rr, left, top, right, bottom, 2, LC_PREVIEW_STOCK_FG);
+    }
+    lvds_hstx_fill_ellipse(tip_x, tip_y, 2, 2, lvds_palette_color(red_bright));
+
+    snprintf(buf, sizeof(buf), "ORIENT %d", orient);
+    lc_text_clip(LC_TOOL_EDITOR_LEFT_X + 16, 326, buf, 32, LC_COL_TEXT, LC_COL_BG, LVDS_FONT_NORMAL);
+    snprintf(buf, sizeof(buf), "DOC %5.2f     R %5.2f", (double)doc, (double)r);
+    lc_text_clip(LC_TOOL_EDITOR_LEFT_X + 16, 350, buf, 32, LC_COL_TEXT, LC_COL_BG, LVDS_FONT_NORMAL);
+    if (lc_field_float(line, "T", &v)) {
+        snprintf(buf, sizeof(buf), "T %.0f", (double)v);
+        lc_text_clip(LC_TOOL_EDITOR_LEFT_X + 16, 374, buf, 32, LC_COL_DIM, LC_COL_BG, LVDS_FONT_NORMAL);
+    }
+
+    if (frame->leancam_active_field[0]) {
+        snprintf(buf, sizeof(buf), "EDIT %s", frame->leancam_active_field);
+        lc_text_clip(LC_TOOL_EDITOR_LEFT_X + 16, 502, buf, 32, LC_COL_VALUE, LC_COL_BG, LVDS_FONT_NORMAL);
+    }
+}
+
+static void lc_draw_catalog_asset_preview(const ui_snapshot_frame_t *frame)
+{
+    if (lc_frame_is_tool_asset(frame)) {
+        lc_draw_tool_asset_preview(frame);
+    }
+}
+
+static int lc_live_tool_radius_px(const ui_snapshot_frame_t *frame, const lc_sim_view_t *view, int size)
+{
+    float r = 0.0f;
+    int px;
+
+    if (!frame || !view || !lc_field_float(frame->leancam_tool_line, "R", &r) || r <= 0.0f) {
+        return 0;
+    }
+    px = (int)(r * view->scale + 0.5f);
+    return lc_clampi(px, 1, size / 2);
+}
+
+static void lc_live_tool_active_edges(int orient, bool *left, bool *top, bool *right, bool *bottom)
+{
+    if (left) *left = (orient == 1 || orient == 4 || orient == 7 || orient == 2 || orient == 5 || orient == 8);
+    if (top) *top = (orient == 7 || orient == 8 || orient == 9 || orient == 4 || orient == 5 || orient == 6);
+    if (right) *right = (orient == 3 || orient == 6 || orient == 9 || orient == 2 || orient == 5 || orient == 8);
+    if (bottom) *bottom = (orient == 1 || orient == 2 || orient == 3 || orient == 4 || orient == 5 || orient == 6);
+}
+
+static void lc_live_draw_tool_square(const ui_snapshot_frame_t *frame,
+                                     const lc_sim_view_t *view,
+                                     int x,
+                                     int y,
+                                     int size,
+                                     int orient)
+{
+    bool left;
+    bool top;
+    bool right;
+    bool bottom;
+    int rr = lc_live_tool_radius_px(frame, view, size);
+
+    lc_live_tool_active_edges(orient, &left, &top, &right, &bottom);
+    lc_draw_tool_marker_shape(x, y, size, rr, left, top, right, bottom, 1, LC_LIVE_STOCK_FG);
 }
 
 static void lc_live_draw_tool(const ui_snapshot_frame_t *frame, const lc_sim_view_t *view)
@@ -1662,6 +2127,11 @@ static void lc_live_draw_tool(const ui_snapshot_frame_t *frame, const lc_sim_vie
     int dy;
     int x0;
     int y0;
+    int orient;
+    bool left;
+    bool top;
+    bool right;
+    bool bottom;
 
     if (!frame || !view || !frame->axes_valid) {
         return;
@@ -1673,8 +2143,11 @@ static void lc_live_draw_tool(const ui_snapshot_frame_t *frame, const lc_sim_vie
     size = lc_live_doc_px(frame, view, lc_live_sim_is_face_cycle(frame) ? 1.0f : 0.5f);
     zx = lc_sim_zx_view(view, z);
     dy = lc_sim_dy_view(view, d);
-    x0 = lc_clampi(zx, view->x0 + 2, view->x1 - size - 2);
-    y0 = lc_live_sim_is_id_cycle(frame) ? (dy - size) : dy;
+    orient = lc_tool_orient_from_frame(frame);
+    lc_live_tool_active_edges(orient, &left, &top, &right, &bottom);
+    x0 = lc_live_tool_edge_origin(zx, size, left, right);
+    y0 = lc_live_tool_edge_origin(dy, size, top, bottom);
+    x0 = lc_clampi(x0, view->x0 + 2, view->x1 - size - 2);
     y0 = lc_clampi(y0, view->y0 + 2, view->y1 - size - 2);
 
     if (g_live_tool_rect_valid) {
@@ -1685,24 +2158,12 @@ static void lc_live_draw_tool(const ui_snapshot_frame_t *frame, const lc_sim_vie
                             LC_LIVE_BG);
     }
 
-    if (lc_live_sim_is_threading(frame)) {
-        int half_h = size / 2;
-        int tip_x = lc_clampi(zx, view->x0 + 2, view->x1 - size - 2);
-        int tip_y = lc_clampi(dy, view->y0 + half_h + 2, view->y1 - half_h - 2);
-        lc_live_draw_thread_tool_triangle(tip_x, tip_y, size, size, LC_LIVE_TOOL_MARK);
-        g_live_tool_rect_thread = true;
-        g_live_tool_rect_x = tip_x;
-        g_live_tool_rect_y = tip_y - half_h - 1;
-        g_live_tool_rect_w = size + 2;
-        g_live_tool_rect_h = size + 2;
-    } else {
-        lvds_hstx_fill_rect(x0, y0, size, size, LC_LIVE_TOOL_MARK);
-        g_live_tool_rect_thread = false;
-        g_live_tool_rect_x = x0;
-        g_live_tool_rect_y = y0;
-        g_live_tool_rect_w = size;
-        g_live_tool_rect_h = size;
-    }
+    lc_live_draw_tool_square(frame, view, x0, y0, size, orient);
+    g_live_tool_rect_thread = false;
+    g_live_tool_rect_x = x0;
+    g_live_tool_rect_y = y0;
+    g_live_tool_rect_w = size;
+    g_live_tool_rect_h = size;
     g_live_tool_rect_valid = true;
 }
 
@@ -1933,19 +2394,40 @@ static void lc_sim_draw_preview_ex(const ui_snapshot_frame_t *frame, bool full_s
 
     lc_sim_read_setup(frame, &setup);
     lc_sim_build_view(&setup, &view, full_screen);
+    if (lc_lvds_debug_preview_changed("begin", frame ? frame->leancam_preview_line : "")) {
+        LC_LVDS_DBG("preview begin mode=%u fs=%u line=%.48s",
+                    frame ? (unsigned)frame->leancam_mode : 255u,
+                    full_screen ? 1u : 0u,
+                    frame ? frame->leancam_preview_line : "");
+    }
     lc_sim_draw_stock(&view, &setup);
 
     line = frame->leancam_preview_line;
     if (!line || !line[0] || lc_is_cycle(line, "SETUP")) {
         lc_sim_draw_nc_overlay(frame, &view);
         lc_sim_draw_live_tool(frame, &view);
+        if (lc_lvds_debug_preview_changed("empty", line)) {
+            LC_LVDS_DBG("preview setup/empty done");
+        }
         return;
     }
 
     if (lc_is_cycle(line, "OD")) {
+        if (lc_lvds_debug_preview_changed("OD start", line)) {
+            LC_LVDS_DBG("preview OD start");
+        }
         lc_sim_draw_turn(&view, line, frame, true);
+        if (lc_lvds_debug_preview_changed("OD done", line)) {
+            LC_LVDS_DBG("preview OD done");
+        }
     } else if (lc_is_cycle(line, "ID")) {
+        if (lc_lvds_debug_preview_changed("ID start", line)) {
+            LC_LVDS_DBG("preview ID start");
+        }
         lc_sim_draw_turn(&view, line, frame, false);
+        if (lc_lvds_debug_preview_changed("ID done", line)) {
+            LC_LVDS_DBG("preview ID done");
+        }
     } else if (lc_is_cycle(line, "FACE")) {
         float d, z1 = 0.0f, z;
         int x1, x2, y2, tmp;
@@ -2009,6 +2491,9 @@ static void lc_sim_draw_preview_ex(const ui_snapshot_frame_t *frame, bool full_s
 
     lc_sim_draw_nc_overlay(frame, &view);
     lc_sim_draw_live_tool(frame, &view);
+    if (lc_lvds_debug_preview_changed("end", line)) {
+        LC_LVDS_DBG("preview end");
+    }
 }
 
 static void lc_sim_draw_preview(const ui_snapshot_frame_t *frame)
@@ -2016,17 +2501,263 @@ static void lc_sim_draw_preview(const ui_snapshot_frame_t *frame)
     lc_sim_draw_preview_ex(frame, false);
 }
 
+static bool draw_dos_footer_menu(int x, int y, const char *text);
+static void draw_block_meter(int x, int y, lvds_color_t fg, lvds_color_t bg);
+static const char *lc_split_preview_title(const ui_snapshot_frame_t *frame);
+static void draw_value_with_highlight(int x,
+                                      int y,
+                                      const char *value,
+                                      bool has_hi,
+                                      uint8_t hi_start,
+                                      uint8_t hi_end,
+                                      int clear_cols,
+                                      lvds_color_t bg);
+static void lc_scroll_pair_to_highlight(char *header,
+                                        size_t header_sz,
+                                        char *value,
+                                        size_t value_sz,
+                                        uint8_t *hi_start,
+                                        uint8_t *hi_end,
+                                        uint8_t visible_cols);
+
+static bool lc_frame_is_fullscreen_asset_editor(const ui_snapshot_frame_t *frame)
+{
+    (void)frame;
+    return false;
+}
+
 static bool lc_should_draw_fullscreen_preview(const ui_snapshot_frame_t *frame)
 {
     if (!frame) {
         return false;
     }
-    return false;
+    return lc_frame_is_fullscreen_asset_editor(frame);
+}
+
+static void lc_asset_list_name(const char *line, char *out, size_t out_sz)
+{
+    char value[32];
+    float t = 0.0f;
+
+    if (!out || out_sz == 0) {
+        return;
+    }
+    out[0] = 0;
+    line = lc_skip_line_number(line);
+
+    (void)value;
+    (void)t;
+    {
+        const char *bar = line ? strchr(line, '|') : NULL;
+        if (bar && bar > line)
+            snprintf(out, out_sz, "%.*s", (int)(bar - line), line);
+        else
+            snprintf(out, out_sz, "%s", line ? line : "");
+    }
+}
+
+static void lc_draw_fullscreen_asset_detail_line(const ui_snapshot_frame_t *frame,
+                                                 const char *line,
+                                                 int x,
+                                                 int y,
+                                                 int cols)
+{
+    char title[64];
+    const char *p;
+    const char *bar;
+    uint8_t raw_hi_start = 0;
+    uint8_t raw_hi_end = 0;
+    int row;
+    int field_y;
+    int rows_left = 13;
+    int label_cols = 20;
+    int value_cols = cols - label_cols - 4;
+    int value_x = x + (label_cols + 2) * 8;
+    int value_w = value_cols * 8 + 8;
+
+    if (!frame || !line || !line[0]) {
+        return;
+    }
+
+    for (row = 0; row < frame->leancam_line_count && row < UI_LC_MAX_LINES; ++row) {
+        if (strcmp(line, frame->leancam_lines[row]) == 0) {
+            raw_hi_start = frame->leancam_field_hi_start[row];
+            raw_hi_end = frame->leancam_field_hi_end[row];
+            break;
+        }
+    }
+
+    bar = strchr(line, '|');
+    if (!bar) {
+        lc_text_clip(x, y, line, cols, LC_COL_TEXT, LC_COL_BG, LVDS_FONT_NORMAL);
+        return;
+    }
+
+    lc_block_title(line, title, sizeof(title));
+    lc_text_clip(x, y, title, cols, LC_COL_TEXT, LC_COL_BG, LVDS_FONT_LARGE);
+    lc_text_clip(x, y + 36, "FIELD", label_cols, LC_COL_DIM, LC_COL_BG, LVDS_FONT_NORMAL);
+    lc_text_clip(value_x, y + 36, "VALUE", value_cols, LC_COL_DIM, LC_COL_BG, LVDS_FONT_NORMAL);
+    lvds_hstx_line(x, y + 56, x + cols * 8, y + 56, LC_COL_LINE);
+
+    p = bar + 1;
+    field_y = y + 70;
+    while (*p && rows_left > 0) {
+        const char *next_bar = strchr(p, '|');
+        const char *open;
+        const char *close;
+        const char *name_end;
+        char name[40];
+        char val[48];
+        int name_len;
+        int val_len = 0;
+        int tok_start = (int)(p - line);
+        int tok_end;
+        int val_start = -1;
+        int val_end = -1;
+        bool selected;
+
+        if (!next_bar) {
+            next_bar = p + strlen(p);
+        }
+        tok_end = (int)(next_bar - line);
+        open = memchr(p, '{', (size_t)(next_bar - p));
+        close = open ? memchr(open, '}', (size_t)(next_bar - open)) : NULL;
+        name_end = open ? open : next_bar;
+
+        name_len = (int)(name_end - p);
+        while (name_len > 0 && p[name_len - 1] == ' ') {
+            name_len--;
+        }
+        if (name_len >= (int)sizeof(name)) {
+            name_len = (int)sizeof(name) - 1;
+        }
+        if (name_len < 0) {
+            name_len = 0;
+        }
+        memcpy(name, p, (size_t)name_len);
+        name[name_len] = 0;
+
+        val[0] = 0;
+        if (open && close && close > open) {
+            val_len = (int)(close - open - 1);
+            if (val_len >= (int)sizeof(val)) {
+                val_len = (int)sizeof(val) - 1;
+            }
+            if (val_len < 0) {
+                val_len = 0;
+            }
+            memcpy(val, open + 1, (size_t)val_len);
+            val[val_len] = 0;
+            val_start = (int)((open + 1) - line);
+            val_end = (int)(close - line);
+        }
+
+        selected = raw_hi_end > raw_hi_start &&
+                   (((int)raw_hi_start < tok_end && (int)raw_hi_end > tok_start) ||
+                    (val_end > val_start && (int)raw_hi_start < val_end && (int)raw_hi_end > val_start));
+        if (!selected && frame->leancam_active_field[0] && strcmp(frame->leancam_active_field, name) == 0) {
+            selected = true;
+        }
+
+        if (selected) {
+            lvds_hstx_fill_rect(x - 4, field_y - 3, cols * 8 + 8, 22, LC_COL_SELECT);
+            lvds_hstx_rect(x - 4, field_y - 3, cols * 8 + 8, 22, LC_COL_HI);
+            lvds_hstx_fill_rect(value_x - 4, field_y - 3, value_w, 22, LC_COL_HI);
+            lvds_hstx_rect(value_x - 4, field_y - 3, value_w, 22, LC_COL_VALUE);
+        }
+        lc_text_clip(x, field_y, name, label_cols, selected ? LC_COL_HI : LC_COL_DIM,
+                     selected ? LC_COL_SELECT : LC_COL_BG, LVDS_FONT_NORMAL);
+        lc_text_clip(value_x, field_y, val, value_cols, selected ? LC_COL_BG : LC_COL_VALUE,
+                     selected ? LC_COL_HI : LC_COL_BG, LVDS_FONT_NORMAL);
+
+        field_y += 26;
+        rows_left--;
+
+        if (*next_bar != '|') {
+            break;
+        }
+        p = next_bar + 1;
+    }
+}
+
+static void draw_fullscreen_asset_editor(const ui_snapshot_frame_t *frame)
+{
+    uint32_t t0;
+    int i;
+    int y = 104;
+    int max_rows = 18;
+    const char *detail_line = NULL;
+    const int list_x = LC_TOOL_EDITOR_LEFT_X;
+    const int list_w = LC_TOOL_EDITOR_LEFT_W;
+    const int detail_x = LC_TOOL_EDITOR_RIGHT_X;
+    const int detail_cols = LC_TOOL_EDITOR_RIGHT_COLS;
+
+    if (!frame) {
+        return;
+    }
+
+    g_prof_rows_us = 0;
+    g_prof_preview_us = 0;
+    g_prof_footer_us = 0;
+
+    t0 = mcu_micros();
+    lvds_hstx_fill_rect(0, 42, LVDS_HSTX_WIDTH, 558, LC_COL_BG);
+    lc_text_clip(24, 62, lc_split_preview_title(frame), 26, LC_COL_TEXT, LC_COL_BG, LVDS_FONT_LARGE);
+    lc_text_clip(detail_x, 66, frame->leancam_title, 30, LC_COL_DIM, LC_COL_BG, LVDS_FONT_NORMAL);
+    lvds_hstx_line(list_x + list_w + 16, 88, list_x + list_w + 16, 520, LC_COL_LINE);
+    g_prof_clear_us = mcu_micros() - t0;
+
+    t0 = mcu_micros();
+    for (i = 0; i < frame->leancam_line_count && i < UI_LC_MAX_LINES && max_rows > 0; ++i) {
+        lvds_color_t fg = frame->leancam_line_selected[i] ? LC_COL_HI : LC_COL_TEXT;
+        lvds_color_t bg = frame->leancam_line_selected[i] ? LC_COL_SELECT : LC_COL_BG;
+        char name[48];
+        const char *name_line = frame->leancam_lines[i];
+
+        if (frame->leancam_line_selected[i]) {
+            detail_line = frame->leancam_lines[i];
+            lvds_hstx_fill_rect(list_x, y - 3, list_w, 22, bg);
+            lvds_hstx_rect(list_x, y - 3, list_w, 22, LC_COL_HI);
+        }
+
+        lc_asset_list_name(name_line, name, sizeof(name));
+        lc_text_clip(list_x + 6, y, name, 25, fg, bg, LVDS_FONT_NORMAL);
+
+        y += 22;
+        max_rows--;
+    }
+    if (!detail_line && frame->leancam_preview_line[0]) {
+        detail_line = frame->leancam_preview_line;
+    }
+    lc_draw_fullscreen_asset_detail_line(frame, detail_line, detail_x, 128, detail_cols);
+    g_prof_rows_us = mcu_micros() - t0;
+
+    t0 = mcu_micros();
+    if (frame->leancam_active_field[0]) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "EDIT %s", frame->leancam_active_field);
+        lc_text_clip(detail_x, 500, buf, 42, LC_COL_VALUE, LC_COL_BG, LVDS_FONT_NORMAL);
+    }
+    g_prof_preview_us = mcu_micros() - t0;
+
+    t0 = mcu_micros();
+    lvds_hstx_fill_rect(0, 548, LVDS_HSTX_WIDTH, 52, LC_COL_FOOTER_BG);
+    lc_text_clip(12, 552, frame->leancam_message, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+    if (!draw_dos_footer_menu(12, 574, frame->leancam_helper)) {
+        lc_text_clip(12, 574, frame->leancam_helper, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+    }
+    draw_block_meter(350, 552, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
+    g_prof_footer_us = mcu_micros() - t0;
 }
 
 static void draw_fullscreen_preview(const ui_snapshot_frame_t *frame)
 {
     char buf[96];
+
+    if (lc_frame_is_fullscreen_asset_editor(frame)) {
+        draw_fullscreen_asset_editor(frame);
+        return;
+    }
 
     lvds_hstx_fill_rect(0, 42, LVDS_HSTX_WIDTH, 558, LC_PREVIEW_BG);
     lvds_hstx_rect(12, 56, 776, 500, LC_PREVIEW_FRAME_FG);
@@ -2162,6 +2893,9 @@ static const char *lc_split_preview_title(const ui_snapshot_frame_t *frame)
     if (frame && (frame->leancam_mode == LC_RENDER_MODE_FILES || frame->leancam_mode == 1)) {
         return "File manager";
     }
+    if (lc_frame_is_tool_asset(frame)) {
+        return "Tool editor";
+    }
     if (frame && frame->leancam_mode == LC_RENDER_MODE_NC_VIEW) {
         return "G code edit";
     }
@@ -2202,6 +2936,102 @@ static void draw_perf_meter(int x, int y, lvds_color_t fg, lvds_color_t bg)
     lc_text_clip(x, y, perf, 22, fg, bg, LVDS_FONT_SMALL);
 }
 
+static bool draw_dos_footer_menu(int x, int y, const char *text)
+{
+    char field[24];
+    char key[8];
+    char label[24];
+    const char *p;
+    int i;
+    int fields = 1;
+    int field_w;
+    int key_w;
+    int label_x;
+    int button_x;
+    int button_w;
+    lvds_color_t button_bg = lvds_palette_color(white_warm);
+    lvds_color_t button_fg = lvds_palette_color(black);
+    lvds_color_t button_shadow = lvds_palette_color(gray_96);
+    lvds_color_t key_fg = LC_COL_FOOTER_TEXT;
+
+    if (!text || !text[0]) {
+        return false;
+    }
+
+    for (p = text; *p; ++p) {
+        if (*p == '|') {
+            fields++;
+        }
+    }
+    if (fields < 2 || fields > 10) {
+        return false;
+    }
+    field_w = (LVDS_HSTX_WIDTH - (x * 2)) / fields;
+
+    p = text;
+    for (i = 0; i < fields; ++i) {
+        const char *bar = strchr(p, '|');
+        const char *space;
+        size_t len = bar ? (size_t)(bar - p) : strlen(p);
+        if (!p[0] || len == 0 || len >= sizeof(field)) {
+            return false;
+        }
+        if (i < fields - 1 && !bar) {
+            return false;
+        }
+        memcpy(field, p, len);
+        field[len] = 0;
+
+        key[0] = 0;
+        label[0] = 0;
+        space = strchr(field, ' ');
+        if (space && space > field) {
+            size_t key_len = (size_t)(space - field);
+            size_t label_len;
+            if (key_len >= sizeof(key)) {
+                key_len = sizeof(key) - 1u;
+            }
+            memcpy(key, field, key_len);
+            key[key_len] = 0;
+            while (*space == ' ') {
+                space++;
+            }
+            label_len = strlen(space);
+            if (label_len >= sizeof(label)) {
+                label_len = sizeof(label) - 1u;
+            }
+            memcpy(label, space, label_len);
+            label[label_len] = 0;
+        } else {
+            ui_snapshot_strcpy(label, field, sizeof(label));
+        }
+
+        label_x = x + (i * field_w);
+        if (key[0]) {
+            lc_text_clip(label_x, y + 3, key, 3, key_fg, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+            key_w = lvds_hstx_text_width(key, LVDS_FONT_NORMAL) + 4;
+        } else {
+            key_w = 0;
+        }
+
+        button_x = label_x + key_w;
+        button_w = field_w - key_w - 3;
+        if (button_w < 16) {
+            button_w = field_w - 3;
+            button_x = label_x;
+        }
+        lvds_hstx_fill_rect(button_x, y, button_w, 22, button_bg);
+        lvds_hstx_line(button_x, y + 21, button_x + button_w - 1, y + 21, button_shadow);
+        lvds_hstx_line(button_x + button_w - 1, y, button_x + button_w - 1, y + 21, button_shadow);
+        lc_text_clip(button_x + 4, y + 3, label, (button_w - 8) / 8,
+                     button_fg, button_bg, LVDS_FONT_NORMAL);
+
+        p = bar ? (bar + 1) : "";
+    }
+
+    return true;
+}
+
 static void draw_block_meter(int x, int y, lvds_color_t fg, lvds_color_t bg)
 {
     char perf[80];
@@ -2222,7 +3052,105 @@ static void draw_normal_meters_only(void)
     g_prof_rows_us = 0;
     g_prof_preview_us = 0;
     draw_block_meter(350, 552, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
-    draw_perf_meter(610, 574, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
+    g_prof_footer_us = mcu_micros() - t0;
+}
+
+static void draw_tool_editor_rows(const ui_snapshot_frame_t *frame)
+{
+    uint32_t t0;
+    int i;
+    int y = 86;
+    int max_blocks = 7;
+    const int right_x = LC_TOOL_EDITOR_RIGHT_X;
+    const int right_cols = LC_TOOL_EDITOR_RIGHT_COLS;
+    const int right_cell_x = LC_TOOL_EDITOR_RIGHT_X - 2;
+    const int right_cell_w = (LVDS_HSTX_WIDTH - LC_TOOL_EDITOR_RIGHT_X - 16);
+
+    g_prof_clear_us = 0;
+    g_prof_rows_us = 0;
+    g_prof_preview_us = 0;
+    g_prof_footer_us = 0;
+
+    t0 = mcu_micros();
+    lvds_hstx_fill_rect(0, 42, LVDS_HSTX_WIDTH, 558, LC_COL_BG);
+    lvds_hstx_fill_rect(LC_TOOL_EDITOR_LEFT_X + LC_TOOL_EDITOR_LEFT_W, 58, 2, 474, LC_COL_LINE);
+    lc_text_clip(LC_TOOL_EDITOR_LEFT_X, 64, "Tool editor", 18, LC_COL_TEXT, LC_COL_BG, LVDS_FONT_LARGE);
+    g_prof_clear_us = mcu_micros() - t0;
+
+    t0 = mcu_micros();
+    for (i = 0; i < frame->leancam_line_count && i < UI_LC_MAX_LINES && max_blocks > 0; ++i) {
+        lvds_lc_table_line_t tl;
+        lvds_color_t fg = frame->leancam_line_selected[i] ? LC_COL_HI : LC_COL_TEXT;
+        char title[64];
+
+        lvds_lc_build_table_line(frame, i, &tl);
+        if (tl.table_like) {
+            lvds_color_t row_bg = frame->leancam_line_selected[i] ? LC_COL_SELECT : LC_COL_BG;
+            char header[UI_LC_LINE_LEN];
+            char value[UI_LC_LINE_LEN];
+            uint8_t hi_start;
+            uint8_t hi_end;
+
+            lc_block_title(frame->leancam_lines[i], title, sizeof(title));
+            ui_snapshot_strcpy(header, lc_table_without_block_name(tl.header), sizeof(header));
+            ui_snapshot_strcpy(value, lc_table_without_block_name(tl.value), sizeof(value));
+            hi_start = tl.hi_start > 11 ? (uint8_t)(tl.hi_start - 11) : 0;
+            hi_end = tl.hi_end > 11 ? (uint8_t)(tl.hi_end - 11) : 0;
+            if (tl.has_hi) {
+                lc_scroll_pair_to_highlight(header, sizeof(header), value, sizeof(value),
+                                            &hi_start, &hi_end, right_cols);
+            }
+            if (frame->leancam_line_selected[i]) {
+                lvds_hstx_fill_rect(right_cell_x, y - 3, right_cell_w, 64, row_bg);
+                lvds_hstx_rect(right_cell_x, y - 3, right_cell_w, 64, LC_COL_HI);
+            }
+            lc_text_clip(right_x, y, title, right_cols, fg, row_bg, LVDS_FONT_NORMAL);
+            y += 18;
+            lc_text_clip(right_x, y, header, right_cols, fg, row_bg, LVDS_FONT_NORMAL);
+            y += 20;
+            draw_value_with_highlight(right_x, y, value,
+                                      tl.has_hi,
+                                      hi_start,
+                                      hi_end,
+                                      right_cols,
+                                      row_bg);
+            y += 26;
+        } else {
+            bool has_hi = frame->leancam_field_hi_end[i] > frame->leancam_field_hi_start[i];
+            if (frame->leancam_line_selected[i]) {
+                lvds_hstx_fill_rect(right_cell_x, y - 3, right_cell_w, 22, LC_COL_SELECT);
+                lvds_hstx_rect(right_cell_x, y - 3, right_cell_w, 22, LC_COL_HI);
+            }
+            if (has_hi) {
+                draw_value_with_highlight(right_x, y, frame->leancam_lines[i], true,
+                                          frame->leancam_field_hi_start[i],
+                                          frame->leancam_field_hi_end[i],
+                                          right_cols,
+                                          frame->leancam_line_selected[i] ? LC_COL_SELECT : LC_COL_BG);
+            } else {
+                lc_text_clip(right_x, y, frame->leancam_lines[i], right_cols, fg,
+                             frame->leancam_line_selected[i] ? LC_COL_SELECT : LC_COL_BG,
+                             LVDS_FONT_NORMAL);
+            }
+            y += 22;
+        }
+        max_blocks--;
+    }
+    g_prof_rows_us = mcu_micros() - t0;
+
+    t0 = mcu_micros();
+    lc_draw_catalog_asset_preview(frame);
+    lc_text_clip(LC_TOOL_EDITOR_LEFT_X + 16, 522, frame->leancam_active_field,
+                 34, LC_COL_VALUE, LC_COL_BG, LVDS_FONT_SMALL);
+    g_prof_preview_us = mcu_micros() - t0;
+
+    t0 = mcu_micros();
+    lvds_hstx_fill_rect(0, 548, LVDS_HSTX_WIDTH, 52, LC_COL_FOOTER_BG);
+    lc_text_clip(12, 552, frame->leancam_message, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+    if (!draw_dos_footer_menu(12, 574, frame->leancam_helper)) {
+        lc_text_clip(12, 574, frame->leancam_helper, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+    }
+    draw_block_meter(350, 552, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
     g_prof_footer_us = mcu_micros() - t0;
 }
 
@@ -2243,6 +3171,8 @@ static void draw_normal_preview_only(const ui_snapshot_frame_t *frame)
     t0 = mcu_micros();
     if (split_live) {
         draw_split_live_preview(frame);
+    } else if (lc_frame_is_catalog_asset(frame)) {
+        lc_draw_catalog_asset_preview(frame);
     } else {
         lc_sim_draw_preview(frame);
     }
@@ -2252,7 +3182,6 @@ static void draw_normal_preview_only(const ui_snapshot_frame_t *frame)
 
     t0 = mcu_micros();
     draw_block_meter(350, 552, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
-    draw_perf_meter(610, 574, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
     g_prof_footer_us = mcu_micros() - t0;
 }
 
@@ -2284,6 +3213,7 @@ static void draw_bar(const ui_snapshot_frame_t *frame)
              frame_state_text(frame),
              (double)x, (double)z, (double)feed, spindle);
     lvds_hstx_text(12, 10, buf, LC_COL_TEXT, LC_COL_TOP, LVDS_FONT_LARGE);
+    draw_perf_meter(626, 28, LC_COL_TEXT, LC_COL_TOP);
 }
 
 static void draw_value_with_highlight(int x, int y, const char *value,
@@ -2375,6 +3305,11 @@ static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
     bool compact_rows = frame->leancam_mode == LC_RENDER_MODE_FILES ||
                         frame->leancam_mode == LC_RENDER_MODE_NC_VIEW;
 
+    if (lc_frame_is_catalog_asset(frame)) {
+        draw_tool_editor_rows(frame);
+        return;
+    }
+
     g_prof_clear_us = 0;
     g_prof_rows_us = 0;
     g_prof_preview_us = 0;
@@ -2407,8 +3342,13 @@ static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
         t0 = mcu_micros();
         if (split_live) {
             draw_split_live_preview(frame);
+        } else if (lc_frame_is_catalog_asset(frame)) {
+            lc_draw_catalog_asset_preview(frame);
         } else {
             lc_sim_draw_preview(frame);
+        }
+        if (!lc_frame_is_catalog_asset(frame)) {
+            lc_draw_tool_marker_panel(frame, LC_PREVIEW_X + 280, 466);
         }
         lc_text_clip(LC_PREVIEW_X, 522, frame->leancam_active_field,
                      34, LC_COL_VALUE, LC_COL_BG, LVDS_FONT_SMALL);
@@ -2417,9 +3357,10 @@ static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
         t0 = mcu_micros();
         lvds_hstx_fill_rect(0, 548, LVDS_HSTX_WIDTH, 52, LC_COL_FOOTER_BG);
         lc_text_clip(12, 552, frame->leancam_message, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
-        lc_text_clip(12, 574, frame->leancam_helper, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+        if (!draw_dos_footer_menu(12, 574, frame->leancam_helper)) {
+            lc_text_clip(12, 574, frame->leancam_helper, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+        }
         draw_block_meter(350, 552, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
-        draw_perf_meter(610, 574, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
         g_prof_footer_us = mcu_micros() - t0;
         return;
     }
@@ -2482,8 +3423,13 @@ static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
     t0 = mcu_micros();
     if (split_live) {
         draw_split_live_preview(frame);
+    } else if (lc_frame_is_catalog_asset(frame)) {
+        lc_draw_catalog_asset_preview(frame);
     } else {
         lc_sim_draw_preview(frame);
+    }
+    if (!lc_frame_is_catalog_asset(frame)) {
+        lc_draw_tool_marker_panel(frame, LC_PREVIEW_X + 280, 466);
     }
     lc_text_clip(LC_PREVIEW_X, 522, frame->leancam_active_field,
                  34, LC_COL_VALUE, LC_COL_BG, LVDS_FONT_SMALL);
@@ -2492,9 +3438,10 @@ static void draw_leancam_rows(const ui_snapshot_frame_t *frame)
     t0 = mcu_micros();
     lvds_hstx_fill_rect(0, 548, LVDS_HSTX_WIDTH, 52, LC_COL_FOOTER_BG);
     lc_text_clip(12, 552, frame->leancam_message, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_VALUE, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
-    lc_text_clip(12, 574, frame->leancam_helper, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+    if (!draw_dos_footer_menu(12, 574, frame->leancam_helper)) {
+        lc_text_clip(12, 574, frame->leancam_helper, LC_FOOTER_TEXT_COLS, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG, LVDS_FONT_NORMAL);
+    }
     draw_block_meter(350, 552, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
-    draw_perf_meter(610, 574, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);
     g_prof_footer_us = mcu_micros() - t0;
 }
 
@@ -2581,6 +3528,7 @@ void lvds_renderer_draw_poll(void)
     uint32_t start_us;
     uint32_t draw_us;
     uint32_t end_us;
+    bool trace_frame;
 
     if ((uint32_t)(now - last_ms) < LVDS_RENDERER_MS) {
         return;
@@ -2592,6 +3540,24 @@ void lvds_renderer_draw_poll(void)
     if (!frame || !ui_snapshot_has_newer_seq(seq, g_last_seq)) {
         return;
     }
+    trace_frame = g_trace_frames_remaining > 0u;
+    if (trace_frame) {
+        g_trace_frames_remaining--;
+        LC_LVDS_DBG("trace frame begin seq=%lu mode=%u body=%u dirty_trace=%u preview=%.48s",
+                    (unsigned long)seq,
+                    (unsigned)frame->leancam_mode,
+                    (unsigned)frame->leancam_line_count,
+                    (unsigned)g_trace_frames_remaining,
+                    frame->leancam_preview_line);
+        lvds_hstx_debug_dump("trace-before-draw");
+    }
+    if (lc_lvds_debug_line_changed(seq, frame->leancam_mode, frame->leancam_preview_line)) {
+        LC_LVDS_DBG("poll seq=%lu mode=%u body=%u preview=%.48s",
+                    (unsigned long)seq,
+                    (unsigned)frame->leancam_mode,
+                    (unsigned)frame->leancam_line_count,
+                    frame->leancam_preview_line);
+    }
 
     if (lc_live_sim_running(frame) && !LVDS_RENDERER_LIVE_SPLIT_PANEL) {
         g_normal_body_valid = false;
@@ -2599,6 +3565,7 @@ void lvds_renderer_draw_poll(void)
         start_us = mcu_micros();
         draw_bar(frame);
         g_prof_header_us = mcu_micros() - start_us;
+        if (lc_lvds_debug_branch_changed("live")) LC_LVDS_DBG("branch live");
         draw_live_run_preview(frame);
     } else if (lc_should_draw_fullscreen_preview(frame)) {
         g_normal_body_valid = false;
@@ -2606,18 +3573,29 @@ void lvds_renderer_draw_poll(void)
         start_us = mcu_micros();
         draw_bar(frame);
         g_prof_header_us = mcu_micros() - start_us;
+        if (lc_lvds_debug_branch_changed("fullscreen")) LC_LVDS_DBG("branch fullscreen");
         draw_fullscreen_preview(frame);
     } else {
         bool body_changed = normal_body_changed(frame);
         bool cursor_changed = normal_preview_cursor_changed(frame);
+        if (trace_frame) {
+            LC_LVDS_DBG("trace normal flags body=%u cursor=%u",
+                        body_changed ? 1u : 0u,
+                        cursor_changed ? 1u : 0u);
+        }
         lvds_hstx_direct_scanout(false);
+        if (trace_frame) {
+            lvds_hstx_debug_dump("trace-after-direct");
+        }
         start_us = mcu_micros();
         draw_bar(frame);
         g_prof_header_us = mcu_micros() - start_us;
         if (body_changed) {
+            if (lc_lvds_debug_branch_changed("rows body")) LC_LVDS_DBG("branch rows body");
             draw_leancam_rows(frame);
             remember_normal_body(frame);
         } else if (cursor_changed) {
+            if (lc_lvds_debug_branch_changed("preview cursor")) LC_LVDS_DBG("branch preview cursor");
             draw_normal_preview_only(frame);
             remember_normal_body(frame);
         } else {
@@ -2626,8 +3604,21 @@ void lvds_renderer_draw_poll(void)
     }
     g_live_sim_was_running = lc_live_sim_running(frame);
     draw_us = mcu_micros() - start_us;
+    if (trace_frame) {
+        LC_LVDS_DBG("trace draw done draw_us=%lu",
+                    (unsigned long)draw_us);
+        lvds_hstx_debug_dump("trace-before-present");
+    }
     start_us = mcu_micros();
     lvds_hstx_present();
+    if (trace_frame) {
+        lvds_hstx_debug_dump("trace-after-present");
+    }
+    if (lvds_hstx_last_error() != 0) {
+        LC_LVDS_DBG("present err draw_us=%lu hstx_err=%d",
+                    (unsigned long)draw_us,
+                    lvds_hstx_last_error());
+    }
     end_us = mcu_micros();
     g_live_prof_present_us = end_us - start_us;
     g_render_last_us = draw_us + g_live_prof_present_us;

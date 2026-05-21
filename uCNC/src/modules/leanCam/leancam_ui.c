@@ -269,6 +269,7 @@ static void lc_resolve_line_for_save(const char *in, char *out, size_t out_sz)
     while (*p && (size_t)(w - out) < out_sz - 1) {
         if (p[0] == '{' && p[1] == '(') {
             const char *end = strstr(p, ")}");
+            char *num_end;
             char expr[64];
             char num[32];
             size_t expr_len;
@@ -293,7 +294,9 @@ static void lc_resolve_line_for_save(const char *in, char *out, size_t out_sz)
                 ok = lc_line_get_float_local(in, expr + 6, &v);
             } else {
                 v = strtof(expr, NULL);
-                ok = true;
+                num_end = NULL;
+                v = strtof(expr, &num_end);
+                ok = (num_end && num_end > expr && *num_end == '\0');
             }
 
             if (ok) {
@@ -304,10 +307,21 @@ static void lc_resolve_line_for_save(const char *in, char *out, size_t out_sz)
                 if (n < 0) break;
                 w += n;
             } else {
-                /* unresolved optional default: store empty rather than formula */
-                if ((size_t)(w - out) + 2 >= out_sz) break;
-                *w++ = '{';
-                *w++ = '}';
+                int n;
+
+                if (strncmp(expr, "THIS.", 5) == 0 ||
+                    strncmp(expr, "SETUP.", 6) == 0 ||
+                    strncmp(expr, "CUT.", 4) == 0) {
+                    if ((size_t)(w - out) + 2 >= out_sz) break;
+                    *w++ = '{';
+                    *w++ = '}';
+                    p = end + 2;
+                    continue;
+                }
+
+                n = snprintf(w, out_sz - (size_t)(w - out), "{%s}", expr);
+                if (n < 0) break;
+                w += n;
             }
 
             p = end + 2;
@@ -465,12 +479,15 @@ bool leancam_ui_save(leancam_ui_t *ui, const char *path)
     //uint8_t old = cnc_enter_file_io_safe_phase();
 
     if (!leancam_files_save(path, &ui->prog)) return false;
+    leancam_files_debug_probe("ui-save-return");
    // cnc_leave_file_io_safe_phase(old);
     //cnc_clear_exec_state(0x80);
 
     strncpy(ui->current_path, path, sizeof(ui->current_path) - 1);
     ui->current_path[sizeof(ui->current_path) - 1] = 0;
+    leancam_files_debug_probe("ui-path-copied");
     ui->dirty = false;
+    leancam_files_debug_probe("ui-dirty-clear");
     return true;
 }
 

@@ -31,7 +31,10 @@ enum {
 };
 
 bool lvds_hstx_init(void);
+bool lvds_hstx_recover(void);
 int lvds_hstx_last_error(void);
+void lvds_hstx_debug_dump(const char *tag);
+void lvds_hstx_debug_probe(const char *tag, uint32_t wait_us);
 void *lvds_hstx_scanout_buffer(void);
 bool lvds_hstx_backbuffer_active(void);
 void lvds_hstx_direct_scanout(bool direct);

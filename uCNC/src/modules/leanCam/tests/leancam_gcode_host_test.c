@@ -62,11 +62,11 @@ static int lc_test_send(const char *line, void *user)
         sink->saw_chamfer = 1;
     if (strstr(line, "G33 "))
         sink->saw_thread = 1;
-    if (strcmp(line, "G0 X41.000") == 0)
+    if (strcmp(line, "G0 X41.000") == 0 || strcmp(line, "G0 X41.000 Z1.000") == 0)
         sink->saw_od_taper_safe = 1;
     if (strcmp(line, "G0 X47.000") == 0)
         sink->saw_od_taper_oversafe = 1;
-    if (strcmp(line, "G0 X46.000") == 0)
+    if (strcmp(line, "G0 X46.000") == 0 || strcmp(line, "G0 X46.000 Z1.000") == 0)
         sink->saw_od_chamfer_clear = 1;
     if (strstr(line, "(OD rough finish-stock 0.200)"))
         sink->saw_negative_doc_finish_stock = 1;
@@ -80,7 +80,7 @@ static int lc_test_send(const char *line, void *user)
         sink->saw_id_corner_x_before_z = 1;
         sink->id_radius_seen = 0;
     }
-    if (strcmp(line, "G1 X17.000") == 0)
+    if (strcmp(line, "G0 X17.000") == 0)
         sink->saw_id_retract = 1;
     if (strcmp(line, "G1 X10.000") == 0)
         sink->face_inner_seen = 1;

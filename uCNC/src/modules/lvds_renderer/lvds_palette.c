@@ -56,7 +56,7 @@ static const lvds_palette_element_def_t g_element_def[LC_ELEM_COUNT] = {
     [LC_ELEM_FOOTER_TEXT] = {"footer.text", black},
     [LC_ELEM_FOOTER_VALUE] = {"footer.value", yellow},
     [LC_ELEM_CUT] = {"main.cut", yellow_pale},
-    [LC_ELEM_HATCH] = {"main.hatch", brown},
+    [LC_ELEM_HATCH] = {"main.hatch", yellow_pale},
     [LC_ELEM_TOOL] = {"main.tool", red_bright},
 
     [LC_ELEM_PREVIEW_BG] = {"preview.background", gray_192},
@@ -70,7 +70,7 @@ static const lvds_palette_element_def_t g_element_def[LC_ELEM_COUNT] = {
     [LC_ELEM_PREVIEW_CHUCK] = {"preview.chuck", gray_96},
     [LC_ELEM_PREVIEW_CHUCK_TEXT] = {"preview.chuck_text", white_warm},
     [LC_ELEM_PREVIEW_CUT] = {"preview.cut", yellow_pale},
-    [LC_ELEM_PREVIEW_HATCH] = {"preview.hatch", brown},
+    [LC_ELEM_PREVIEW_HATCH] = {"preview.hatch", yellow_pale},
     [LC_ELEM_PREVIEW_PROFILE] = {"preview.profile", red_bright},
     [LC_ELEM_PREVIEW_TOOL] = {"preview.tool", green_bright}, //tool lines
     [LC_ELEM_PREVIEW_TOOL_MARK] = {"preview.tool_mark", red},

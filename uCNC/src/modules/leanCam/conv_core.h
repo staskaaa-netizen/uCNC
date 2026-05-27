@@ -24,9 +24,6 @@ bool find_field(const char *line, int start_from, int *s, int *e);
 bool set_field(char *line, int s, int e, const char *val);
 
 bool field_is_required_or_unresolved(const char *line, int s, int e);
-bool find_first_required_or_unresolved(const char *line, int *s, int *e);
-bool find_next_required_or_unresolved(const char *line, int from, int *s, int *e);
-
 bool line_has_unresolved_required(const char *line);
 
 #ifdef __cplusplus

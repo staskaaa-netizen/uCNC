@@ -1,10 +1,25 @@
 #include "leancam_bridge.h"
+#include "leancam_app.h"
+#include "leancam_autosave.h"
 #include "leancam_ui.h"
 #include "leancam_templates.h"
 #include "leancam_files.h"
 #include "leancam_expr.h"
+#include "leancam_editor.h"
+#include "leancam_file_browser.h"
+#include "leancam_file_prompt.h"
 #include "leancam_gcode.h"
 #include "leancam_menu.h"
+#include "leancam_nc_viewer.h"
+#include "leancam_paths.h"
+#include "leancam_presets.h"
+#include "leancam_resource.h"
+#include "leancam_regions.h"
+#include "leancam_run.h"
+#include "leancam_snapshot.h"
+#include "leancam_text.h"
+#include "leancam_tool_catalog.h"
+#include "leancam_validate.h"
 #if LC_SELECTED_RUN_USE_STREAM
 #include "cam_stream.h"
 #endif
@@ -16,16 +31,30 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include <stdlib.h>
+#include <math.h>
 
 #define LC_FILES_DIR LC_DEFAULT_DIR
 #define LC_TOOLS_FILE LC_FILES_DIR "/tools.lct"
 
 #ifndef LC_VISIBLE_PROGRAM_LINES
-#define LC_VISIBLE_PROGRAM_LINES 6
+#define LC_VISIBLE_PROGRAM_LINES 18
+#endif
+
+#ifndef LC_VISIBLE_TOOL_LINES
+#define LC_VISIBLE_TOOL_LINES 12
 #endif
 
 #ifndef LC_FILE_REFRESH_RETRY_MS
 #define LC_FILE_REFRESH_RETRY_MS 1500u
+#endif
+
+#ifndef LC_AUTOSAVE_RETRY_MS
+#define LC_AUTOSAVE_RETRY_MS 500u
+#endif
+
+#ifndef LC_AUTOSAVE_BUSY_MAX_TRIES
+#define LC_AUTOSAVE_BUSY_MAX_TRIES 3u
 #endif
 
 #ifndef LC_SELECTED_RUN_USE_STREAM
@@ -40,85 +69,239 @@
 #define LC_BRIDGE_SERIAL_DEBUG 1
 #endif
 
+#ifndef LC_BRIDGE_R_CORNER_DEBUG
+#define LC_BRIDGE_R_CORNER_DEBUG 0
+#endif
+
 #if LC_BRIDGE_SERIAL_DEBUG
 #define LC_BRIDGE_DBG(fmt, ...) grbl_stream_printf(__romstr__("[MSG:LC " fmt "]\r\n"), ##__VA_ARGS__)
 #else
 #define LC_BRIDGE_DBG(fmt, ...)
 #endif
 
+#ifndef LC_DRAFT_EDIT_SERIAL_DEBUG
+#define LC_DRAFT_EDIT_SERIAL_DEBUG 0
+#endif
+
+#if LC_DRAFT_EDIT_SERIAL_DEBUG
+#define LC_DRAFT_DBG(fmt, ...) LC_BRIDGE_DBG("draft " fmt, ##__VA_ARGS__)
+#else
+#define LC_DRAFT_DBG(fmt, ...)
+#endif
+
 static bool lc_debug_snapshot_should_print(const char *line);
+static void lc_debug_print_r_corner_geometry(const ui_snapshot_frame_t *f);
+
+#if LC_BRIDGE_R_CORNER_DEBUG
+typedef struct {
+    float x;
+    float z;
+} lc_debug_v2_t;
+
+static lc_debug_v2_t lc_debug_v2_add(lc_debug_v2_t a, lc_debug_v2_t b)
+{
+    lc_debug_v2_t r = { a.x + b.x, a.z + b.z };
+    return r;
+}
+
+static lc_debug_v2_t lc_debug_v2_sub(lc_debug_v2_t a, lc_debug_v2_t b)
+{
+    lc_debug_v2_t r = { a.x - b.x, a.z - b.z };
+    return r;
+}
+
+static lc_debug_v2_t lc_debug_v2_mul(lc_debug_v2_t a, float s)
+{
+    lc_debug_v2_t r = { a.x * s, a.z * s };
+    return r;
+}
+
+static float lc_debug_v2_dot(lc_debug_v2_t a, lc_debug_v2_t b)
+{
+    return (a.x * b.x) + (a.z * b.z);
+}
+
+static float lc_debug_v2_cross(lc_debug_v2_t a, lc_debug_v2_t b)
+{
+    return (a.x * b.z) - (a.z * b.x);
+}
+
+static float lc_debug_v2_len(lc_debug_v2_t a)
+{
+    return sqrtf(lc_debug_v2_dot(a, a));
+}
+
+static bool lc_debug_v2_norm(lc_debug_v2_t a, lc_debug_v2_t *out)
+{
+    float l = lc_debug_v2_len(a);
+
+    if (!out || l < 0.0001f)
+        return false;
+    out->x = a.x / l;
+    out->z = a.z / l;
+    return true;
+}
+
+static float lc_debug_clampf(float v, float lo, float hi)
+{
+    if (v < lo)
+        return lo;
+    if (v > hi)
+        return hi;
+    return v;
+}
+
+static bool lc_debug_build_r_corner(lc_debug_v2_t p0,
+                                    lc_debug_v2_t p1,
+                                    lc_debug_v2_t p2,
+                                    float r,
+                                    lc_debug_v2_t *t1,
+                                    lc_debug_v2_t *t2,
+                                    lc_debug_v2_t *c,
+                                    bool *cw)
+{
+    lc_debug_v2_t p0r = { p0.x * 0.5f, p0.z };
+    lc_debug_v2_t p1r = { p1.x * 0.5f, p1.z };
+    lc_debug_v2_t p2r = { p2.x * 0.5f, p2.z };
+    lc_debug_v2_t a;
+    lc_debug_v2_t b;
+    lc_debug_v2_t bis;
+    float len_a = lc_debug_v2_len(lc_debug_v2_sub(p0r, p1r));
+    float len_b = lc_debug_v2_len(lc_debug_v2_sub(p2r, p1r));
+    float dot;
+    float half;
+    float tan_half;
+    float sin_half;
+    float tangent;
+
+    if (!t1 || !t2 || !c || !cw || r <= 0.0f || len_a < 0.0001f || len_b < 0.0001f)
+        return false;
+    if (!lc_debug_v2_norm(lc_debug_v2_sub(p0r, p1r), &a) ||
+        !lc_debug_v2_norm(lc_debug_v2_sub(p2r, p1r), &b))
+        return false;
+    dot = lc_debug_clampf(lc_debug_v2_dot(a, b), -1.0f, 1.0f);
+    if (fabsf(dot) > 0.999f)
+        return false;
+    half = acosf(dot) * 0.5f;
+    tan_half = tanf(half);
+    sin_half = sinf(half);
+    if (fabsf(tan_half) < 0.0001f || fabsf(sin_half) < 0.0001f)
+        return false;
+    tangent = r / tan_half;
+    if (tangent > len_a + 0.0001f || tangent > len_b + 0.0001f)
+        return false;
+    if (!lc_debug_v2_norm(lc_debug_v2_add(a, b), &bis))
+        return false;
+
+    *t1 = lc_debug_v2_add(p1r, lc_debug_v2_mul(a, tangent));
+    *t2 = lc_debug_v2_add(p1r, lc_debug_v2_mul(b, tangent));
+    *c = lc_debug_v2_add(p1r, lc_debug_v2_mul(bis, r / sin_half));
+    if (fabsf(lc_debug_v2_len(lc_debug_v2_sub(*t1, *c)) - r) > 0.01f ||
+        fabsf(lc_debug_v2_len(lc_debug_v2_sub(*t2, *c)) - r) > 0.01f)
+        return false;
+    *cw = lc_debug_v2_cross(lc_debug_v2_sub(*t1, *c), lc_debug_v2_sub(*t2, *c)) < 0.0f;
+    t1->x *= 2.0f;
+    t2->x *= 2.0f;
+    c->x *= 2.0f;
+    return true;
+}
+#endif
+
+static void lc_debug_print_r_corner_geometry(const ui_snapshot_frame_t *f)
+{
+#if LC_BRIDGE_R_CORNER_DEBUG
+    uint8_t i;
+
+    if (!f || f->leancam_preview_region_count < 3)
+        return;
+
+    for (i = 1; i + 1u < f->leancam_preview_region_count && i < UI_LC_PREVIEW_REGION_MAX; ++i) {
+        const char *prev = f->leancam_preview_region[i - 1u];
+        const char *line = f->leancam_preview_region[i];
+        const char *next = f->leancam_preview_region[i + 1u];
+        float x0, z0, x1, z1, x2, z2, r;
+        lc_debug_v2_t t1;
+        lc_debug_v2_t t2;
+        lc_debug_v2_t c;
+        bool cw;
+
+        if (!lc_text_command_is(prev, "G1") ||
+            !lc_text_command_is(line, "G1") ||
+            !lc_text_command_is(next, "G1"))
+            continue;
+        if (!lc_text_get_field_float(line, "R", &r) || r <= 0.0f)
+            continue;
+        if (!lc_text_get_field_float(prev, "X", &x0) ||
+            !lc_text_get_field_float(prev, "Z", &z0) ||
+            !lc_text_get_field_float(line, "X", &x1) ||
+            !lc_text_get_field_float(line, "Z", &z1) ||
+            !lc_text_get_field_float(next, "X", &x2) ||
+            !lc_text_get_field_float(next, "Z", &z2))
+            continue;
+        if (lc_debug_build_r_corner((lc_debug_v2_t){x0, z0},
+                                    (lc_debug_v2_t){x1, z1},
+                                    (lc_debug_v2_t){x2, z2},
+                                    r,
+                                    &t1,
+                                    &t2,
+                                    &c,
+                                    &cw)) {
+            LC_BRIDGE_DBG("R corner L%u T1 X%.3f Z%.3f T2 X%.3f Z%.3f C X%.3f Z%.3f R%.3f %s",
+                          (unsigned)i,
+                          (double)t1.x,
+                          (double)t1.z,
+                          (double)t2.x,
+                          (double)t2.z,
+                          (double)c.x,
+                          (double)c.z,
+                          (double)r,
+                          cw ? "CW" : "CCW");
+        } else {
+            LC_BRIDGE_DBG("R corner L%u invalid R%.3f",
+                          (unsigned)i,
+                          (double)r);
+        }
+    }
+#else
+    (void)f;
+#endif
+}
 
 #ifndef G33_ELS_LOCK_REV_MIN
 #define G33_ELS_LOCK_REV_MIN 2
 #endif
 
-typedef enum
-{
-    LC_MODE_FILES = 0,
-    LC_MODE_FILE_NAME,
-    LC_MODE_PROGRAM,
-    LC_MODE_DRAFT,
-    LC_MODE_NC_VIEW
-} lc_mode_t;
-
-typedef enum
-{
-    LC_CATALOG_NONE = 0,
-    LC_CATALOG_TOOLS
-} lc_catalog_kind_t;
-
 static leancam_ui_t g_leancam_ui;
-static lc_mode_t g_lc_mode = LC_MODE_FILES;
-static lc_catalog_kind_t g_catalog_kind = LC_CATALOG_NONE;
-static program_t g_tools_catalog;
-static bool g_catalogs_loaded = false;
-static bool g_autosave_pending = false;
+#define g_lc_mode (*lc_app_mode_ptr())
+#define g_catalog_kind (*lc_app_catalog_ptr())
 static bool g_debug_snapshot_armed = false;
-static uint32_t g_autosave_due_ms = 0;
-static int  g_file_sel = 0;
+#define g_line_sim_armed (lc_run_sim_armed())
 static int  g_prog_scroll = 0;
-static int  g_nc_top_line = 0;
-static int  g_nc_selected_row = 0;
-static char g_new_file_name[32];
+static uint32_t g_sim_arm_block_until_ms = 0;
 static char g_last_msg[UI_SNAPSHOT_POPUP_LEN];
-static char g_nc_path[LC_FILE_PATH_MAX];
-static char g_nc_setup_line[UI_LC_LINE_LEN];
-static char g_nc_lines[UI_LC_MAX_LINES][UI_LC_LINE_LEN];
-static uint8_t g_nc_line_count = 0;
-static bool g_nc_eof = false;
-static uint8_t g_draft_field_index = 0;
-static bool g_files_ready = false;
-static uint32_t g_next_file_refresh_ms = 0;
+#define g_draft_field_index (lc_editor_field_index())
 
-static void lc_open_nc_viewer(const char *path);
 static int lc_setup_line(const char **line_out);
-static bool lc_is_context_line(const char *line);
-static void lc_load_catalogs(void);
+#define lc_count_brace_fields(line) lc_editor_field_count(line)
+static void lc_begin_setup_if_missing_then(const char *tmpl);
+static int lc_has_setup(void);
+static void lc_autosave(void);
+static void lc_schedule_autosave(void);
+static void lc_ensure_program_visible(void);
+static bool lc_find_raw_region(const program_t *prog, int index, int *start_out, int *end_out);
+static void lc_debug_dump_nc_range(const program_t *prog, int start, int end, const char *why);
+static bool lc_save_tool_catalog(void);
 void __attribute__((weak)) leancam_bridge_after_autosave(void);
+
+static bool lc_line_command_is(const char *line, const char *cmd)
+{
+    return lc_text_command_is(line, cmd);
+}
 
 typedef struct
 {
     fs_file_t *fp;
 } lc_gcode_file_emit_t;
-
-static const char *lc_basename(const char *path)
-{
-    const char *p1;
-    const char *p2;
-    const char *p;
-
-    if (!path || !path[0])
-        return "<no file>";
-
-    p1 = strrchr(path, '/');
-    p2 = strrchr(path, '\\');
-    p = p1;
-
-    if (p2 && (!p || p2 > p))
-        p = p2;
-
-    return p ? (p + 1) : path;
-}
 
 static void lc_set_msg(const char *s)
 {
@@ -156,6 +339,46 @@ static void lc_publish_msg(const char *fmt, ...)
     leancam_bridge_request_render();
 }
 
+static bool lc_save_tool_catalog(void)
+{
+    static program_t tool_prog;
+    int selected_t = -1;
+    int i;
+
+    if (leancam_files_busy() || !lc_resource_can_autosave())
+    {
+        lc_set_msg("LC: file IO busy");
+        return false;
+    }
+
+    if (g_leancam_ui.cur_line >= 0 && g_leancam_ui.cur_line < g_leancam_ui.prog.count)
+        selected_t = lc_tool_line_t_value(g_leancam_ui.prog.lines[g_leancam_ui.cur_line]);
+
+    lc_tool_catalog_copy_from_program(&g_leancam_ui.prog);
+    lc_tool_catalog_copy_to_program(&tool_prog);
+    if (!leancam_files_save_plain(LC_TOOLS_FILE, &tool_prog))
+    {
+        lc_set_msg("LC: tools save failed");
+        return false;
+    }
+
+    lc_tool_catalog_copy_to_program(&g_leancam_ui.prog);
+    if (selected_t >= 0)
+    {
+        for (i = 0; i < g_leancam_ui.prog.count; ++i)
+        {
+            if (lc_tool_line_t_value(g_leancam_ui.prog.lines[i]) == selected_t)
+            {
+                g_leancam_ui.cur_line = i;
+                break;
+            }
+        }
+    }
+    lc_ensure_program_visible();
+    lc_set_msg("LC: tools saved");
+    return true;
+}
+
 static bool lc_debug_snapshot_should_print(const char *line)
 {
     static char last_line[UI_LC_LINE_LEN];
@@ -170,66 +393,20 @@ static bool lc_debug_snapshot_should_print(const char *line)
     return false;
 }
 
-static int lc_stricmp_local(const char *a, const char *b)
-{
-    while (*a && *b)
-    {
-        int ca = (*a >= 'A' && *a <= 'Z') ? (*a + ('a' - 'A')) : *a;
-        int cb = (*b >= 'A' && *b <= 'Z') ? (*b + ('a' - 'A')) : *b;
-        if (ca != cb) return ca - cb;
-        ++a;
-        ++b;
-    }
-    return (int)(unsigned char)*a - (int)(unsigned char)*b;
-}
-
-static bool lc_has_suffix_ci_local(const char *name, const char *suffix)
-{
-    size_t ln;
-    size_t ls;
-
-    if (!name || !suffix)
-        return false;
-
-    ln = strlen(name);
-    ls = strlen(suffix);
-    if (ln < ls)
-        return false;
-
-    return lc_stricmp_local(name + ln - ls, suffix) == 0;
-}
-
 static void lc_refresh_files(void)
 {
-    int cnt;
-
-    if (!leancam_files_refresh(LC_FILES_DIR))
+    if (!lc_file_browser_refresh(LC_FILES_DIR, LC_FILE_REFRESH_RETRY_MS))
     {
-        g_files_ready = false;
-        g_next_file_refresh_ms = mcu_millis() + LC_FILE_REFRESH_RETRY_MS;
-        g_file_sel = 0;
         lc_set_msg("LC: refresh failed");
         return;
     }
-   // cnc_clear_exec_state(0x80);
-
-    g_files_ready = true;
-    g_next_file_refresh_ms = 0;
-    cnt = leancam_files_count();
-
-    if (g_file_sel < 0)
-        g_file_sel = 0;
-
-    if (g_file_sel > cnt)
-        g_file_sel = cnt;
-
+    lc_tool_catalog_load_from_storage(LC_TOOLS_FILE);
     lc_set_msg("LC: files refreshed");
 }
 
 static void lc_delete_selected_file(void)
 {
     char path[LC_FILE_PATH_MAX];
-    int cnt;
 
     if (leancam_files_busy())
     {
@@ -237,14 +414,13 @@ static void lc_delete_selected_file(void)
         return;
     }
 
-    cnt = leancam_files_count();
-    if (g_file_sel < 0 || g_file_sel >= cnt)
+    if (!lc_file_browser_selected_valid())
     {
         lc_set_msg("LC: no file selected");
         return;
     }
 
-    if (!leancam_files_build_path(LC_FILES_DIR, g_file_sel, path, sizeof(path)))
+    if (!lc_file_browser_selected_path(LC_FILES_DIR, path, sizeof(path)))
     {
         lc_set_msg("LC: build path failed");
         return;
@@ -257,26 +433,49 @@ static void lc_delete_selected_file(void)
     }
 
     if (g_leancam_ui.current_path[0] && strcmp(g_leancam_ui.current_path, path) == 0)
+    {
         leancam_ui_new(&g_leancam_ui);
+        lc_presets_clear_meta();
+    }
 
     lc_refresh_files();
-    cnt = leancam_files_count();
-    if (g_file_sel >= cnt)
-        g_file_sel = cnt;
+    lc_file_browser_clamp_selected();
     lc_set_msg("LC: file deleted");
 }
 
-static const char *lc_gcode_result_name(lc_gcode_result_t r)
+static void lc_duplicate_selected_file_begin(void)
 {
-    switch (r)
+    char path[LC_FILE_PATH_MAX];
+    const char *name;
+
+    if (leancam_files_busy())
     {
-        case LC_GCODE_OK:            return "ok";
-        case LC_GCODE_UNSUPPORTED:   return "unsupported";
-        case LC_GCODE_NO_SETUP:      return "no setup";
-        case LC_GCODE_BAD_FIELD:     return "bad field";
-        case LC_GCODE_STREAM_REJECT: return "write failed";
-        default:                     return "gcode failed";
+        lc_set_msg("LC: file IO busy");
+        return;
     }
+
+    if (!lc_file_browser_selected_valid())
+    {
+        lc_set_msg("LC: no file selected");
+        return;
+    }
+
+    name = lc_file_browser_selected_name();
+    if (!lc_path_has_suffix_ci(name, ".nc"))
+    {
+        lc_set_msg("LC: copy nc only");
+        return;
+    }
+
+    if (!lc_file_browser_selected_path(LC_FILES_DIR, path, sizeof(path)))
+    {
+        lc_set_msg("LC: build path failed");
+        return;
+    }
+
+    lc_file_prompt_begin_duplicate(path);
+    g_lc_mode = LC_MODE_FILE_NAME;
+    lc_set_msg("LC: copy name");
 }
 
 static int lc_write_line_to_file(const char *line, void *user)
@@ -295,132 +494,135 @@ static int lc_write_line_to_file(const char *line, void *user)
     return fs_write(ctx->fp, &nl, 1) == 1;
 }
 
-static bool lc_make_gcode_path(const char *lcam_path, char *out, int out_sz)
+static int lc_gcode_discard_line(const char *line, void *user)
 {
-    const char *dot;
-    size_t n;
-
-    if (!lcam_path || !out || out_sz <= 0)
-        return false;
-
-    dot = strrchr(lcam_path, '.');
-    if (!dot)
-        dot = lcam_path + strlen(lcam_path);
-
-    n = (size_t)(dot - lcam_path);
-    if (n + 3 >= (size_t)out_sz)
-        return false;
-
-    memcpy(out, lcam_path, n);
-    memcpy(out + n, ".nc", 4);
-    return true;
+    (void)line;
+    (void)user;
+    return 1;
 }
 
-static bool lc_is_name_char(char c)
+#ifndef LC_SERIAL_GCODE_MAX_LINES
+#define LC_SERIAL_GCODE_MAX_LINES 160u
+#endif
+
+#ifndef LC_SERIAL_GCODE_LINE_LEN
+#define LC_SERIAL_GCODE_LINE_LEN 96u
+#endif
+
+#ifndef LC_SERIAL_GCODE_PACE_MS
+#define LC_SERIAL_GCODE_PACE_MS 20u
+#endif
+
+typedef struct {
+    uint16_t count;
+    uint16_t index;
+    uint32_t next_ms;
+    uint32_t start_ms;
+    int start;
+    int end;
+    lc_gcode_result_t result;
+    int err_line;
+    char err[64];
+    char lines[LC_SERIAL_GCODE_MAX_LINES][LC_SERIAL_GCODE_LINE_LEN];
+    char current_line[LC_SERIAL_GCODE_LINE_LEN];
+    uint16_t draw_seq;
+    uint16_t current_index;
+    bool active;
+    bool end_printed;
+} lc_serial_gcode_dump_t;
+
+static lc_serial_gcode_dump_t g_serial_gcode_dump;
+
+static int lc_serial_capture_gcode_line(const char *line, void *user)
 {
-    return (c >= 'A' && c <= 'Z') ||
-           (c >= 'a' && c <= 'z') ||
-           (c >= '0' && c <= '9');
+    lc_serial_gcode_dump_t *dump = (lc_serial_gcode_dump_t *)user;
+
+    if (!dump || dump->count >= LC_SERIAL_GCODE_MAX_LINES)
+        return 0;
+    snprintf(dump->lines[dump->count],
+             sizeof(dump->lines[dump->count]),
+             "%.90s",
+             line ? line : "");
+    dump->count++;
+    return 1;
 }
 
-static void lc_sanitize_name_part(const char *in, char *out, size_t out_sz)
+static void lc_serial_debug_begin_selected_gcode(int start, int end)
 {
-    size_t oi = 0;
-    bool last_us = false;
+    lc_gcode_result_t r;
+    int err_line = start + 1;
+    int made = 0;
+    lc_serial_gcode_dump_t *dump = &g_serial_gcode_dump;
 
-    if (!out || out_sz == 0)
+    memset(dump, 0, sizeof(*dump));
+    dump->start = start;
+    dump->end = end;
+    dump->err_line = err_line;
+    dump->start_ms = mcu_millis();
+    dump->next_ms = dump->start_ms + LC_SERIAL_GCODE_PACE_MS;
+    r = leancam_gcode_emit_program_header(lc_serial_capture_gcode_line, dump) ?
+        LC_GCODE_OK : LC_GCODE_STREAM_REJECT;
+    if (r == LC_GCODE_OK)
+        r = lc_run_emit_selected_range(&g_leancam_ui.prog,
+                                       start,
+                                       end,
+                                       lc_serial_capture_gcode_line,
+                                       dump,
+                                       dump->err,
+                                       sizeof(dump->err),
+                                       &err_line,
+                                       &made);
+    if (r == LC_GCODE_OK &&
+        !leancam_gcode_emit_program_footer_ex(lc_serial_capture_gcode_line, dump, dump->err, sizeof(dump->err)))
+        r = LC_GCODE_STREAM_REJECT;
+    dump->result = r;
+    dump->err_line = err_line;
+    dump->active = true;
+    grbl_stream_printf(__romstr__("[MSG:LC draw begin L%d-L%d count=%u pace=%u]\r\n"),
+                       start + 1,
+                       end + 1,
+                       (unsigned)dump->count,
+                       (unsigned)LC_SERIAL_GCODE_PACE_MS);
+}
+
+static void lc_serial_debug_gcode_tick(uint32_t now)
+{
+    lc_serial_gcode_dump_t *dump = &g_serial_gcode_dump;
+
+    if (!dump->active || (int32_t)(now - dump->next_ms) < 0)
         return;
-
-    if (!in)
-        in = "";
-
-    while (*in && oi + 1 < out_sz)
-    {
-        char c = *in++;
-
-        if (lc_is_name_char(c) || c == '-')
-        {
-            out[oi++] = c;
-            last_us = false;
-        }
-        else if (!last_us && oi > 0)
-        {
-            out[oi++] = '_';
-            last_us = true;
-        }
+    dump->next_ms = now + LC_SERIAL_GCODE_PACE_MS;
+    if (dump->index < dump->count) {
+        snprintf(dump->current_line,
+                 sizeof(dump->current_line),
+                 "%s",
+                 dump->lines[dump->index]);
+        dump->current_index = dump->index;
+        dump->draw_seq++;
+        dump->index++;
+        leancam_bridge_request_render();
+        return;
     }
-
-    while (oi > 0 && out[oi - 1] == '_')
-        --oi;
-
-    out[oi] = 0;
-}
-
-static void lc_get_program_stem(char *out, size_t out_sz)
-{
-    const char *base;
-    const char *dot;
-    char tmp[48];
-    size_t n;
-
-    if (!out || out_sz == 0)
+    if (!dump->end_printed) {
+        uint32_t dt = now - dump->start_ms;
+        grbl_stream_printf(__romstr__("[MSG:LC draw end r=%d count=%u drawn=%u dt=%u err_line=%d err=%s]\r\n"),
+                           (int)dump->result,
+                           (unsigned)dump->count,
+                           (unsigned)dump->index,
+                           (unsigned)dt,
+                           dump->err_line,
+                           dump->err);
+        if (dump->result != LC_GCODE_OK) {
+            lc_set_msgf("LC: L%d %s",
+                        dump->err_line,
+                        dump->err[0] ? dump->err : lc_run_gcode_result_name(dump->result));
+        }
+        dump->end_printed = true;
+        dump->draw_seq++;
+        leancam_bridge_request_render();
         return;
-
-    base = lc_basename(g_leancam_ui.current_path);
-    if (!base || !base[0] || base[0] == '<')
-        base = "program";
-
-    dot = strrchr(base, '.');
-    n = dot ? (size_t)(dot - base) : strlen(base);
-    if (n >= sizeof(tmp))
-        n = sizeof(tmp) - 1;
-
-    memcpy(tmp, base, n);
-    tmp[n] = 0;
-
-    lc_sanitize_name_part(tmp, out, out_sz);
-    if (!out[0])
-        strncpy(out, "program", out_sz - 1);
-    out[out_sz - 1] = 0;
-}
-
-static void lc_get_operation_name(const char *line, char *out, size_t out_sz)
-{
-    char tmp[20];
-    size_t n = 0;
-
-    if (!out || out_sz == 0)
-        return;
-
-    if (!line)
-        line = "";
-
-    while (line[n] && line[n] != '|' && line[n] != '{' && line[n] != ' ' && n + 1 < sizeof(tmp))
-        ++n;
-
-    memcpy(tmp, line, n);
-    tmp[n] = 0;
-
-    lc_sanitize_name_part(tmp, out, out_sz);
-    if (!out[0])
-        strncpy(out, "OP", out_sz - 1);
-    out[out_sz - 1] = 0;
-}
-
-static bool lc_make_lrun_path(const char *line, int line_no, char *out, int out_sz)
-{
-    char op[16];
-    char stem[32];
-    int n;
-
-    if (!out || out_sz <= 0)
-        return false;
-
-    lc_get_operation_name(line, op, sizeof(op));
-    lc_get_program_stem(stem, sizeof(stem));
-
-    n = snprintf(out, (size_t)out_sz, "%s/%s_L%d_%s.lrun", LC_FILES_DIR, op, line_no, stem);
-    return n > 0 && n < out_sz;
+    }
+    dump->active = false;
 }
 
 static const char *lc_find_setup_in_program(const program_t *p, int before_or_at)
@@ -434,313 +636,203 @@ static const char *lc_find_setup_in_program(const program_t *p, int before_or_at
         before_or_at = p->count - 1;
 
     for (i = before_or_at; i >= 0; --i)
-        if (strncmp(p->lines[i], "SETUP|", 6) == 0)
+        if (lc_line_command_is(p->lines[i], "SETUP"))
             return p->lines[i];
 
     return NULL;
-}
-
-static const char *lc_find_prefix_in_program(const program_t *p, int before_or_at, const char *prefix)
-{
-    int i;
-    size_t n;
-
-    if (!p || !prefix)
-        return NULL;
-
-    n = strlen(prefix);
-    if (before_or_at >= p->count)
-        before_or_at = p->count - 1;
-
-    for (i = before_or_at; i >= 0; --i)
-        if (strncmp(p->lines[i], prefix, n) == 0)
-            return p->lines[i];
-
-    return NULL;
-}
-
-static bool lc_line_get_float_key(const char *line, const char *key, float *out)
-{
-    char pat[24];
-    const char *p;
-    const char *b;
-    const char *e;
-    char val[32];
-    size_t len;
-
-    if (!line || !key || !out)
-        return false;
-
-    snprintf(pat, sizeof(pat), "|%s{", key);
-    p = strstr(line, pat);
-    if (!p && strncmp(line, key, strlen(key)) == 0 && line[strlen(key)] == '{')
-        p = line - 1;
-    if (!p)
-        return false;
-
-    b = strchr(p + 1, '{');
-    e = b ? strchr(b + 1, '}') : NULL;
-    if (!b || !e || e <= b + 1 || b[1] == '(')
-        return false;
-
-    len = (size_t)(e - b - 1);
-    if (len >= sizeof(val))
-        len = sizeof(val) - 1;
-    memcpy(val, b + 1, len);
-    val[len] = '\0';
-
-    *out = strtof(val, NULL);
-    return true;
 }
 
 static bool lc_line_get_float3_key(const char *line, const char *a, const char *b, const char *c, float *out)
 {
-    return lc_line_get_float_key(line, a, out) || lc_line_get_float_key(line, b, out) || lc_line_get_float_key(line, c, out);
+    return lc_text_get_field_float(line, a, out) ||
+           lc_text_get_field_float(line, b, out) ||
+           lc_text_get_field_float(line, c, out);
 }
 
-static bool lc_float_is_int(float v)
+static const char *lc_effective_tool_for_cycle(const program_t *prog, int before_or_at, const char *cycle)
 {
-    int iv = (int)v;
-    float d = v - (float)iv;
-    if (d < 0.0f)
-        d = -d;
-    return d < 0.001f;
+    return lc_validate_effective_tool_for_cycle(prog, before_or_at, cycle);
 }
 
-static const char *lc_find_tool_by_t(const program_t *prog, int before_or_at, int t)
+static const char *lc_effective_tool_for_draft(const program_t *prog,
+                                               int before_or_at,
+                                               const char *draft,
+                                               const char *preview)
 {
-    int i;
+    const char *tool = lc_effective_tool_for_cycle(prog, before_or_at, preview);
 
-    if (t <= 0)
-        return NULL;
-
-    if (prog)
+    if (!tool && lc_line_command_is(draft, "TOOLCALL"))
     {
-        if (before_or_at >= prog->count)
-            before_or_at = prog->count - 1;
+        char raw[32];
+        char resolved[32];
+        char *endp;
+        long t;
 
-        for (i = before_or_at; i >= 0; --i)
+        if (lc_editor_line_get_field_text(draft, "T", raw, sizeof(raw)) &&
+            leancam_expr_resolve_field_value(raw, NULL, NULL, draft, resolved, sizeof(resolved)))
         {
-            float tv = 0.0f;
-            const char *line = prog->lines[i];
-            if (!line || strncmp(line, "TOOL|", 5) != 0)
-                continue;
-            if (lc_line_get_float_key(line, "T", &tv) && (int)tv == t)
-                return line;
-        }
-
-        for (i = 0; i < prog->count; ++i)
-        {
-            float tv = 0.0f;
-            const char *line = prog->lines[i];
-            if (!line || strncmp(line, "TOOL|", 5) != 0)
-                continue;
-            if (lc_line_get_float_key(line, "T", &tv) && (int)tv == t)
-                return line;
+            t = strtol(resolved, &endp, 10);
+            if (endp && *endp == 0 && t > 0)
+                tool = lc_tool_catalog_find_in_program_or_catalog(prog, before_or_at, (int)t);
         }
     }
 
-    lc_load_catalogs();
-    for (i = 0; i < g_tools_catalog.count; ++i)
-    {
-        float tv = 0.0f;
-        const char *line = g_tools_catalog.lines[i];
-        if (!line || strncmp(line, "TOOL|", 5) != 0)
-            continue;
-        if (lc_line_get_float_key(line, "T", &tv) && (int)tv == t)
-            return line;
-    }
-
-    return NULL;
-}
-
-static const char *lc_tool_for_cycle_or_context(const program_t *prog, int before_or_at, const char *cycle)
-{
-    float tv = 0.0f;
-    const char *tool;
-
-    if (cycle && lc_line_get_float_key(cycle, "T", &tv) && tv > 0.0f && lc_float_is_int(tv)) {
-        tool = lc_find_tool_by_t(prog, before_or_at, (int)tv);
-        if (tool) {
-            return tool;
-        }
-    }
-
-    return lc_find_prefix_in_program(prog, before_or_at, "TOOL|");
-}
-
-static bool lc_validate_tool_for_cycle(const program_t *prog,
-                                       int before_or_at,
-                                       const char *cycle,
-                                       char *err,
-                                       size_t err_sz)
-{
-    const char *tool = NULL;
-    float tv = 0.0f;
-    float xoff = 0.0f;
-    float zoff = 0.0f;
-    float r = 0.0f;
-    float orient = 0.0f;
-    float rough_feed = 0.0f;
-    float finish_feed = 0.0f;
-    float doc = 0.0f;
-    float finish_doc = 0.0f;
-    int t = 0;
-
-    if (err && err_sz)
-        err[0] = 0;
-    if (!prog || !cycle || lc_is_context_line(cycle))
-        return true;
-
-    if (lc_line_get_float_key(cycle, "T", &tv) && tv > 0.0f && lc_float_is_int(tv))
-    {
-        t = (int)tv;
-        tool = lc_find_tool_by_t(prog, before_or_at, t);
-    }
-    else
-    {
-        tool = lc_tool_for_cycle_or_context(prog, before_or_at, cycle);
-        if (tool && lc_line_get_float_key(tool, "T", &tv) && tv > 0.0f && lc_float_is_int(tv))
-            t = (int)tv;
-    }
-
-    if (t <= 0 || !tool)
-    {
-        if (err && err_sz) snprintf(err, err_sz, "TOOL T%02d NOT FOUND", t > 0 ? t : 0);
-        return false;
-    }
-
-    if (!lc_line_get_float_key(tool, "XOFF", &xoff) ||
-        !lc_line_get_float_key(tool, "ZOFF", &zoff) ||
-        !lc_line_get_float_key(tool, "R", &r) || r < 0.0f)
-    {
-        if (err && err_sz) snprintf(err, err_sz, "TOOL T%02d INVALID OFFSET", t);
-        return false;
-    }
-
-    if (!lc_line_get_float_key(tool, "ORIENT", &orient) ||
-        !lc_float_is_int(orient) ||
-        orient < 1.0f || orient > 9.0f)
-    {
-        if (err && err_sz) snprintf(err, err_sz, "TOOL T%02d INVALID ORIENTATION", t);
-        return false;
-    }
-
-    if (!lc_line_get_float_key(tool, "R_FEED", &rough_feed) || rough_feed <= 0.0f ||
-        !lc_line_get_float_key(tool, "FIN_FEED", &finish_feed) || finish_feed <= 0.0f ||
-        !lc_line_get_float_key(tool, "DOC", &doc) || doc <= 0.0f ||
-        !lc_line_get_float_key(tool, "FIN_DOC", &finish_doc) || finish_doc < 0.0f)
-    {
-        if (err && err_sz) snprintf(err, err_sz, "TOOL T%02d INVALID CUT", t);
-        return false;
-    }
-
-    return true;
-}
-
-static void lc_build_resolved_display_line(const program_t *prog, int before_or_at, const char *line, char *out, size_t out_sz)
-{
-    char err[48];
-
-    if (!out || out_sz == 0)
-        return;
-    out[0] = 0;
-    if (!line)
-        return;
-
-    if (!lc_validate_tool_for_cycle(prog, before_or_at, line, err, sizeof(err)))
-    {
-        snprintf(out, out_sz, "%s | ! %s", line, err[0] ? err : "tool invalid");
-        return;
-    }
-
-    ui_snapshot_strcpy(out, line, out_sz);
-}
-
-static bool lc_load_catalog_program(const char *path, program_t *out)
-{
-    leancam_ui_t tmp;
-
-    if (!out)
-        return false;
-    prog_init(out);
-    leancam_ui_init(&tmp);
-    if (!leancam_ui_load(&tmp, path))
-        return false;
-    *out = tmp.prog;
-    return true;
-}
-
-static void lc_seed_default_catalog(lc_catalog_kind_t kind, program_t *out)
-{
-    if (!out || out->count > 0)
-        return;
-
-    switch (kind)
-    {
-        case LC_CATALOG_TOOLS:
-            (void)prog_add(out, "TOOL|T{1}|R{0.8}|ORIENT{3}|R_FEED{120}|FIN_FEED{60}|DOC{2.0}|FIN_DOC{0.5}|XOFF{0}|ZOFF{0}");
-            (void)prog_add(out, "TOOL|T{2}|R{0.4}|ORIENT{7}|R_FEED{90}|FIN_FEED{45}|DOC{1.2}|FIN_DOC{0.3}|XOFF{0}|ZOFF{0}");
-            (void)prog_add(out, "TOOL|T{3}|R{0}|ORIENT{3}|R_FEED{80}|FIN_FEED{40}|DOC{1.0}|FIN_DOC{0.2}|XOFF{0}|ZOFF{0}");
-            break;
-
-        default:
-            break;
-    }
-}
-
-static void lc_load_catalogs(void)
-{
-    if (g_catalogs_loaded)
-        return;
-
-    (void)lc_load_catalog_program(LC_TOOLS_FILE, &g_tools_catalog);
-    lc_seed_default_catalog(LC_CATALOG_TOOLS, &g_tools_catalog);
-    g_catalogs_loaded = true;
+    return tool;
 }
 
 static bool lc_line_is_thread(const char *line)
 {
-    return line && (strncmp(line, "THR_OD|", 7) == 0 || strncmp(line, "THR_ID|", 7) == 0);
+    return line &&
+           ((strncmp(line, "G33", 3) == 0 && (line[3] == 0 || line[3] == ' ')) ||
+            (strncmp(line, "G76", 3) == 0 && (line[3] == 0 || line[3] == ' ')));
 }
 
-static void lc_get_field_name_by_index(const char *line, uint8_t wanted, char *out, size_t out_sz)
+static int lc_line_display_indent(const program_t *prog, int index, const char *line)
 {
-    const char *p;
-    uint8_t idx = 0;
+    return lc_region_display_indent(prog, index, line);
+}
 
-    if (!out || out_sz == 0)
-        return;
-    out[0] = '\0';
-    if (!line)
-        return;
+static bool lc_expand_committed_preset(int row)
+{
+    const char *setup = NULL;
+    int target_row = row;
+    char err[64];
 
-    p = line;
-    while (*p)
+    (void)lc_setup_line(&setup);
+    if (!lc_presets_expand_committed(&g_leancam_ui.prog,
+                                     row,
+                                     setup,
+                                     &target_row,
+                                     err,
+                                     sizeof(err)))
     {
-        const char *open = strchr(p, '{');
-        const char *name_start;
-        size_t len;
-
-        if (!open)
-            return;
-
-        if (idx == wanted)
-        {
-            name_start = open;
-            while (name_start > line && *(name_start - 1) != '|')
-                name_start--;
-            len = (size_t)(open - name_start);
-            if (len >= out_sz)
-                len = out_sz - 1;
-            memcpy(out, name_start, len);
-            out[len] = '\0';
-            return;
-        }
-
-        idx++;
-        p = open + 1;
+        if (err[0])
+            lc_set_msg(err);
+        return false;
     }
+
+    g_leancam_ui.cur_line = target_row;
+    return true;
+}
+
+static bool lc_resolve_template_for_insert(const char *tmpl, int insert_index, char *out, uint32_t out_len)
+{
+    static const char *default_tool =
+        "TOOL T1 R0.8 ORIENT3 R_FEED120 FIN_FEED60 DOC2.0 FIN_DOC0.5 RPM800 XOFF0 ZOFF0";
+    const char *p;
+    const char *setup = NULL;
+    const char *tool = NULL;
+    char *w;
+
+    if (!tmpl || !out || out_len == 0)
+        return false;
+
+    out[0] = 0;
+    (void)lc_setup_line(&setup);
+    tool = lc_effective_tool_for_cycle(&g_leancam_ui.prog, insert_index, tmpl);
+    if (!tool && lc_line_command_is(tmpl, "TOOLCALL"))
+        tool = lc_tool_catalog_find_in_program_or_catalog(&g_leancam_ui.prog, insert_index, 1);
+    if (!tool)
+        tool = default_tool;
+
+    p = tmpl;
+    w = out;
+    while (*p && (uint32_t)(w - out) < out_len - 1u)
+    {
+        if (*p == '{')
+        {
+            const char *close = strchr(p + 1, '}');
+            char raw[UI_LC_LINE_LEN];
+            char resolved[UI_LC_LINE_LEN];
+            uint32_t n;
+            int written;
+
+            if (!close)
+                return false;
+
+            n = (uint32_t)(close - p - 1);
+            if (n >= sizeof(raw))
+                n = sizeof(raw) - 1u;
+            if (n)
+                memcpy(raw, p + 1, n);
+            raw[n] = 0;
+
+            if (raw[0] &&
+                !leancam_expr_resolve_field_value(raw,
+                                                  setup,
+                                                  tool,
+                                                  tmpl,
+                                                  resolved,
+                                                  sizeof(resolved)))
+                return false;
+
+            written = snprintf(w,
+                               out_len - (uint32_t)(w - out),
+                               "%s",
+                               raw[0] ? resolved : "");
+            if (written < 0 || (uint32_t)written >= out_len - (uint32_t)(w - out))
+                return false;
+            w += written;
+            p = close + 1;
+            continue;
+        }
+        *w++ = *p++;
+    }
+
+    *w = 0;
+    return true;
+}
+
+static void lc_insert_process_preset_template(const char *tmpl)
+{
+    char preset[MAX_LEN];
+    int insert_after;
+    int insert_index;
+
+    if (leancam_files_busy())
+    {
+        lc_set_msg("LC: file IO busy");
+        return;
+    }
+
+    if (!lc_has_setup())
+    {
+        if (leancam_ui_begin_template(&g_leancam_ui, lc_template_setup()))
+        {
+            lc_editor_reset();
+            g_lc_mode = LC_MODE_DRAFT;
+            lc_set_msg("LC: setup first");
+        }
+        return;
+    }
+
+    insert_after = g_leancam_ui.cur_line;
+    insert_index = insert_after + 1;
+    if (!lc_resolve_template_for_insert(tmpl, insert_index, preset, sizeof(preset)))
+    {
+        lc_set_msg("LC: preset unresolved");
+        return;
+    }
+
+    if (!prog_insert_after(&g_leancam_ui.prog, insert_after, preset))
+    {
+        lc_set_msg("LC: no room for preset");
+        return;
+    }
+
+    g_leancam_ui.cur_line = insert_index;
+    if (!lc_expand_committed_preset(g_leancam_ui.cur_line))
+    {
+        (void)prog_delete(&g_leancam_ui.prog, insert_index);
+        if (g_leancam_ui.cur_line >= g_leancam_ui.prog.count)
+            g_leancam_ui.cur_line = g_leancam_ui.prog.count - 1;
+        lc_set_msg("LC: preset expand failed");
+        return;
+    }
+
+    g_lc_mode = LC_MODE_PROGRAM;
+    lc_schedule_autosave();
+    lc_set_msg("LC: preset expanded");
 }
 
 static bool lc_calc_thread_lanes(const char *thread_line,
@@ -795,111 +887,10 @@ static bool lc_calc_thread_lanes(const char *thread_line,
     return true;
 }
 
-static int lc_gcode_discard_line(const char *line, void *user)
-{
-    (void)line;
-    (void)user;
-    return 1;
-}
-
-static bool lc_is_context_line(const char *line)
-{
-    return line &&
-           (strncmp(line, "SETUP|", 6) == 0 ||
-            strncmp(line, "TOOL|", 5) == 0);
-}
-
-static lc_gcode_result_t lc_preflight_program_gcode(const program_t *prog,
-                                                    int *made_out,
-                                                    int *line_out,
-                                                    char *err,
-                                                    unsigned err_len)
-{
-    int i;
-    int made = 0;
-    lc_gcode_result_t r = LC_GCODE_OK;
-
-    if (made_out) *made_out = 0;
-    if (line_out) *line_out = 0;
-    if (err && err_len > 0) err[0] = 0;
-
-    if (!prog)
-        return LC_GCODE_BAD_FIELD;
-
-    for (i = 0; i < prog->count; ++i)
-    {
-        const char *line = prog->lines[i];
-        const char *setup;
-        const char *tool;
-
-        if (!line || !line[0] || lc_is_context_line(line))
-            continue;
-
-        if (!lc_validate_tool_for_cycle(prog, i, line, err, err_len))
-        {
-            r = LC_GCODE_BAD_FIELD;
-            if (line_out) *line_out = i + 1;
-            if (made_out) *made_out = made;
-            return r;
-        }
-
-        setup = lc_find_setup_in_program(prog, i);
-        tool = lc_find_prefix_in_program(prog, i, "TOOL|");
-        r = leancam_gcode_run_program_line_ex(line, setup, tool, lc_gcode_discard_line, NULL, err, err_len);
-        if (r != LC_GCODE_OK)
-        {
-            if (line_out) *line_out = i + 1;
-            if (made_out) *made_out = made;
-            return r;
-        }
-
-        made++;
-    }
-
-    if (made_out) *made_out = made;
-    return LC_GCODE_OK;
-}
-
-static int lc_emit_program_cycle_banner(lc_gcode_file_emit_t *emit_ctx, int line_no, const char *tool)
-{
-    char buf[96];
-
-    snprintf(buf, sizeof(buf), "(--- LeanCam L%d ---)", line_no);
-    if (!lc_write_line_to_file(buf, emit_ctx))
-        return 0;
-
-    if (tool && tool[0])
-    {
-        snprintf(buf, sizeof(buf), "(--- %.84s ---)", tool);
-        if (!lc_write_line_to_file(buf, emit_ctx))
-            return 0;
-    }
-
-    return 1;
-}
-
-static int lc_emit_setup_comment(lc_gcode_file_emit_t *emit_ctx, const program_t *prog)
-{
-    const char *setup;
-    char buf[UI_LC_LINE_LEN + 12];
-
-    setup = lc_find_setup_in_program(prog, prog ? prog->count - 1 : 0);
-    if (!setup || !setup[0])
-        return 1;
-
-    snprintf(buf, sizeof(buf), "(LC %s)", setup);
-    return lc_write_line_to_file(buf, emit_ctx);
-}
-
-static void lc_generate_selected_file_gcode(void)
+static void lc_prepare_selected_file_for_run(void)
 {
     char in_path[LC_FILE_PATH_MAX];
-    char out_path[LC_FILE_PATH_MAX];
     program_t prog;
-    fs_file_t *fp;
-    lc_gcode_file_emit_t emit_ctx;
-    int cnt;
-    int i;
     int made = 0;
     int fail_line = 0;
     lc_gcode_result_t r = LC_GCODE_OK;
@@ -911,29 +902,26 @@ static void lc_generate_selected_file_gcode(void)
         return;
     }
 
-    cnt = leancam_files_count();
-    if (g_file_sel < 0 || g_file_sel >= cnt)
+    if (!lc_file_browser_selected_valid())
     {
         lc_set_msg("LC: no file selected");
         return;
     }
 
-    if (!lc_has_suffix_ci_local(leancam_files_name(g_file_sel), ".lcam"))
+    if (!lc_path_has_suffix_ci(lc_file_browser_selected_name(), ".nc"))
     {
-        lc_set_msg("LC: select .lcam");
+        lc_set_msg("LC: select .nc");
         return;
     }
+    lc_publish_msg("LC: preparing %s", lc_file_browser_selected_name());
 
-    lc_publish_msg("LC: preparing %s", leancam_files_name(g_file_sel));
-
-    if (!leancam_files_build_path(LC_FILES_DIR, g_file_sel, in_path, sizeof(in_path)) ||
-        !lc_make_gcode_path(in_path, out_path, sizeof(out_path)))
+    if (!lc_file_browser_selected_path(LC_FILES_DIR, in_path, sizeof(in_path)))
     {
         lc_set_msg("LC: path failed");
         return;
     }
 
-    lc_publish_msg("LC: loading %s", lc_basename(in_path));
+    lc_publish_msg("LC: loading %s", lc_path_basename(in_path));
 
     if (!leancam_files_load(in_path, &prog))
     {
@@ -941,94 +929,23 @@ static void lc_generate_selected_file_gcode(void)
         leancam_bridge_request_render();
         return;
     }
-
     lc_publish_msg("LC: checking cycles");
-    r = lc_preflight_program_gcode(&prog, &made, &fail_line, err, sizeof(err));
+    r = lc_run_preflight_program(&prog, err, sizeof(err), &fail_line, &made);
     if (r != LC_GCODE_OK)
     {
-        lc_set_msgf("LC: L%d %.36s", fail_line, err[0] ? err : lc_gcode_result_name(r));
+        lc_set_msgf("LC: L%d %.36s", fail_line, err[0] ? err : lc_run_gcode_result_name(r));
         leancam_bridge_request_render();
         return;
     }
 
     if (made <= 0)
     {
-        lc_set_msg("LC: no cycles");
+        lc_set_msg("LC: nothing to run");
         leancam_bridge_request_render();
         return;
     }
 
-    lc_publish_msg("LC: opening %s", lc_basename(out_path));
-
-    cnc_set_file_io_critical(true);
-    fp = fs_open(out_path, "w");
-    if (!fp)
-    {
-        cnc_set_file_io_critical(false);
-        lc_set_msg("LC: gcode open failed");
-        leancam_bridge_request_render();
-        return;
-    }
-
-    emit_ctx.fp = fp;
-    made = 0;
-    lc_publish_msg("LC: writing header");
-    if (!leancam_gcode_emit_program_header(lc_write_line_to_file, &emit_ctx))
-        r = LC_GCODE_STREAM_REJECT;
-    if (r == LC_GCODE_OK && !lc_emit_setup_comment(&emit_ctx, &prog))
-        r = LC_GCODE_STREAM_REJECT;
-
-    for (i = 0; r == LC_GCODE_OK && i < prog.count; ++i)
-    {
-        const char *line = prog.lines[i];
-        const char *setup;
-        const char *tool;
-
-        if (!line || !line[0] || lc_is_context_line(line))
-            continue;
-
-        lc_publish_msg("LC: gen L%d %.32s", i + 1, line);
-
-        setup = lc_find_setup_in_program(&prog, i);
-        tool = lc_find_prefix_in_program(&prog, i, "TOOL|");
-        if (!lc_validate_tool_for_cycle(&prog, i, line, err, sizeof(err)))
-        {
-            r = LC_GCODE_BAD_FIELD;
-            break;
-        }
-
-        if (!lc_emit_program_cycle_banner(&emit_ctx, i + 1, tool))
-        {
-            r = LC_GCODE_STREAM_REJECT;
-            break;
-        }
-
-        r = leancam_gcode_run_program_line_ex(line, setup, tool, lc_write_line_to_file, &emit_ctx, err, sizeof(err));
-        if (r != LC_GCODE_OK)
-            break;
-
-        made++;
-    }
-
-    if (r == LC_GCODE_OK && !leancam_gcode_emit_program_footer(lc_write_line_to_file, &emit_ctx))
-        r = LC_GCODE_STREAM_REJECT;
-
-    lc_publish_msg("LC: closing %s", lc_basename(out_path));
-    fs_close(fp);
-    cnc_set_file_io_critical(false);
-
-    if (r != LC_GCODE_OK)
-    {
-        (void)fs_remove(out_path);
-        lc_set_msgf("LC: L%d %.36s", i + 1, err[0] ? err : lc_gcode_result_name(r));
-        leancam_bridge_request_render();
-        return;
-    }
-
-    lc_publish_msg("LC: refreshing files");
-    lc_refresh_files();
-    lc_set_msgf("LC: saved %s", lc_basename(out_path));
-    lc_open_nc_viewer(out_path);
+    lc_set_msgf("LC: ready %d lines", made);
     leancam_bridge_request_render();
 }
 
@@ -1042,8 +959,41 @@ void __attribute__((weak)) leancam_bridge_after_autosave(void)
 
 static void lc_autosave(void)
 {
-    g_autosave_pending = false;
-    g_autosave_due_ms = 0;
+    if (leancam_files_busy())
+    {
+        if (!lc_autosave_defer_busy(mcu_millis(),
+                                    LC_AUTOSAVE_RETRY_MS,
+                                    LC_AUTOSAVE_BUSY_MAX_TRIES))
+        {
+            lc_set_msg("LC: save busy, stopped");
+            LC_BRIDGE_DBG("autosave stopped busy tries=%u", (unsigned)LC_AUTOSAVE_BUSY_MAX_TRIES);
+            return;
+        }
+
+        lc_set_msg("LC: saving");
+        LC_BRIDGE_DBG("autosave deferred try=%u",
+                      (unsigned)lc_autosave_busy_tries());
+        return;
+    }
+
+    lc_autosave_clear();
+
+    if (g_catalog_kind == LC_CATALOG_TOOLS)
+    {
+        LC_BRIDGE_DBG("tools save begin count=%d cur=%d",
+                      g_leancam_ui.prog.count,
+                      g_leancam_ui.cur_line);
+        if (lc_save_tool_catalog())
+        {
+            LC_BRIDGE_DBG("tools save ok cur=%d", g_leancam_ui.cur_line);
+            leancam_bridge_after_autosave();
+        }
+        else
+        {
+            LC_BRIDGE_DBG("tools save failed");
+        }
+        return;
+    }
 
     if (!g_leancam_ui.current_path[0])
         return;
@@ -1055,18 +1005,7 @@ static void lc_autosave(void)
     if (leancam_ui_save(&g_leancam_ui, g_leancam_ui.current_path))
     {
         leancam_files_debug_probe("bridge-save-ok");
-        if (strcmp(g_leancam_ui.current_path, LC_TOOLS_FILE) == 0)
-        {
-            leancam_files_debug_probe("bridge-tools-copy-begin");
-            g_tools_catalog = g_leancam_ui.prog;
-            g_catalogs_loaded = true;
-            leancam_files_debug_probe("bridge-tools-copy-ok");
-        }
-        else
-        {
-            leancam_files_debug_probe("bridge-program-save-ok");
-        }
-        //cnc_clear_exec_state(0x80);
+        leancam_files_debug_probe("bridge-program-save-ok");
         leancam_files_debug_probe("bridge-msg-begin");
         lc_set_msg("LC: saved");
         leancam_files_debug_probe("bridge-msg-ok");
@@ -1083,10 +1022,10 @@ static void lc_autosave(void)
 
 static void lc_schedule_autosave(void)
 {
-    g_autosave_pending = true;
+    lc_autosave_schedule(mcu_millis(), 250u);
     g_debug_snapshot_armed = true;
-    g_autosave_due_ms = mcu_millis() + 250u;
-    LC_BRIDGE_DBG("autosave scheduled due=%lu", (unsigned long)g_autosave_due_ms);
+    lc_set_msg("LC: saving");
+    LC_BRIDGE_DBG("autosave scheduled");
 }
 
 static int lc_has_setup(void)
@@ -1095,20 +1034,7 @@ static int lc_has_setup(void)
 
     for (i = 0; i < g_leancam_ui.prog.count; ++i)
     {
-        if (strncmp(g_leancam_ui.prog.lines[i], "SETUP|", 6) == 0)
-            return 1;
-    }
-
-    return 0;
-}
-
-static int lc_has_tool(void)
-{
-    int i;
-
-    for (i = 0; i < g_leancam_ui.prog.count; ++i)
-    {
-        if (strncmp(g_leancam_ui.prog.lines[i], "TOOL|", 5) == 0)
+        if (lc_line_command_is(g_leancam_ui.prog.lines[i], "SETUP"))
             return 1;
     }
 
@@ -1125,9 +1051,9 @@ static void lc_begin_setup_if_missing_then(const char *tmpl)
 
     if (!lc_has_setup())
     {
-        if (leancam_ui_begin_template(&g_leancam_ui, g_leancam_setup_template))
+        if (leancam_ui_begin_template(&g_leancam_ui, lc_template_setup()))
         {
-            g_draft_field_index = 0;
+            lc_editor_reset();
             g_lc_mode = LC_MODE_DRAFT;
             lc_set_msg("LC: setup first");
         }
@@ -1136,59 +1062,21 @@ static void lc_begin_setup_if_missing_then(const char *tmpl)
 
     if (leancam_ui_begin_template(&g_leancam_ui, tmpl))
     {
-        g_draft_field_index = 0;
+        lc_editor_reset();
         g_lc_mode = LC_MODE_DRAFT;
         lc_set_msg("LC: edit draft");
     }
 }
 
-static void lc_begin_tool_template(void)
-{
-    if (leancam_files_busy())
-    {
-        lc_set_msg("LC: file IO busy");
-        return;
-    }
-
-    if (!lc_has_setup())
-    {
-        if (leancam_ui_begin_template(&g_leancam_ui, g_leancam_setup_template))
-        {
-            g_draft_field_index = 0;
-            g_lc_mode = LC_MODE_DRAFT;
-            lc_set_msg("LC: setup first");
-        }
-        return;
-    }
-
-    if (leancam_ui_begin_template(&g_leancam_ui, g_leancam_tool_template))
-    {
-        g_draft_field_index = 0;
-        g_lc_mode = LC_MODE_DRAFT;
-        lc_set_msg("LC: tool draft");
-    }
-    else
-        lc_set_msg("LC: tool draft failed");
-}
-
-static const char *lc_catalog_template(void)
-{
-    switch (g_catalog_kind)
-    {
-        case LC_CATALOG_TOOLS: return g_leancam_tool_template;
-        default: return NULL;
-    }
-}
-
 static void lc_catalog_new_entry(void)
 {
-    const char *tmpl = lc_catalog_template();
+    const char *tmpl = lc_template_catalog((lc_menu_catalog_kind_t)g_catalog_kind);
 
     if (!tmpl)
         return;
     if (leancam_ui_begin_template(&g_leancam_ui, tmpl))
     {
-        g_draft_field_index = 0;
+        lc_editor_reset();
         g_lc_mode = LC_MODE_DRAFT;
         lc_set_msg("LC: catalog draft");
     }
@@ -1206,16 +1094,13 @@ static void lc_catalog_duplicate_entry(void)
     if (prog_insert_after(&g_leancam_ui.prog, g_leancam_ui.cur_line, g_leancam_ui.prog.lines[g_leancam_ui.cur_line]))
     {
         g_leancam_ui.cur_line++;
-        lc_autosave();
+        lc_schedule_autosave();
         lc_set_msg("LC: entry copied");
     }
 }
 
 static void lc_open_catalog(lc_catalog_kind_t kind)
 {
-    const char *path = NULL;
-    bool loaded = false;
-
     if (leancam_files_busy())
     {
         lc_set_msg("LC: file IO busy");
@@ -1224,27 +1109,25 @@ static void lc_open_catalog(lc_catalog_kind_t kind)
 
     switch (kind)
     {
-        case LC_CATALOG_TOOLS: path = LC_TOOLS_FILE; break;
+        case LC_CATALOG_TOOLS: break;
         default: return;
     }
 
-    loaded = leancam_ui_load(&g_leancam_ui, path);
-    if (!loaded)
+    leancam_ui_new(&g_leancam_ui);
+    lc_presets_clear_meta();
+
+    if (kind == LC_CATALOG_TOOLS)
     {
-        leancam_ui_new(&g_leancam_ui);
-        strncpy(g_leancam_ui.current_path, path, sizeof(g_leancam_ui.current_path) - 1);
-        g_leancam_ui.current_path[sizeof(g_leancam_ui.current_path) - 1] = 0;
+        lc_tool_catalog_load_from_storage(LC_TOOLS_FILE);
+        lc_tool_catalog_copy_to_program(&g_leancam_ui.prog);
     }
-    lc_seed_default_catalog(kind, &g_leancam_ui.prog);
+
     if (g_leancam_ui.prog.count > 0 && g_leancam_ui.cur_line < 0)
         g_leancam_ui.cur_line = 0;
 
     g_catalog_kind = kind;
     g_prog_scroll = 0;
     g_lc_mode = LC_MODE_PROGRAM;
-    if (kind == LC_CATALOG_TOOLS)
-        g_tools_catalog = g_leancam_ui.prog;
-    g_catalogs_loaded = true;
     lc_set_msg("LC: tools");
 }
 
@@ -1258,14 +1141,51 @@ static void lc_delete_current_line(void)
 
     if (g_leancam_ui.cur_line == 0 &&
         g_leancam_ui.prog.count > 0 &&
-        strncmp(g_leancam_ui.prog.lines[0], "SETUP|", 6) == 0)
+        lc_line_command_is(g_leancam_ui.prog.lines[0], "SETUP"))
     {
         lc_set_msg("LC: setup locked");
         return;
     }
 
     leancam_ui_delete_line(&g_leancam_ui);
-    lc_autosave();
+    lc_schedule_autosave();
+}
+
+static bool lc_close_active_region_with_g80(void)
+{
+    int start;
+    int end;
+
+    if (leancam_files_busy())
+    {
+        lc_set_msg("LC: file IO busy");
+        return true;
+    }
+
+    if (g_leancam_ui.draft_active ||
+        g_catalog_kind != LC_CATALOG_NONE ||
+        g_leancam_ui.cur_line < 0 ||
+        g_leancam_ui.cur_line >= g_leancam_ui.prog.count)
+        return false;
+
+    if (!lc_find_raw_region(&g_leancam_ui.prog, g_leancam_ui.cur_line, &start, &end))
+        return false;
+    if (end >= start && end < g_leancam_ui.prog.count &&
+        lc_region_is_end(g_leancam_ui.prog.lines[end]))
+        return false;
+
+    if (!prog_insert_after(&g_leancam_ui.prog, end, "G80"))
+    {
+        lc_set_msg("LC: no room for G80");
+        return true;
+    }
+
+    g_leancam_ui.cur_line = end + 1;
+    lc_ensure_program_visible();
+    lc_set_msg("LC: G80 inserted");
+    lc_schedule_autosave();
+    leancam_bridge_request_render();
+    return true;
 }
 
 static void lc_new_file_finish(void)
@@ -1278,27 +1198,28 @@ static void lc_new_file_finish(void)
         return;
     }
 
-    if (!g_new_file_name[0])
+    if (lc_file_prompt_name_empty())
     {
         lc_set_msg("LC: empty name");
         return;
     }
 
-    if (!leancam_files_make_new_path(LC_FILES_DIR, g_new_file_name, path, sizeof(path)))
+    if (!leancam_files_make_new_path(LC_FILES_DIR, lc_file_prompt_name(), path, sizeof(path)))
     {
         lc_set_msg("LC: path failed");
         return;
     }
 
     leancam_ui_new(&g_leancam_ui);
+    lc_presets_clear_meta();
     strncpy(g_leancam_ui.current_path, path, sizeof(g_leancam_ui.current_path) - 1);
     g_leancam_ui.current_path[sizeof(g_leancam_ui.current_path) - 1] = 0;
 
     g_prog_scroll = 0;
 
-    if (leancam_ui_begin_template(&g_leancam_ui, g_leancam_setup_template))
+    if (leancam_ui_begin_template(&g_leancam_ui, lc_template_setup()))
     {
-        g_draft_field_index = 0;
+        lc_editor_reset();
         g_lc_mode = LC_MODE_DRAFT;
         lc_set_msg("LC: new file, setup first");
     }
@@ -1309,139 +1230,60 @@ static void lc_new_file_finish(void)
     }
 }
 
-static void lc_nc_clear_window(void)
+static void lc_duplicate_file_finish(void)
 {
-    int i;
+    static program_t copy_prog;
+    char path[LC_FILE_PATH_MAX];
+    const char *source_path;
 
-    for (i = 0; i < UI_LC_MAX_LINES; ++i)
-        g_nc_lines[i][0] = 0;
-
-    g_nc_line_count = 0;
-    g_nc_eof = false;
-}
-
-static bool lc_nc_read_line(fs_file_t *fp, char *out, int out_sz)
-{
-    int pos = 0;
-    bool got = false;
-
-    if (!fp || !out || out_sz <= 0)
-        return false;
-
-    while (fs_available(fp))
+    if (leancam_files_busy())
     {
-        char c = 0;
-
-        if (!fs_read(fp, (uint8_t *)&c, 1))
-            break;
-
-        got = true;
-        if (c == '\r')
-            continue;
-
-        if (c == '\n')
-            break;
-
-        if (pos < out_sz - 1)
-            out[pos++] = c;
-    }
-
-    out[pos] = 0;
-    return got;
-}
-
-static void lc_nc_capture_setup_comment(const char *line)
-{
-    const char *p;
-    const char *end;
-    size_t n;
-
-    if (!line || g_nc_setup_line[0])
-        return;
-
-    p = strstr(line, "SETUP|");
-    if (!p)
-        return;
-
-    end = strchr(p, ')');
-    if (!end)
-        end = p + strlen(p);
-
-    n = (size_t)(end - p);
-    if (n >= sizeof(g_nc_setup_line))
-        n = sizeof(g_nc_setup_line) - 1u;
-    memcpy(g_nc_setup_line, p, n);
-    g_nc_setup_line[n] = 0;
-}
-
-static bool lc_nc_load_window(void)
-{
-    fs_file_t *fp;
-    char throwaway[UI_LC_LINE_LEN];
-    int skipped = 0;
-    int row = 0;
-
-    lc_nc_clear_window();
-    g_nc_setup_line[0] = 0;
-
-    if (!g_nc_path[0])
-        return false;
-
-    cnc_set_file_io_critical(true);
-    fp = fs_open(g_nc_path, "r");
-    if (!fp)
-    {
-        cnc_set_file_io_critical(false);
-        return false;
-    }
-
-    while (skipped < g_nc_top_line && lc_nc_read_line(fp, throwaway, sizeof(throwaway)))
-    {
-        lc_nc_capture_setup_comment(throwaway);
-        skipped++;
-    }
-
-    while (row < UI_LC_MAX_LINES && lc_nc_read_line(fp, g_nc_lines[row], UI_LC_LINE_LEN))
-    {
-        lc_nc_capture_setup_comment(g_nc_lines[row]);
-        row++;
-    }
-
-    g_nc_line_count = (uint8_t)row;
-    g_nc_eof = !fs_available(fp);
-    if (g_nc_line_count == 0)
-        g_nc_selected_row = 0;
-    else if (g_nc_selected_row >= g_nc_line_count)
-        g_nc_selected_row = g_nc_line_count - 1;
-
-    fs_close(fp);
-    cnc_set_file_io_critical(false);
-
-    return true;
-}
-
-static void lc_open_nc_viewer(const char *path)
-{
-    if (!path || !path[0])
-    {
-        lc_set_msg("LC: no nc path");
+        lc_set_msg("LC: file IO busy");
         return;
     }
 
-    strncpy(g_nc_path, path, sizeof(g_nc_path) - 1);
-    g_nc_path[sizeof(g_nc_path) - 1] = 0;
-    g_nc_top_line = 0;
-    g_nc_selected_row = 0;
-
-    if (!lc_nc_load_window())
+    source_path = lc_file_prompt_duplicate_source();
+    if (!source_path[0])
     {
-        g_nc_path[0] = 0;
-        lc_set_msg("LC: nc open failed");
+        lc_file_prompt_finish_duplicate();
+        lc_set_msg("LC: copy source lost");
         return;
     }
 
-    g_lc_mode = LC_MODE_NC_VIEW;
-    lc_set_msg("LC: nc viewer");
+    if (lc_file_prompt_name_empty())
+    {
+        lc_set_msg("LC: empty name");
+        return;
+    }
+
+    if (!leancam_files_make_new_path(LC_FILES_DIR, lc_file_prompt_name(), path, sizeof(path)))
+    {
+        lc_set_msg("LC: path failed");
+        return;
+    }
+
+    if (strcmp(path, source_path) == 0)
+    {
+        lc_set_msg("LC: same name");
+        return;
+    }
+
+    if (!leancam_files_load(source_path, &copy_prog))
+    {
+        lc_set_msg("LC: copy load failed");
+        return;
+    }
+
+    if (!leancam_files_save(path, &copy_prog))
+    {
+        lc_set_msg("LC: copy save failed");
+        return;
+    }
+
+    lc_file_prompt_finish_duplicate();
+    lc_refresh_files();
+    g_lc_mode = LC_MODE_FILES;
+    lc_set_msg("LC: file copied");
 }
 
 static void lc_open_selected_file(void)
@@ -1455,20 +1297,14 @@ static void lc_open_selected_file(void)
         return;
     }
 
-    if (!leancam_files_build_path(LC_FILES_DIR, g_file_sel, path, sizeof(path)))
+    if (!lc_file_browser_selected_path(LC_FILES_DIR, path, sizeof(path)))
     {
         lc_set_msg("LC: build path failed");
         return;
     }
 
-    name = leancam_files_name(g_file_sel);
-    if (lc_has_suffix_ci_local(name, ".nc"))
-    {
-        lc_open_nc_viewer(path);
-        return;
-    }
-
-    if (!lc_has_suffix_ci_local(name, ".lcam"))
+    name = lc_file_browser_selected_name();
+    if (!lc_path_has_suffix_ci(name, ".nc"))
     {
         lc_set_msg("LC: unsupported file");
         return;
@@ -1479,6 +1315,7 @@ static void lc_open_selected_file(void)
         lc_set_msg("LC: load failed");
         return;
     }
+    lc_presets_clear_meta();
 
     g_prog_scroll = 0;
     g_lc_mode = LC_MODE_PROGRAM;
@@ -1487,6 +1324,8 @@ static void lc_open_selected_file(void)
 
 static void lc_ensure_program_visible(void)
 {
+    int visible_lines = (g_catalog_kind == LC_CATALOG_TOOLS) ? LC_VISIBLE_TOOL_LINES : LC_VISIBLE_PROGRAM_LINES;
+
     if (g_leancam_ui.cur_line < 0)
     {
         g_prog_scroll = 0;
@@ -1499,8 +1338,8 @@ static void lc_ensure_program_visible(void)
     if (g_leancam_ui.cur_line < g_prog_scroll)
         g_prog_scroll = g_leancam_ui.cur_line;
 
-    if (g_leancam_ui.cur_line >= g_prog_scroll + LC_VISIBLE_PROGRAM_LINES)
-        g_prog_scroll = g_leancam_ui.cur_line - LC_VISIBLE_PROGRAM_LINES + 1;
+    if (g_leancam_ui.cur_line >= g_prog_scroll + visible_lines)
+        g_prog_scroll = g_leancam_ui.cur_line - visible_lines + 1;
 
     if (g_prog_scroll < 0)
         g_prog_scroll = 0;
@@ -1508,34 +1347,39 @@ static void lc_ensure_program_visible(void)
 
 void leancam_bridge_init(void)
 {
+    lc_app_init();
+    lc_autosave_init();
+    lc_run_init();
+    leancam_menu_set_program_other_templates(false);
     leancam_files_init();
     leancam_ui_init(&g_leancam_ui);
 
-    g_new_file_name[0] = 0;
-    g_nc_path[0] = 0;
+    lc_file_prompt_clear();
     g_prog_scroll = 0;
-    g_nc_top_line = 0;
-    g_nc_selected_row = 0;
-    g_file_sel = 0;
-    g_files_ready = false;
-    g_next_file_refresh_ms = 0;
+    lc_nc_viewer_init();
+    lc_file_browser_init();
     g_catalog_kind = LC_CATALOG_NONE;
-    prog_init(&g_tools_catalog);
-    g_catalogs_loaded = false;
+    lc_tool_catalog_init();
     lc_set_msg("LC: init");
 
 #ifdef LEANCAM_RP2350_STANDALONE_DEMO
 #ifdef ENABLE_SD_CARD_V2
     g_lc_mode = LC_MODE_FILES;
-    g_next_file_refresh_ms = mcu_millis() + 250u;
+    lc_file_browser_mark_waiting(mcu_millis() + 250u);
     lc_set_msg("LC: waiting for SD");
 #else
     prog_add(&g_leancam_ui.prog,
-             "SETUP|L{75}|OD{50}|ID{0}|CLAMP{8}|EXTRA{3}|CLR{1}");
+             "SETUP L{75} OD{50} ID{0} CLAMP{8} EXTRA{3} CLR{1}");
     prog_add(&g_leancam_ui.prog,
-             "TOOL|T{1}|R{0.8}|ORIENT{3}|R_FEED{120}|FIN_FEED{60}|DOC{2.0}|FIN_DOC{0.5}|XOFF{0}|ZOFF{0}");
+             "TOOL T1 R0.8 ORIENT3 R_FEED120 FIN_FEED60 DOC2.0 FIN_DOC0.5 RPM800 XOFF0 ZOFF0");
     prog_add(&g_leancam_ui.prog,
-             "OD|T{1}|D1{50}|Z1{0}|Z2{-35}|D2{32}|RND{0}|CHMF{1}|DT{32}|Q{0}");
+             "G71 U2 R1 X0.5 Z0.5 F120");
+    prog_add(&g_leancam_ui.prog,
+             "G1 X50 Z0");
+    prog_add(&g_leancam_ui.prog,
+             "G1 X32 Z-35 C1 R0");
+    prog_add(&g_leancam_ui.prog,
+             "G1 X50 Z-35");
     g_leancam_ui.cur_line = 0;
     g_lc_mode = LC_MODE_PROGRAM;
     lc_set_msg("LC: RP2350 demo, no SD");
@@ -1552,21 +1396,18 @@ void leancam_bridge_tick(void)
     uint32_t now;
 
     now = mcu_millis();
-    if (g_autosave_pending &&
-        (int32_t)(now - g_autosave_due_ms) >= 0 &&
-        !g_leancam_ui.draft_active)
+    if (lc_autosave_due(now) && !g_leancam_ui.draft_active)
     {
         lc_autosave();
     }
 
-    if (g_lc_mode != LC_MODE_FILES || g_files_ready || leancam_files_busy())
+    lc_serial_debug_gcode_tick(now);
+
+    if (g_lc_mode != LC_MODE_FILES || lc_file_browser_ready() || leancam_files_busy())
         return;
 
-    if (g_next_file_refresh_ms != 0 &&
-        (int32_t)(now - g_next_file_refresh_ms) < 0)
-    {
+    if (!lc_file_browser_should_retry(now))
         return;
-    }
 
     lc_refresh_files();
 }
@@ -1596,11 +1437,13 @@ static int lc_cam_emit_gcode_line(const char *line, void *user)
     return lc_cam_emit_line(line, user) ? 1 : 0;
 }
 
-static void lc_run_selected_line_stream(const char *line, const char *setup, const char *tool, int run_line_no)
+static void lc_run_selected_line_stream(const program_t *prog, int start, int end)
 {
     uint32_t line_no = 10u;
     lc_gcode_result_t r = LC_GCODE_OK;
     char err[64];
+    int err_line = start + 1;
+    int made = 0;
 
     err[0] = 0;
 
@@ -1614,33 +1457,18 @@ static void lc_run_selected_line_stream(const char *line, const char *setup, con
         r = LC_GCODE_STREAM_REJECT;
 
     if (r == LC_GCODE_OK)
-    {
-        char buf[96];
+        r = lc_run_emit_selected_range(prog, start, end, lc_cam_emit_gcode_line, &line_no,
+                                       err, sizeof(err), &err_line, &made);
 
-        snprintf(buf, sizeof(buf), "(--- LeanCam L%d ---)", run_line_no);
-        if (!lc_cam_emit_line(buf, &line_no))
-            r = LC_GCODE_STREAM_REJECT;
-
-        if (r == LC_GCODE_OK && tool && tool[0])
-        {
-            snprintf(buf, sizeof(buf), "(--- %.84s ---)", tool);
-            if (!lc_cam_emit_line(buf, &line_no))
-                r = LC_GCODE_STREAM_REJECT;
-        }
-    }
-
-    if (r == LC_GCODE_OK)
-        r = leancam_gcode_run_program_line_ex(line, setup, tool, lc_cam_emit_gcode_line, &line_no, err, sizeof(err));
-
-    if (r == LC_GCODE_OK && !leancam_gcode_emit_program_footer(lc_cam_emit_gcode_line, &line_no))
+    if (r == LC_GCODE_OK && !leancam_gcode_emit_program_footer_ex(lc_cam_emit_gcode_line, &line_no, err, sizeof(err)))
         r = LC_GCODE_STREAM_REJECT;
 
     cam_stream_finish();
 
     if (r == LC_GCODE_OK)
-        lc_set_msg("LC: stream run sent");
+        lc_set_msgf("LC: stream L%d-L%d sent", start + 1, end + 1);
     else
-        lc_set_msgf("LC: L%d %.32s", run_line_no, err[0] ? err : lc_gcode_result_name(r));
+        lc_set_msgf("LC: L%d %.32s", err_line, err[0] ? err : lc_run_gcode_result_name(r));
 }
 #endif
 
@@ -1720,29 +1548,13 @@ static int lc_direct_stream_append(const char *line, void *user)
     return 1;
 }
 
-static bool lc_direct_stream_banner(int run_line_no, const char *tool, lc_direct_stream_emit_t *ctx)
-{
-    char buf[96];
-
-    snprintf(buf, sizeof(buf), "(--- LeanCam L%d ---)", run_line_no);
-    if (!lc_direct_stream_append(buf, ctx))
-        return false;
-
-    if (tool && tool[0])
-    {
-        snprintf(buf, sizeof(buf), "(--- %.84s ---)", tool);
-        if (!lc_direct_stream_append(buf, ctx))
-            return false;
-    }
-
-    return true;
-}
-
-static void lc_run_selected_line_direct_stream(const char *line, const char *setup, const char *tool, int run_line_no)
+static void lc_run_selected_line_direct_stream(const program_t *prog, int start, int end)
 {
     lc_direct_stream_emit_t emit_ctx;
     lc_gcode_result_t r = LC_GCODE_OK;
     char err[64];
+    int err_line = start + 1;
+    int made = 0;
 
     err[0] = 0;
     emit_ctx.lines = 0;
@@ -1765,20 +1577,18 @@ static void lc_run_selected_line_direct_stream(const char *line, const char *set
     if (!leancam_gcode_emit_program_header(lc_direct_stream_append, &emit_ctx))
         r = LC_GCODE_STREAM_REJECT;
 
-    if (r == LC_GCODE_OK && !lc_direct_stream_banner(run_line_no, tool, &emit_ctx))
-        r = LC_GCODE_STREAM_REJECT;
-
     if (r == LC_GCODE_OK)
-        r = leancam_gcode_run_program_line_ex(line, setup, tool, lc_direct_stream_append, &emit_ctx, err, sizeof(err));
+        r = lc_run_emit_selected_range(prog, start, end, lc_direct_stream_append, &emit_ctx,
+                                       err, sizeof(err), &err_line, &made);
 
-    if (r == LC_GCODE_OK && !leancam_gcode_emit_program_footer(lc_direct_stream_append, &emit_ctx))
+    if (r == LC_GCODE_OK && !leancam_gcode_emit_program_footer_ex(lc_direct_stream_append, &emit_ctx, err, sizeof(err)))
         r = LC_GCODE_STREAM_REJECT;
 
     if (r != LC_GCODE_OK)
     {
         lc_direct_stream_reset();
-        lc_set_msgf("LC: L%d %.32s", run_line_no,
-                    emit_ctx.overflow ? "stream overflow" : (err[0] ? err : lc_gcode_result_name(r)));
+        lc_set_msgf("LC: L%d %.32s", err_line,
+                    emit_ctx.overflow ? "stream overflow" : (err[0] ? err : lc_run_gcode_result_name(r)));
         return;
     }
 
@@ -1791,7 +1601,7 @@ static void lc_run_selected_line_direct_stream(const char *line, const char *set
     g_lc_direct_stream_pos = 0;
     g_lc_direct_stream_active = true;
     grbl_stream_readonly(lc_direct_stream_getc, lc_direct_stream_available, lc_direct_stream_clear);
-    lc_set_msgf("LC: queued L%d %lu lines", run_line_no, (unsigned long)emit_ctx.lines);
+    lc_set_msgf("LC: queued L%d-L%d %lu lines", start + 1, end + 1, (unsigned long)emit_ctx.lines);
 }
 #endif
 
@@ -1799,11 +1609,13 @@ static void lc_run_selected_line(void)
 {
     char out_path[LC_FILE_PATH_MAX];
     const char *line;
-    const char *setup;
-    const char *tool;
     fs_file_t *fp;
     lc_gcode_file_emit_t emit_ctx;
     int run_line_no;
+    int run_start;
+    int run_end;
+    int err_line;
+    int made;
     lc_gcode_result_t r;
     char err[64];
 
@@ -1815,45 +1627,61 @@ static void lc_run_selected_line(void)
 
     line = g_leancam_ui.prog.lines[g_leancam_ui.cur_line];
     run_line_no = g_leancam_ui.cur_line + 1;
-    setup = lc_find_setup_in_program(&g_leancam_ui.prog, g_leancam_ui.cur_line);
-    tool = lc_tool_for_cycle_or_context(&g_leancam_ui.prog, g_leancam_ui.cur_line, line);
+    run_start = g_leancam_ui.cur_line;
+    run_end = g_leancam_ui.cur_line;
 
-    if (!setup)
+    if (lc_find_raw_region(&g_leancam_ui.prog, g_leancam_ui.cur_line, &run_start, &run_end))
+        lc_debug_dump_nc_range(&g_leancam_ui.prog, run_start, run_end, "selected-run");
+
+    if (!lc_find_setup_in_program(&g_leancam_ui.prog, run_start))
     {
         lc_set_msg("LC: no setup");
         return;
     }
 
     err[0] = 0;
-    if (!lc_validate_tool_for_cycle(&g_leancam_ui.prog, g_leancam_ui.cur_line, line, err, sizeof(err)))
+    err_line = run_start + 1;
+    made = 0;
+    r = leancam_gcode_emit_program_header(lc_gcode_discard_line, NULL) ? LC_GCODE_OK : LC_GCODE_STREAM_REJECT;
+    if (r == LC_GCODE_OK)
+        r = lc_run_emit_selected_range(&g_leancam_ui.prog, run_start, run_end, lc_gcode_discard_line, NULL,
+                                       err, sizeof(err), &err_line, &made);
+    if (r == LC_GCODE_OK && !leancam_gcode_emit_program_footer_ex(lc_gcode_discard_line, NULL, err, sizeof(err)))
+        r = LC_GCODE_STREAM_REJECT;
+    if (r != LC_GCODE_OK)
     {
-        lc_set_msgf("LC: L%d %.32s", run_line_no, err[0] ? err : "tool invalid");
+        lc_set_msgf("LC: L%d %.32s", err_line, err[0] ? err : lc_run_gcode_result_name(r));
         return;
     }
 
 #if LC_SELECTED_RUN_USE_STREAM
-    lc_run_selected_line_stream(line, setup, tool, run_line_no);
+    lc_run_selected_line_stream(&g_leancam_ui.prog, run_start, run_end);
     return;
 #endif
 
 #ifdef LEANCAM_RP2350_DIRECT_STREAM
-    lc_run_selected_line_direct_stream(line, setup, tool, run_line_no);
+    lc_run_selected_line_direct_stream(&g_leancam_ui.prog, run_start, run_end);
     return;
 #endif
 
-    if (!lc_make_lrun_path(line, run_line_no, out_path, sizeof(out_path)))
+    if (!lc_path_make_lrun(LC_FILES_DIR, g_leancam_ui.current_path, line, run_line_no, out_path, sizeof(out_path)))
     {
         lc_set_msg("LC: lrun path failed");
         return;
     }
 
-    lc_publish_msg("LC: writing %s", lc_basename(out_path));
+    lc_publish_msg("LC: writing %s", lc_path_basename(out_path));
 
-    cnc_set_file_io_critical(true);
+    if (!lc_resource_file_begin("selected-run"))
+    {
+        lc_set_msg("LC: file IO busy");
+        leancam_bridge_request_render();
+        return;
+    }
     fp = fs_open(out_path, "w");
     if (!fp)
     {
-        cnc_set_file_io_critical(false);
+        lc_resource_file_end();
         lc_set_msg("LC: lrun open failed");
         leancam_bridge_request_render();
         return;
@@ -1865,341 +1693,152 @@ static void lc_run_selected_line(void)
     if (!leancam_gcode_emit_program_header(lc_write_line_to_file, &emit_ctx))
         r = LC_GCODE_STREAM_REJECT;
 
-    if (r == LC_GCODE_OK && !lc_emit_program_cycle_banner(&emit_ctx, run_line_no, tool))
-        r = LC_GCODE_STREAM_REJECT;
-
     if (r == LC_GCODE_OK)
-        r = leancam_gcode_run_program_line_ex(line, setup, tool, lc_write_line_to_file, &emit_ctx, err, sizeof(err));
+        r = lc_run_emit_selected_range(&g_leancam_ui.prog, run_start, run_end, lc_write_line_to_file, &emit_ctx,
+                                       err, sizeof(err), &err_line, &made);
 
-    if (r == LC_GCODE_OK && !leancam_gcode_emit_program_footer(lc_write_line_to_file, &emit_ctx))
+    if (r == LC_GCODE_OK && !leancam_gcode_emit_program_footer_ex(lc_write_line_to_file, &emit_ctx, err, sizeof(err)))
         r = LC_GCODE_STREAM_REJECT;
 
     fs_close(fp);
-    cnc_set_file_io_critical(false);
+    lc_resource_file_end();
 
     if (r == LC_GCODE_OK)
     {
-        lc_publish_msg("LC: running %s", lc_basename(out_path));
+        lc_publish_msg("LC: running %s", lc_path_basename(out_path));
         fs_file_run(out_path);
     }
     else
     {
-        lc_set_msgf("LC: L%d %.32s", run_line_no, err[0] ? err : lc_gcode_result_name(r));
+        lc_set_msgf("LC: L%d %.32s", err_line, err[0] ? err : lc_run_gcode_result_name(r));
     }
 }
 
 
-static uint8_t lc_count_brace_fields(const char *s)
+static void lc_draft_log_state(const char *event)
 {
-    uint8_t n = 0;
-    const char *p = s;
-    const char *q;
+#if LC_DRAFT_EDIT_SERIAL_DEBUG
+    char field[24];
+    uint8_t count = lc_count_brace_fields(g_leancam_ui.draft_line);
 
-    while (p && *p)
-    {
-        p = strchr(p, '{');
-        if (!p)
-            break;
-
-        q = strchr(p + 1, '}');
-        if (!q)
-            break;
-
-        if (n < 250u)
-            n++;
-
-        p = q + 1;
-    }
-
-    return n;
+    lc_editor_field_name(&g_leancam_ui, g_draft_field_index, field, sizeof(field));
+    LC_DRAFT_DBG("%s idx=%u/%u field=%s input=%.24s line=%.72s",
+                 event ? event : "state",
+                 (unsigned)g_draft_field_index,
+                 (unsigned)count,
+                 field,
+                 g_leancam_ui.input_buf,
+                 g_leancam_ui.draft_line);
+#else
+    (void)event;
+#endif
 }
 
-static void lc_clear_input_buf(void)
-{
-    g_leancam_ui.input_buf[0] = 0;
-}
-
-static void lc_input_toggle_sign(void)
-{
-    char *buf = g_leancam_ui.input_buf;
-    size_t len;
-
-    if (buf[0] == '-')
-    {
-        memmove(buf, buf + 1, strlen(buf));
-        return;
-    }
-
-    len = strlen(buf);
-    if (len + 1u < sizeof(g_leancam_ui.input_buf))
-    {
-        memmove(buf + 1, buf, len + 1u);
-        buf[0] = '-';
-    }
-}
-
-static void lc_input_add_dot(void)
-{
-    char *buf = g_leancam_ui.input_buf;
-    size_t len;
-
-    if (strchr(buf, '.'))
-        return;
-
-    len = strlen(buf);
-    if (len + 1u >= sizeof(g_leancam_ui.input_buf))
-        return;
-
-    if (len == 0u)
-    {
-        if (sizeof(g_leancam_ui.input_buf) > 2u)
-        {
-            buf[0] = '0';
-            buf[1] = '.';
-            buf[2] = 0;
-        }
-        return;
-    }
-
-    buf[len] = '.';
-    buf[len + 1u] = 0;
-}
-
-static int lc_find_brace_field(const char *s, uint8_t field_index, const char **open_out, const char **close_out);
-
-static bool lc_active_field_is_negative(void)
-{
-    const char *open;
-    const char *close;
-    const char *p;
-
-    if (!g_leancam_ui.draft_active)
-        return false;
-
-    if (!lc_find_brace_field(g_leancam_ui.draft_line, g_draft_field_index, &open, &close))
-        return false;
-
-    p = open + 1;
-    while (p < close && *p == ' ')
-        p++;
-    if (p < close && *p == '(')
-    {
-        p++;
-        while (p < close && *p == ' ')
-            p++;
-    }
-
-    return p < close && *p == '-';
-}
-
-static void lc_input_digit(char digit)
-{
-    if (g_leancam_ui.input_buf[0] == 0 && lc_active_field_is_negative())
-        lc_input_toggle_sign();
-
-    leancam_ui_input_char(&g_leancam_ui, digit);
-}
-
-
-static int lc_find_brace_field(const char *s, uint8_t field_index, const char **open_out, const char **close_out)
-{
-    const char *scan;
-    uint8_t idx = 0;
-    if (open_out) *open_out = NULL;
-    if (close_out) *close_out = NULL;
-    if (!s) return 0;
-    scan = s;
-    while (*scan)
-    {
-        const char *o = strchr(scan, '{');
-        const char *c = o ? strchr(o + 1, '}') : NULL;
-        if (!o || !c) return 0;
-        if (idx == field_index)
-        {
-            if (open_out) *open_out = o;
-            if (close_out) *close_out = c;
-            return 1;
-        }
-        idx++;
-        scan = c + 1;
-    }
-    return 0;
-}
-
-static int lc_replace_span(char *line, uint32_t line_len, const char *span_start, const char *span_end_exclusive, const char *replacement)
-{
-    /* This edits g_leancam_ui.draft_line, not the visible screen row.
-     * Use MAX_LEN here; UI_LC_LINE_LEN may be only a display/snapshot limit.
-     */
-    char tmp[MAX_LEN];
-    uint32_t prefix_len;
-    if (!line || line_len == 0 || !span_start || !span_end_exclusive || span_end_exclusive < span_start) return 0;
-    if (!replacement) replacement = "";
-    prefix_len = (uint32_t)(span_start - line);
-    if (prefix_len >= sizeof(tmp)) prefix_len = sizeof(tmp) - 1u;
-    if (prefix_len) memcpy(tmp, line, prefix_len);
-    tmp[prefix_len] = 0;
-    strncat(tmp, replacement, sizeof(tmp) - strlen(tmp) - 1u);
-    strncat(tmp, span_end_exclusive, sizeof(tmp) - strlen(tmp) - 1u);
-    strncpy(line, tmp, line_len - 1u);
-    line[line_len - 1u] = 0;
-    return 1;
-}
 
 static void lc_build_draft_preview_line(char *out, uint32_t out_len)
 {
-    const char *open;
-    const char *close;
-
-    if (!out || out_len == 0)
-        return;
-
-    out[0] = 0;
-    if (!g_leancam_ui.draft_active)
-        return;
-
-    strncpy(out, g_leancam_ui.draft_line, out_len - 1u);
-    out[out_len - 1u] = 0;
-
-    if (!g_leancam_ui.input_buf[0])
-        return;
-    if (!lc_find_brace_field(out, g_draft_field_index, &open, &close))
-        return;
-
-    (void)lc_replace_span(out, out_len, open + 1, close, g_leancam_ui.input_buf);
+    lc_editor_build_preview_line(&g_leancam_ui, out, out_len);
 }
 
 static int lc_accept_active_field_bridge_owned(void)
 {
-    const char *open;
-    const char *close;
-    char accepted[LEANCAM_INPUT_MAX];
-    char raw[LEANCAM_INPUT_MAX];
-    uint32_t n;
-    uint8_t field_count;
     int draft_index;
     const char *setup = NULL;
     const char *tool = NULL;
+    char preview_line[MAX_LEN];
+    char err[40];
 
     if (!g_leancam_ui.draft_active) return 0;
 
-    field_count = lc_count_brace_fields(g_leancam_ui.draft_line);
-    if (field_count == 0 || g_draft_field_index >= field_count) return 0;
+    lc_draft_log_state("accept begin");
 
-    if (!lc_find_brace_field(g_leancam_ui.draft_line, g_draft_field_index, &open, &close)) return 0;
-
-    if (g_leancam_ui.input_buf[0])
-    {
-        strncpy(accepted, g_leancam_ui.input_buf, sizeof(accepted) - 1u);
-        accepted[sizeof(accepted) - 1u] = 0;
-    }
+    if (g_leancam_ui.draft_replace_index >= 0)
+        draft_index = g_leancam_ui.draft_replace_index;
     else
+        draft_index = g_leancam_ui.draft_insert_after + 1;
+    (void)lc_setup_line(&setup);
+    lc_build_draft_preview_line(preview_line, sizeof(preview_line));
+    tool = lc_effective_tool_for_draft(&g_leancam_ui.prog, draft_index, g_leancam_ui.draft_line, preview_line);
+
+    if (!lc_editor_accept_active_field(&g_leancam_ui, setup, tool, err, sizeof(err)))
     {
-        /* Empty input accepts the current resolved value. This prevents default
-         * expressions such as (TOOL.R_DOC) from being saved into .lcam lines.
-         */
-        n = (uint32_t)(close - open - 1);
-        if (n >= sizeof(raw)) n = sizeof(raw) - 1u;
-        memcpy(raw, open + 1, n);
-        raw[n] = 0;
-
-        if (g_leancam_ui.draft_replace_index >= 0)
-            draft_index = g_leancam_ui.draft_replace_index;
-        else
-            draft_index = g_leancam_ui.draft_insert_after + 1;
-        (void)lc_setup_line(&setup);
-        tool = lc_tool_for_cycle_or_context(&g_leancam_ui.prog, draft_index, g_leancam_ui.draft_line);
-        if (!leancam_expr_resolve_field_value(raw, setup, tool, g_leancam_ui.draft_line, accepted, sizeof(accepted)) ||
-            !accepted[0])
-        {
-            size_t raw_len = strlen(raw);
-            if (raw_len >= 2u && raw[0] == '(' && raw[raw_len - 1u] == ')')
-            {
-                raw_len -= 2u;
-                if (raw_len >= sizeof(accepted)) raw_len = sizeof(accepted) - 1u;
-                memcpy(accepted, raw + 1, raw_len);
-                accepted[raw_len] = 0;
-            }
-            else
-            {
-                lc_set_msg("LC: unresolved default");
-                return 0;
-            }
-        }
-    }
-
-    /* IMPORTANT:
-     * LeanCam file syntax is NAME{value}.  Do not replace the whole
-     * {value} span, otherwise NAME{25} becomes NAME25 and the next '|'
-     * separator is visually/logically lost.
-     * Replace only the content between braces.
-     */
-    if (!lc_replace_span(g_leancam_ui.draft_line,
-                         (uint32_t)sizeof(g_leancam_ui.draft_line),
-                         open + 1, close, accepted))
+        if (err[0])
+            lc_set_msgf("LC: %.32s", err);
         return 0;
+    }
 
-    lc_clear_input_buf();
-
-    /* Braces intentionally remain in the saved .lcam line, so field_count
-     * does not decrease. Advance the single bridge-owned active field index.
-     * When it reaches field_count, no field is highlighted; # commits.
-     */
-    if (g_draft_field_index + 1u < field_count)
-        g_draft_field_index++;
-    else
-        g_draft_field_index = field_count;
-
+    lc_draft_log_state("accept next");
     return 1;
+}
+
+static bool lc_find_raw_region(const program_t *prog, int index, int *start_out, int *end_out)
+{
+    return lc_region_find(prog, index, start_out, end_out);
+}
+
+static void lc_debug_dump_nc_range(const program_t *prog, int start, int end, const char *why)
+{
+    int i;
+
+    if (!prog || start < 0 || end < start || end >= prog->count)
+        return;
+
+    LC_BRIDGE_DBG("nc range %s L%d..L%d",
+                  why ? why : "run",
+                  start + 1,
+                  end + 1);
+    for (i = start; i <= end; ++i)
+        LC_BRIDGE_DBG("nc L%d %.96s", i + 1, prog->lines[i]);
 }
 
 static int lc_commit_draft_bridge_owned(void)
 {
+    bool inserting_new_line;
     LC_BRIDGE_DBG("commit begin draft=%u field=%u line=%.64s",
                   g_leancam_ui.draft_active ? 1u : 0u,
                   (unsigned)g_draft_field_index,
                   g_leancam_ui.draft_line);
-    if (g_leancam_ui.draft_active && !lc_is_context_line(g_leancam_ui.draft_line))
+    inserting_new_line = g_leancam_ui.draft_active && g_leancam_ui.draft_replace_index < 0;
+
+    if (g_leancam_ui.draft_active)
     {
-        char err[64];
+        const char *setup = NULL;
+        const char *tool = NULL;
         int draft_line_index = g_leancam_ui.draft_replace_index >= 0 ?
                                g_leancam_ui.draft_replace_index :
                                g_leancam_ui.draft_insert_after + 1;
+        char preview_line[MAX_LEN];
 
-        if (!lc_validate_tool_for_cycle(&g_leancam_ui.prog,
-                                        draft_line_index,
-                                        g_leancam_ui.draft_line,
-                                        err,
-                                        sizeof(err)))
+        lc_build_draft_preview_line(preview_line, sizeof(preview_line));
+        (void)lc_setup_line(&setup);
+        tool = lc_effective_tool_for_draft(&g_leancam_ui.prog, draft_line_index, g_leancam_ui.draft_line, preview_line);
+
+        if (!lc_editor_prepare_draft_for_commit(&g_leancam_ui, setup, tool))
         {
-            lc_set_msgf("LC: %.40s", err[0] ? err : "tool invalid");
-            LC_BRIDGE_DBG("commit validate fail %.48s", err);
+            lc_set_msg("LC: unresolved field");
+            LC_BRIDGE_DBG("commit resolve fail");
             return 0;
         }
-        LC_BRIDGE_DBG("commit preflight ok");
     }
 
     if (leancam_ui_commit_draft(&g_leancam_ui))
     {
+        if (inserting_new_line &&
+            g_leancam_ui.cur_line >= 0 &&
+            g_leancam_ui.cur_line < g_leancam_ui.prog.count)
+        {
+            (void)lc_expand_committed_preset(g_leancam_ui.cur_line);
+        }
+
         LC_BRIDGE_DBG("commit ui ok cur=%d count=%d line=%.64s",
                       g_leancam_ui.cur_line,
                       g_leancam_ui.prog.count,
                       (g_leancam_ui.cur_line >= 0 && g_leancam_ui.cur_line < g_leancam_ui.prog.count) ?
                       g_leancam_ui.prog.lines[g_leancam_ui.cur_line] : "");
-        if (g_leancam_ui.cur_line >= 0 &&
-            g_leancam_ui.cur_line < g_leancam_ui.prog.count &&
-            strncmp(g_leancam_ui.prog.lines[g_leancam_ui.cur_line], "SETUP|", 6) == 0 &&
-            !lc_has_tool())
-        {
-            if (prog_insert_after(&g_leancam_ui.prog,
-                                  g_leancam_ui.cur_line,
-                                  g_leancam_tool_template))
-            {
-                g_leancam_ui.cur_line++;
-            }
-        }
-        g_draft_field_index = 0;
+        lc_editor_reset();
         g_lc_mode = LC_MODE_PROGRAM;
+        lc_run_sim_set_armed(false);
+        g_sim_arm_block_until_ms = mcu_millis() + 250u;
         lc_ensure_program_visible();
         lc_set_msg("LC: committed");
         lc_schedule_autosave();
@@ -2227,6 +1866,10 @@ static lc_menu_catalog_kind_t lc_menu_cb_get_catalog(void *user)
 static void lc_menu_cb_set_mode(void *user, lc_menu_mode_t mode)
 {
     (void)user;
+    if (mode != LC_MENU_MODE_FILE_NAME)
+    {
+        lc_file_prompt_clear();
+    }
     g_lc_mode = (lc_mode_t)mode;
 }
 
@@ -2251,21 +1894,13 @@ static int lc_menu_cb_file_count(void *user)
 static int lc_menu_cb_file_selected(void *user)
 {
     (void)user;
-    return g_file_sel;
+    return lc_file_browser_selected();
 }
 
 static void lc_menu_cb_file_set_selected(void *user, int selected)
 {
     (void)user;
-    g_file_sel = selected;
-}
-
-static void lc_menu_cb_files_toggle_all(void *user)
-{
-    (void)user;
-    leancam_files_set_show_all(!leancam_files_show_all());
-    lc_refresh_files();
-    lc_set_msg(leancam_files_show_all() ? "LC: all files" : "LC: lcam files");
+    lc_file_browser_set_selected(selected);
 }
 
 static void lc_menu_cb_files_refresh(void *user)
@@ -2280,10 +1915,16 @@ static void lc_menu_cb_files_delete_selected(void *user)
     lc_delete_selected_file();
 }
 
-static void lc_menu_cb_files_generate_gcode(void *user)
+static void lc_menu_cb_files_duplicate_selected(void *user)
 {
     (void)user;
-    lc_generate_selected_file_gcode();
+    lc_duplicate_selected_file_begin();
+}
+
+static void lc_menu_cb_files_prepare_run(void *user)
+{
+    (void)user;
+    lc_prepare_selected_file_for_run();
 }
 
 static void lc_menu_cb_files_open_selected(void *user)
@@ -2292,43 +1933,28 @@ static void lc_menu_cb_files_open_selected(void *user)
     lc_open_selected_file();
 }
 
-static bool lc_menu_cb_files_show_all(void *user)
-{
-    (void)user;
-    return leancam_files_show_all();
-}
-
 static void lc_menu_cb_filename_clear(void *user)
 {
     (void)user;
-    g_new_file_name[0] = 0;
+    lc_file_prompt_clear();
 }
 
 static size_t lc_menu_cb_filename_len(void *user)
 {
     (void)user;
-    return strlen(g_new_file_name);
+    return lc_file_prompt_name_len();
 }
 
 static void lc_menu_cb_filename_backspace(void *user)
 {
-    size_t len;
     (void)user;
-    len = strlen(g_new_file_name);
-    if (len > 0)
-        g_new_file_name[len - 1] = 0;
+    lc_file_prompt_backspace();
 }
 
 static void lc_menu_cb_filename_append_digit(void *user, char digit)
 {
-    size_t len;
     (void)user;
-    len = strlen(g_new_file_name);
-    if (len + 1 < sizeof(g_new_file_name))
-    {
-        g_new_file_name[len] = digit;
-        g_new_file_name[len + 1] = 0;
-    }
+    lc_file_prompt_append_digit(digit);
 }
 
 static void lc_menu_cb_catalog_open(void *user, lc_menu_catalog_kind_t catalog)
@@ -2340,7 +1966,10 @@ static void lc_menu_cb_catalog_open(void *user, lc_menu_catalog_kind_t catalog)
 static void lc_menu_cb_filename_finish(void *user)
 {
     (void)user;
-    lc_new_file_finish();
+    if (lc_file_prompt_duplicate_pending())
+        lc_duplicate_file_finish();
+    else
+        lc_new_file_finish();
 }
 
 static void lc_menu_cb_catalog_new_entry(void *user)
@@ -2358,6 +1987,7 @@ static void lc_menu_cb_catalog_duplicate_entry(void *user)
 static void lc_menu_cb_program_move_prev(void *user)
 {
     (void)user;
+    lc_run_sim_set_armed(false);
     leancam_ui_move_up(&g_leancam_ui);
     lc_ensure_program_visible();
 }
@@ -2365,6 +1995,7 @@ static void lc_menu_cb_program_move_prev(void *user)
 static void lc_menu_cb_program_move_next(void *user)
 {
     (void)user;
+    lc_run_sim_set_armed(false);
     leancam_ui_move_down(&g_leancam_ui);
     lc_ensure_program_visible();
 }
@@ -2372,10 +2003,11 @@ static void lc_menu_cb_program_move_next(void *user)
 static bool lc_menu_cb_program_begin_edit(void *user, bool asset)
 {
     (void)user;
+    lc_run_sim_set_armed(false);
     if (!leancam_ui_begin_edit_current(&g_leancam_ui))
         return false;
 
-    g_draft_field_index = 0;
+    lc_editor_reset();
     g_lc_mode = LC_MODE_DRAFT;
     lc_set_msg(asset ? "LC: edit asset" : "LC: edit line");
     return true;
@@ -2383,13 +2015,46 @@ static bool lc_menu_cb_program_begin_edit(void *user, bool asset)
 
 static void lc_menu_cb_program_run_selected(void *user)
 {
+    uint32_t now;
+
     (void)user;
+    now = mcu_millis();
+    if (!lc_run_sim_armed() &&
+        g_sim_arm_block_until_ms != 0 &&
+        (int32_t)(now - g_sim_arm_block_until_ms) < 0)
+    {
+        lc_set_msg("LC: preview settling");
+        leancam_bridge_request_render();
+        return;
+    }
+    g_sim_arm_block_until_ms = 0;
+
+    if (!lc_run_sim_armed() && lc_close_active_region_with_g80())
+        return;
+
+    if (!lc_run_sim_armed())
+    {
+        int run_start = g_leancam_ui.cur_line;
+        int run_end = g_leancam_ui.cur_line;
+
+        if (g_leancam_ui.cur_line >= 0 &&
+            g_leancam_ui.cur_line < g_leancam_ui.prog.count &&
+            lc_find_raw_region(&g_leancam_ui.prog, g_leancam_ui.cur_line, &run_start, &run_end)) {
+            lc_serial_debug_begin_selected_gcode(run_start, run_end);
+        }
+        lc_run_sim_set_armed(true);
+        lc_set_msg("LC: sim preview");
+        leancam_bridge_request_render();
+        return;
+    }
+    lc_run_sim_set_armed(false);
     lc_run_selected_line();
 }
 
 static void lc_menu_cb_program_delete_current(void *user)
 {
     (void)user;
+    lc_run_sim_set_armed(false);
     lc_delete_current_line();
     lc_ensure_program_visible();
 }
@@ -2397,29 +2062,34 @@ static void lc_menu_cb_program_delete_current(void *user)
 static void lc_menu_cb_program_back_to_files(void *user)
 {
     (void)user;
+    if (lc_run_sim_armed())
+    {
+        lc_run_sim_set_armed(false);
+        lc_set_msg("LC: sim closed");
+        leancam_bridge_request_render();
+        return;
+    }
     lc_refresh_files();
     g_lc_mode = LC_MODE_FILES;
     g_catalog_kind = LC_CATALOG_NONE;
+    leancam_menu_set_program_other_templates(false);
     lc_set_msg("LC: files");
 }
 
 static void lc_menu_cb_program_begin_template(void *user, lc_menu_template_t tmpl)
 {
+    lc_template_selection_t selection;
+
     (void)user;
-    switch (tmpl)
-    {
-        case LC_MENU_TEMPLATE_TOOL: lc_begin_tool_template(); return;
-        case LC_MENU_TEMPLATE_OD: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_OD]); return;
-        case LC_MENU_TEMPLATE_ID: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_ID]); return;
-        case LC_MENU_TEMPLATE_FACE: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_FACE]); return;
-        case LC_MENU_TEMPLATE_DRILL: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_DRILL]); return;
-        case LC_MENU_TEMPLATE_TAP: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_TAP]); return;
-        case LC_MENU_TEMPLATE_CUT: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_CUT]); return;
-        case LC_MENU_TEMPLATE_CHAMFER: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_CHAMFER]); return;
-        case LC_MENU_TEMPLATE_THR_OD: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_THR_OD]); return;
-        case LC_MENU_TEMPLATE_THR_ID: lc_begin_setup_if_missing_then(g_leancam_templates[LC_TMPL_THR_ID]); return;
-        default: return;
-    }
+    lc_run_sim_set_armed(false);
+    selection = lc_template_select(tmpl);
+    if (!selection.text)
+        return;
+
+    if (selection.action == LC_TEMPLATE_ACTION_PRESET)
+        lc_insert_process_preset_template(selection.text);
+    else if (selection.action == LC_TEMPLATE_ACTION_DRAFT)
+        lc_begin_setup_if_missing_then(selection.text);
 }
 
 static unsigned lc_menu_cb_draft_field_count(void *user)
@@ -2444,15 +2114,25 @@ static void lc_menu_cb_draft_cancel(void *user)
 {
     (void)user;
     leancam_ui_cancel_draft(&g_leancam_ui);
-    g_draft_field_index = 0;
+    lc_editor_reset();
     g_lc_mode = LC_MODE_PROGRAM;
     lc_set_msg("LC: draft cancel");
 }
 
 static bool lc_menu_cb_draft_accept_field(void *user)
 {
+    bool accepted;
+
     (void)user;
-    return lc_accept_active_field_bridge_owned() != 0;
+    lc_draft_log_state("key D next");
+    accepted = lc_accept_active_field_bridge_owned() != 0;
+    if (accepted) {
+        g_leancam_ui.dirty = true;
+        leancam_bridge_request_render();
+    } else {
+        LC_DRAFT_DBG("key D next rejected");
+    }
+    return accepted;
 }
 
 static bool lc_menu_cb_draft_commit(void *user)
@@ -2464,25 +2144,56 @@ static bool lc_menu_cb_draft_commit(void *user)
 static void lc_menu_cb_draft_backspace(void *user)
 {
     (void)user;
+    lc_draft_log_state("key * backspace before");
     leancam_ui_backspace(&g_leancam_ui);
+    lc_draft_log_state("key * backspace after");
+    g_leancam_ui.dirty = true;
+    leancam_bridge_request_render();
 }
 
 static void lc_menu_cb_draft_toggle_sign(void *user)
 {
     (void)user;
-    lc_input_toggle_sign();
+    lc_draft_log_state("key B sign before");
+    lc_editor_toggle_sign(&g_leancam_ui);
+    lc_draft_log_state("key B sign after");
+    g_leancam_ui.dirty = true;
+    leancam_bridge_request_render();
 }
 
 static void lc_menu_cb_draft_add_dot(void *user)
 {
     (void)user;
-    lc_input_add_dot();
+    lc_draft_log_state("key C dot before");
+    lc_editor_add_dot(&g_leancam_ui);
+    lc_draft_log_state("key C dot after");
+    g_leancam_ui.dirty = true;
+    leancam_bridge_request_render();
 }
 
 static void lc_menu_cb_draft_input_digit(void *user, char digit)
 {
     (void)user;
-    lc_input_digit(digit);
+    LC_DRAFT_DBG("key %c digit before idx=%u input=%.24s",
+                 digit,
+                 (unsigned)g_draft_field_index,
+                 g_leancam_ui.input_buf);
+    lc_editor_input_digit(&g_leancam_ui, digit);
+    lc_draft_log_state("digit after");
+    g_leancam_ui.dirty = true;
+    leancam_bridge_request_render();
+}
+
+static void lc_menu_cb_nc_scroll_prev(void *user)
+{
+    (void)user;
+    lc_nc_viewer_scroll_prev();
+}
+
+static void lc_menu_cb_nc_scroll_next(void *user)
+{
+    (void)user;
+    lc_nc_viewer_scroll_next();
 }
 
 static const lc_menu_actions_t g_lc_menu_actions = {
@@ -2497,11 +2208,9 @@ static const lc_menu_actions_t g_lc_menu_actions = {
     .file_set_selected = lc_menu_cb_file_set_selected,
     .files_refresh = lc_menu_cb_files_refresh,
     .files_delete_selected = lc_menu_cb_files_delete_selected,
-    .files_generate_gcode = lc_menu_cb_files_generate_gcode,
+    .files_duplicate_selected = lc_menu_cb_files_duplicate_selected,
+    .files_prepare_run = lc_menu_cb_files_prepare_run,
     .files_open_selected = lc_menu_cb_files_open_selected,
-    .files_toggle_all = lc_menu_cb_files_toggle_all,
-    .files_show_all = lc_menu_cb_files_show_all,
-
     .filename_clear = lc_menu_cb_filename_clear,
     .filename_len = lc_menu_cb_filename_len,
     .filename_backspace = lc_menu_cb_filename_backspace,
@@ -2532,76 +2241,15 @@ static const lc_menu_actions_t g_lc_menu_actions = {
     .draft_input_digit = lc_menu_cb_draft_input_digit,
 
     .nc_back_to_files = lc_menu_cb_program_back_to_files,
+    .nc_scroll_prev = lc_menu_cb_nc_scroll_prev,
+    .nc_scroll_next = lc_menu_cb_nc_scroll_next,
 };
-
-static void lc_menu_cb_nc_scroll_prev(void *user)
-{
-    (void)user;
-    if (g_nc_selected_row > 0)
-    {
-        g_nc_selected_row--;
-    }
-    else if (g_nc_top_line > 0)
-    {
-        g_nc_top_line--;
-        (void)lc_nc_load_window();
-    }
-}
-
-static void lc_menu_cb_nc_scroll_next(void *user)
-{
-    (void)user;
-    if (g_nc_selected_row + 1 < g_nc_line_count)
-    {
-        g_nc_selected_row++;
-    }
-    else if (!g_nc_eof)
-    {
-        g_nc_top_line++;
-        (void)lc_nc_load_window();
-    }
-}
 
 void leancam_bridge_handle_key(ui_key_t key)
 {
-    lc_menu_actions_t actions = g_lc_menu_actions;
-    actions.nc_scroll_prev = lc_menu_cb_nc_scroll_prev;
-    actions.nc_scroll_next = lc_menu_cb_nc_scroll_next;
-    (void)leancam_menu_handle_key(NULL, &actions, key);
+    (void)leancam_menu_handle_key(NULL, &g_lc_menu_actions, key);
 }
 
-
-static void lc_snapshot_line_ex(ui_snapshot_frame_t *f,
-                                int row,
-                                const char *s,
-                                bool selected,
-                                uint8_t hi_start,
-                                uint8_t hi_end)
-{
-    uint32_t len;
-
-    if (!f || row < 0 || row >= UI_LC_MAX_LINES)
-        return;
-
-    ui_snapshot_strcpy(f->leancam_lines[row], s ? s : "", UI_LC_LINE_LEN);
-    f->leancam_line_selected[row] = selected ? 1u : 0u;
-
-    len = (uint32_t)strlen(f->leancam_lines[row]);
-    if (hi_start > len) hi_start = (uint8_t)len;
-    if (hi_end   > len) hi_end   = (uint8_t)len;
-    if (hi_end < hi_start) hi_end = hi_start;
-
-    f->leancam_field_hi_start[row] = hi_start;
-    f->leancam_field_hi_end[row]   = hi_end;
-
-    if (row + 1 > f->leancam_line_count)
-        f->leancam_line_count = (uint8_t)(row + 1);
-}
-
-static void lc_snapshot_line(ui_snapshot_frame_t *f, int row, const char *s, bool selected)
-{
-    lc_snapshot_line_ex(f, row, s, selected, 0, 0);
-}
 
 static int lc_setup_line(const char **line_out)
 {
@@ -2611,7 +2259,7 @@ static int lc_setup_line(const char **line_out)
 
     for (i = 0; i < g_leancam_ui.prog.count; ++i)
     {
-        if (strncmp(g_leancam_ui.prog.lines[i], "SETUP|", 6) == 0)
+        if (lc_line_command_is(g_leancam_ui.prog.lines[i], "SETUP"))
         {
             if (line_out) *line_out = g_leancam_ui.prog.lines[i];
             return 1;
@@ -2631,9 +2279,6 @@ static void lc_snapshot_program(ui_snapshot_frame_t *f)
 
     lc_ensure_program_visible();
 
-    snprintf(buf, sizeof(buf), "FILE: %s", lc_basename(g_leancam_ui.current_path));
-    lc_snapshot_line(f, row++, buf, false);
-
     if (g_leancam_ui.draft_active)
     {
         if (g_leancam_ui.draft_replace_index >= 0)
@@ -2652,11 +2297,14 @@ static void lc_snapshot_program(ui_snapshot_frame_t *f)
         {
             const char *setup = NULL;
             const char *tool = NULL;
+            char preview_line[MAX_LEN];
+            char validate_line[MAX_LEN];
             uint8_t hi_start = 0;
             uint8_t hi_end = 0;
 
             (void)lc_setup_line(&setup);
-            tool = lc_tool_for_cycle_or_context(&g_leancam_ui.prog, draft_vidx, g_leancam_ui.draft_line);
+            lc_build_draft_preview_line(preview_line, sizeof(preview_line));
+            tool = lc_effective_tool_for_draft(&g_leancam_ui.prog, draft_vidx, g_leancam_ui.draft_line, preview_line);
             leancam_expr_build_draft_display(buf,
                                              sizeof(buf),
                                              g_leancam_ui.draft_line,
@@ -2667,21 +2315,15 @@ static void lc_snapshot_program(ui_snapshot_frame_t *f)
                                              g_leancam_ui.draft_line,
                                              &hi_start,
                                              &hi_end);
-            if (!lc_is_context_line(g_leancam_ui.draft_line))
-            {
-                char err[48];
-                if (!lc_validate_tool_for_cycle(&g_leancam_ui.prog, draft_vidx, g_leancam_ui.draft_line, err, sizeof(err)))
-                {
-                    size_t used = strlen(buf);
-                    snprintf(buf + used, sizeof(buf) - used, " | ! %.32s", err[0] ? err : "tool invalid");
-                }
-            }
-            if (lc_line_is_thread(g_leancam_ui.draft_line))
+            if (!lc_editor_resolve_draft_line_for_commit(&g_leancam_ui, setup, tool, validate_line, sizeof(validate_line)))
+                strncpy(validate_line, preview_line, sizeof(validate_line) - 1u);
+            validate_line[sizeof(validate_line) - 1u] = 0;
+            if (lc_line_is_thread(validate_line))
             {
                 float start_lane = 0.0f;
                 float stop_lane = 0.0f;
 
-                if (lc_calc_thread_lanes(g_leancam_ui.draft_line, tool,
+                if (lc_calc_thread_lanes(validate_line, tool,
                                          &start_lane, &stop_lane,
                                          &f->leancam_thread_ramp_lane,
                                          &f->leancam_thread_lock_lane,
@@ -2693,12 +2335,12 @@ static void lc_snapshot_program(ui_snapshot_frame_t *f)
                 }
             }
 
-            lc_snapshot_line_ex(f,
-                                row++,
-                                buf,
-                                g_draft_field_index < lc_count_brace_fields(g_leancam_ui.draft_line),
-                                hi_start,
-                                hi_end);
+            lc_snapshot_put_line_ex(f,
+                                    row++,
+                                    buf,
+                                    g_draft_field_index < lc_count_brace_fields(g_leancam_ui.draft_line),
+                                    hi_start,
+                                    hi_end);
         }
         else
         {
@@ -2716,36 +2358,49 @@ static void lc_snapshot_program(ui_snapshot_frame_t *f)
             {
                 char display_line[UI_LC_LINE_LEN];
 
-                if (lc_is_context_line(g_leancam_ui.prog.lines[pi]))
-                    ui_snapshot_strcpy(display_line, g_leancam_ui.prog.lines[pi], sizeof(display_line));
-                else
-                    lc_build_resolved_display_line(&g_leancam_ui.prog, pi, g_leancam_ui.prog.lines[pi], display_line, sizeof(display_line));
+                ui_snapshot_strcpy(display_line, g_leancam_ui.prog.lines[pi], sizeof(display_line));
 
                 if (lc_line_is_thread(g_leancam_ui.prog.lines[pi]))
                 {
-                    const char *tool = lc_tool_for_cycle_or_context(&g_leancam_ui.prog, pi, g_leancam_ui.prog.lines[pi]);
+                    const char *tool = lc_effective_tool_for_cycle(&g_leancam_ui.prog, pi, g_leancam_ui.prog.lines[pi]);
                     float start_lane = 0.0f;
                     float stop_lane = 0.0f;
 
                     if (lc_calc_thread_lanes(display_line, tool,
                                              &start_lane, &stop_lane, NULL, NULL, NULL))
                     {
-                        snprintf(buf, sizeof(buf), "%02d %s | ELS %.2f/%.2f",
-                                 pi + 1, display_line, start_lane, stop_lane);
+                        char line_buf[UI_LC_LINE_LEN];
+                        snprintf(line_buf, sizeof(line_buf), "%.56s | ELS %.2f/%.2f",
+                                 display_line, start_lane, stop_lane);
+                        row = lc_snapshot_put_program_command(f,
+                                                              row,
+                                                              pi + 1,
+                                                              lc_line_display_indent(&g_leancam_ui.prog, pi, g_leancam_ui.prog.lines[pi]),
+                                                              line_buf,
+                                                              (pi == g_leancam_ui.cur_line) && (!g_leancam_ui.draft_active));
+                        continue;
                     }
                     else
                     {
-                        snprintf(buf, sizeof(buf), "%02d %s", pi + 1, display_line);
+                        row = lc_snapshot_put_program_command(f,
+                                                              row,
+                                                              pi + 1,
+                                                              lc_line_display_indent(&g_leancam_ui.prog, pi, g_leancam_ui.prog.lines[pi]),
+                                                              display_line,
+                                                              (pi == g_leancam_ui.cur_line) && (!g_leancam_ui.draft_active));
+                        continue;
                     }
                 }
                 else
                 {
-                    snprintf(buf, sizeof(buf), "%02d %s", pi + 1, display_line);
+                    row = lc_snapshot_put_program_command(f,
+                                                          row,
+                                                          pi + 1,
+                                                          lc_line_display_indent(&g_leancam_ui.prog, pi, g_leancam_ui.prog.lines[pi]),
+                                                          display_line,
+                                                          (pi == g_leancam_ui.cur_line) && (!g_leancam_ui.draft_active));
+                    continue;
                 }
-                lc_snapshot_line(f,
-                                 row++,
-                                 buf,
-                                 (pi == g_leancam_ui.cur_line) && (!g_leancam_ui.draft_active));
             }
         }
     }
@@ -2754,7 +2409,6 @@ static void lc_snapshot_program(ui_snapshot_frame_t *f)
                              sizeof(f->leancam_helper),
                              (lc_menu_mode_t)g_lc_mode,
                              (lc_menu_catalog_kind_t)g_catalog_kind,
-                             leancam_files_show_all(),
                              g_leancam_ui.draft_active,
                              (unsigned)g_draft_field_index,
                              (unsigned)lc_count_brace_fields(g_leancam_ui.draft_line),
@@ -2766,65 +2420,30 @@ static void lc_snapshot_nc_view(ui_snapshot_frame_t *f)
     int row = 0;
     int i;
     char buf[UI_LC_LINE_LEN];
+    int top_line = lc_nc_viewer_top_line();
+    uint8_t line_count = lc_nc_viewer_line_count();
+    uint8_t selected_row = lc_nc_viewer_selected_row();
 
-    snprintf(buf, sizeof(buf), "FILE: %s  top:%d", lc_basename(g_nc_path), g_nc_top_line + 1);
-    lc_snapshot_line(f, row++, buf, false);
+    snprintf(buf, sizeof(buf), "FILE: %s  top:%d", lc_path_basename(lc_nc_viewer_path()), top_line + 1);
+    lc_snapshot_put_line(f, row++, buf, false);
 
-    for (i = 0; i < g_nc_line_count && row < UI_LC_MAX_LINES; ++i)
+    for (i = 0; i < line_count && row < UI_LC_MAX_LINES; ++i)
     {
-        snprintf(buf, sizeof(buf), "%04d %s", g_nc_top_line + i + 1, g_nc_lines[i]);
-        lc_snapshot_line(f, row++, buf, (i == g_nc_selected_row));
+        snprintf(buf, sizeof(buf), "%04d %.80s", top_line + i + 1, lc_nc_viewer_line((uint8_t)i));
+        lc_snapshot_put_line(f, row++, buf, (i == selected_row));
     }
 
-    if (g_nc_line_count == 0 && row < UI_LC_MAX_LINES)
-        lc_snapshot_line(f, row++, "<empty nc file>", false);
+    if (line_count == 0 && row < UI_LC_MAX_LINES)
+        lc_snapshot_put_line(f, row++, "<empty nc file>", false);
 
     leancam_menu_copy_footer(f->leancam_helper,
                              sizeof(f->leancam_helper),
                              (lc_menu_mode_t)g_lc_mode,
                              (lc_menu_catalog_kind_t)g_catalog_kind,
-                             leancam_files_show_all(),
                              false,
                              0,
                              0,
                              NULL);
-}
-
-static const char *lc_selected_file_setup_line(void)
-{
-    static program_t preview_prog;
-    static char setup_copy[UI_LC_LINE_LEN];
-    static int cached_sel = -2;
-    static uint32_t cached_count = 0;
-    char path[LC_FILE_PATH_MAX];
-    int cnt = leancam_files_count();
-    const char *setup;
-
-    if (g_lc_mode != LC_MODE_FILES || !g_files_ready || g_file_sel < 0 || g_file_sel >= cnt)
-        return NULL;
-
-    if (!lc_has_suffix_ci_local(leancam_files_name(g_file_sel), ".lcam"))
-        return NULL;
-
-    if (cached_sel == g_file_sel && cached_count == (uint32_t)cnt)
-        return setup_copy[0] ? setup_copy : NULL;
-
-    cached_sel = g_file_sel;
-    cached_count = (uint32_t)cnt;
-    setup_copy[0] = 0;
-
-    if (!leancam_files_build_path(LC_FILES_DIR, g_file_sel, path, sizeof(path)))
-        return NULL;
-
-    if (!leancam_files_load(path, &preview_prog))
-        return NULL;
-
-    setup = lc_find_setup_in_program(&preview_prog, preview_prog.count - 1);
-    if (!setup || !setup[0])
-        return NULL;
-
-    ui_snapshot_strcpy(setup_copy, setup, sizeof(setup_copy));
-    return setup_copy;
 }
 
 static void lc_snapshot_preview_sources(ui_snapshot_frame_t *f)
@@ -2841,13 +2460,13 @@ static void lc_snapshot_preview_sources(ui_snapshot_frame_t *f)
 
     if (g_lc_mode == LC_MODE_FILES)
     {
-        setup = lc_selected_file_setup_line();
+        setup = NULL;
         line = NULL;
         tool = NULL;
     }
     else if (g_lc_mode == LC_MODE_NC_VIEW)
     {
-        setup = g_nc_setup_line[0] ? g_nc_setup_line : NULL;
+        setup = lc_nc_viewer_setup_line()[0] ? lc_nc_viewer_setup_line() : NULL;
         line = NULL;
         tool = NULL;
     }
@@ -2862,12 +2481,12 @@ static void lc_snapshot_preview_sources(ui_snapshot_frame_t *f)
 
         lc_build_draft_preview_line(preview_line, sizeof(preview_line));
         line = preview_line;
-        if (strncmp(g_leancam_ui.draft_line, "TOOL|", 5) == 0)
+        if (lc_line_command_is(g_leancam_ui.draft_line, "TOOL"))
             tool = preview_line;
-        lc_get_field_name_by_index(g_leancam_ui.draft_line,
-                                   g_draft_field_index,
-                                   f->leancam_active_field,
-                                   sizeof(f->leancam_active_field));
+        lc_editor_field_name_from_line(g_leancam_ui.draft_line,
+                                       g_draft_field_index,
+                                       f->leancam_active_field,
+                                       sizeof(f->leancam_active_field));
         ui_snapshot_strcpy(f->leancam_preview_line, line, sizeof(f->leancam_preview_line));
     }
     else if (g_leancam_ui.cur_line >= 0 && g_leancam_ui.cur_line < g_leancam_ui.prog.count)
@@ -2876,12 +2495,57 @@ static void lc_snapshot_preview_sources(ui_snapshot_frame_t *f)
     }
 
     if (!tool && g_lc_mode != LC_MODE_FILES && g_lc_mode != LC_MODE_NC_VIEW)
-        tool = lc_tool_for_cycle_or_context(&g_leancam_ui.prog, before_or_at, line);
+        tool = lc_effective_tool_for_cycle(&g_leancam_ui.prog, before_or_at, line);
 
     ui_snapshot_strcpy(f->leancam_setup_line, setup ? setup : "", sizeof(f->leancam_setup_line));
     if (!g_leancam_ui.draft_active)
         ui_snapshot_strcpy(f->leancam_preview_line, line ? line : "", sizeof(f->leancam_preview_line));
     ui_snapshot_strcpy(f->leancam_tool_line, tool ? tool : "", sizeof(f->leancam_tool_line));
+}
+
+static void lc_snapshot_raw_preview_region(ui_snapshot_frame_t *f)
+{
+    int row;
+    int start;
+    int end;
+    int i;
+    int out = 0;
+
+    if (!f || g_lc_mode == LC_MODE_FILES || g_lc_mode == LC_MODE_NC_VIEW)
+        return;
+
+    row = g_leancam_ui.cur_line;
+    if (g_leancam_ui.draft_active)
+    {
+        if (g_leancam_ui.draft_replace_index >= 0)
+            row = g_leancam_ui.draft_replace_index;
+        else
+            row = g_leancam_ui.draft_insert_after + 1;
+    }
+
+    if (row < 0 || row >= g_leancam_ui.prog.count)
+        return;
+
+    if (!lc_find_raw_region(&g_leancam_ui.prog, row, &start, &end) || end < start)
+        return;
+
+    for (i = start; i <= end && out < UI_LC_PREVIEW_REGION_MAX; ++i)
+    {
+        const char *line = g_leancam_ui.prog.lines[i];
+
+        if (!lc_region_is_header(line) &&
+            !lc_region_is_contour(line) &&
+            !lc_region_is_end(line))
+            continue;
+
+        ui_snapshot_strcpy(f->leancam_preview_region[out],
+                           line,
+                           sizeof(f->leancam_preview_region[out]));
+        f->leancam_preview_region_selected[out] = (uint8_t)(i == row ? 1 : 0);
+        out++;
+    }
+
+    f->leancam_preview_region_count = (uint8_t)out;
 }
 
 void leancam_bridge_fill_snapshot(ui_snapshot_frame_t *f)
@@ -2894,34 +2558,24 @@ void leancam_bridge_fill_snapshot(ui_snapshot_frame_t *f)
     if (!f)
         return;
 
-    f->leancam_active = true;
+    lc_snapshot_reset_frame(f);
     f->leancam_mode = (uint8_t)g_lc_mode;
     f->leancam_show_menu = (bool)leancam_bridge_wants_key_menu();
-    f->leancam_line_count = 0;
-    f->leancam_setup_line[0] = 0;
-    f->leancam_preview_line[0] = 0;
-    f->leancam_tool_line[0] = 0;
-    f->leancam_active_field[0] = 0;
-    f->leancam_thread_lane_valid = false;
-    f->leancam_thread_start_lane = 0.0f;
-    f->leancam_thread_stop_lane = 0.0f;
-    f->leancam_thread_ramp_lane = 0.0f;
-    f->leancam_thread_lock_lane = 0.0f;
-    f->leancam_thread_z_speed = 0.0f;
-
-    for (i = 0; i < UI_LC_MAX_LINES; ++i)
-    {
-        f->leancam_lines[i][0] = 0;
-        f->leancam_line_selected[i] = 0;
-        f->leancam_field_hi_start[i] = 0;
-        f->leancam_field_hi_end[i] = 0;
-    }
 
     ui_snapshot_strcpy(f->leancam_message, g_last_msg, sizeof(f->leancam_message));
     leancam_menu_copy_title(f->leancam_title,
                             sizeof(f->leancam_title),
                             (lc_menu_mode_t)g_lc_mode,
                             (lc_menu_catalog_kind_t)g_catalog_kind);
+    if ((g_lc_mode == LC_MODE_PROGRAM || g_lc_mode == LC_MODE_DRAFT) &&
+        g_catalog_kind == LC_CATALOG_NONE &&
+        g_leancam_ui.current_path[0])
+    {
+        snprintf(f->leancam_title,
+                 sizeof(f->leancam_title),
+                 "%s",
+                 lc_path_basename(g_leancam_ui.current_path));
+    }
 
     switch (g_lc_mode)
     {
@@ -2929,24 +2583,23 @@ void leancam_bridge_fill_snapshot(ui_snapshot_frame_t *f)
         {
             int cnt = leancam_files_count();
 
-            lc_snapshot_line(f, row++, "Storage: " LC_FILES_DIR, false);
-            if (!g_files_ready && row < UI_LC_MAX_LINES)
-                lc_snapshot_line(f, row++, "Waiting for SD card...", false);
+            lc_snapshot_put_line(f, row++, "Storage: " LC_FILES_DIR, false);
+            if (!lc_file_browser_ready() && row < UI_LC_MAX_LINES)
+                lc_snapshot_put_line(f, row++, "Waiting for SD card...", false);
 
             for (i = 0; i < cnt && row < UI_LC_MAX_LINES; ++i)
             {
                 snprintf(buf, sizeof(buf), "%s", leancam_files_name(i));
-                lc_snapshot_line(f, row++, buf, (i == g_file_sel));
+                lc_snapshot_put_line(f, row++, buf, (i == lc_file_browser_selected()));
             }
 
             if (row < UI_LC_MAX_LINES)
-                lc_snapshot_line(f, row++, "NEW...", (g_file_sel == cnt));
+                lc_snapshot_put_line(f, row++, "NEW...", (lc_file_browser_selected() == cnt));
 
             leancam_menu_copy_footer(f->leancam_helper,
                                      sizeof(f->leancam_helper),
                                      (lc_menu_mode_t)g_lc_mode,
                                      (lc_menu_catalog_kind_t)g_catalog_kind,
-                                     leancam_files_show_all(),
                                      false,
                                      0,
                                      0,
@@ -2955,13 +2608,12 @@ void leancam_bridge_fill_snapshot(ui_snapshot_frame_t *f)
         }
 
         case LC_MODE_FILE_NAME:
-            snprintf(buf, sizeof(buf), "NAME{%s}", g_new_file_name);
-            lc_snapshot_line(f, row++, buf, true);
+            snprintf(buf, sizeof(buf), "NAME{%s}", lc_file_prompt_name());
+            lc_snapshot_put_line(f, row++, buf, true);
             leancam_menu_copy_footer(f->leancam_helper,
                                      sizeof(f->leancam_helper),
                                      (lc_menu_mode_t)g_lc_mode,
                                      (lc_menu_catalog_kind_t)g_catalog_kind,
-                                     leancam_files_show_all(),
                                      false,
                                      0,
                                      0,
@@ -2985,7 +2637,21 @@ void leancam_bridge_fill_snapshot(ui_snapshot_frame_t *f)
     }
 
     lc_snapshot_preview_sources(f);
+    lc_snapshot_raw_preview_region(f);
+    f->leancam_fullscreen_sim = g_line_sim_armed &&
+                                !g_leancam_ui.draft_active &&
+                                g_lc_mode == LC_MODE_PROGRAM;
+    if (f->leancam_fullscreen_sim) {
+        f->leancam_sim_preview_active = g_serial_gcode_dump.active;
+        f->leancam_sim_preview_seq = g_serial_gcode_dump.draw_seq;
+        f->leancam_sim_preview_index = g_serial_gcode_dump.current_index;
+        f->leancam_sim_preview_count = g_serial_gcode_dump.count;
+        ui_snapshot_strcpy(f->leancam_sim_preview_line,
+                           g_serial_gcode_dump.current_line,
+                           sizeof(f->leancam_sim_preview_line));
+    }
     if (lc_debug_snapshot_should_print(f->leancam_preview_line)) {
+        uint8_t dbg_i;
         LC_BRIDGE_DBG("snapshot mode=%u draft=%u cur=%d count=%d lines=%u preview=%.64s tool=%.48s",
                       (unsigned)g_lc_mode,
                       g_leancam_ui.draft_active ? 1u : 0u,
@@ -2994,6 +2660,23 @@ void leancam_bridge_fill_snapshot(ui_snapshot_frame_t *f)
                       (unsigned)f->leancam_line_count,
                       f->leancam_preview_line,
                       f->leancam_tool_line);
+        LC_BRIDGE_DBG("preview region count=%u",
+                      (unsigned)f->leancam_preview_region_count);
+        for (dbg_i = 0; dbg_i < f->leancam_preview_region_count && dbg_i < UI_LC_PREVIEW_REGION_MAX; ++dbg_i) {
+            LC_BRIDGE_DBG("preview region %u sel=%u %.96s",
+                          (unsigned)dbg_i,
+                          (unsigned)f->leancam_preview_region_selected[dbg_i],
+                          f->leancam_preview_region[dbg_i]);
+        }
+        lc_debug_print_r_corner_geometry(f);
+        for (dbg_i = 0; dbg_i < f->leancam_line_count && dbg_i < UI_LC_MAX_LINES; ++dbg_i) {
+            LC_BRIDGE_DBG("display row %u sel=%u hi=%u..%u %.96s",
+                          (unsigned)dbg_i,
+                          (unsigned)f->leancam_line_selected[dbg_i],
+                          (unsigned)f->leancam_field_hi_start[dbg_i],
+                          (unsigned)f->leancam_field_hi_end[dbg_i],
+                          f->leancam_lines[dbg_i]);
+        }
         g_debug_snapshot_armed = false;
     }
 

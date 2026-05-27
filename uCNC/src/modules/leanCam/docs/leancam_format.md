@@ -1,4 +1,8 @@
-# LeanCam File Format (`.lcam`)
+# Legacy LeanCam File Format (`.lcam`)
+
+Status: obsolete historical format; no import/fallback path is planned.
+
+The current roadmap makes **NC the editable and runnable format**. `.lcam` should not receive new features, import support, or fallback behavior. Presets and field editing should emit real G-code-ish `.nc` rows directly, and run/sim should prepare an expanded NC stream from that NC source.
 
 ## Overview
 
@@ -28,10 +32,14 @@ The active converter currently supports:
 * `DRILL` - center drilling
 * `CUT` / `PART` - parting or simple cut
 * `GROOVE` - simple groove
+* `CHAMFER` - outside chamfer
+* `CHMF_ID` - inside chamfer
+* `R_OD` - outside radius
+* `R_ID` - inside radius
 * `THR_OD` - outside metric threading using G33 passes
 * `THR_ID` - inside metric threading using G33 passes
 
-Other UI templates may exist, but generation should treat them as unsupported until `leancam_gcode.c` implements them.
+Legacy `CHAMFER_ID`, `RADIUS_OD`, and `RADIUS_ID` block names are still accepted for existing files, but new templates use the shorter names above.
 
 ## Fields
 
@@ -76,6 +84,8 @@ SETUP|L{120}|OD{50}|ID{0}|CLAMP{0}|EXTRA{0}|CLR{1}|MAT{ST45}|WOFF{G54}
 TOOL|T{1}|D{6}|S{800}|R_FEED{120}|FIN_FEED{60}|R_DOC{2.0}|FIN_DOC{0.5}
 OD|D1{50}|Z1{0}|Z2{-100}|D2{42}|CLR{1}
 FACE|D{42}|Z1{1}|Z{0}|DOC{1.0}|CLR{1}
+CHMF_ID|D{30}|Z{-40}|SIZE{1.0}|Q{2}
+R_OD|D{42}|Z1{0}|Z2{-10}|R{3}|Q{0}
 THR_OD|M{20}|P{1.5}|Z1{0}|Z2{-20}|DOC{0.3}|N{0}|ST{1}|CLR{1}
 ```
 

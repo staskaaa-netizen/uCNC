@@ -7,6 +7,8 @@
 #define LC_TEMPLATE_UNUSED
 #endif
 
+#include "leancam_menu.h"
+
 /* Template syntax:
  *   {}                  required user input
  *   {(literal)}         default literal shown as value in friendly UI
@@ -15,50 +17,156 @@
  */
 
 static const char *g_leancam_setup_template =
-    "SETUP|L{}|OD{}|ID{(0)}|CLAMP{(0)}|EXTRA{(0)}|CLR{(1)}";
+    "SETUP L{} OD{} ID{(0)} CLAMP{(0)} EXTRA{(0)} CLR{(1)}";
 
 static const char *g_leancam_tool_template LC_TEMPLATE_UNUSED =
-    "TOOL|T{(1)}|R{(0.8)}|ORIENT{(3)}|R_FEED{(120)}|FIN_FEED{(60)}|DOC{(2.0)}|FIN_DOC{(0.5)}|XOFF{(0)}|ZOFF{(0)}";
+    "TOOL T{(1)} R{(0.8)} ORIENT{(3)} R_FEED{(120)} FIN_FEED{(60)} DOC{(2.0)} FIN_DOC{(0.5)} RPM{(800)} XOFF{(0)} ZOFF{(0)}";
 
-/* Q retract mode:
- *   Q0 direct diagonal rapid out
- *   Q1 X first, then Z
- *   Q2 Z first, then X
+static const char *g_leancam_tool_call_template LC_TEMPLATE_UNUSED =
+    "TOOLCALL T{(1)} R_FEED{(TOOL.R_FEED)} FIN_FEED{(TOOL.FIN_FEED)} DOC{(TOOL.DOC)} FIN_DOC{(TOOL.FIN_DOC)} RPM{(TOOL.RPM)}";
+
+static const char *g_leancam_process_call_template LC_TEMPLATE_UNUSED =
+    "PROCESSCALL N{}";
+
+/* Raw stored G-code-like templates:
+ *   G1.C is chamfer.
+ *   G1.R is tangent radius / rounding.
+ *   G1 C and R are mutually exclusive.
+ *   G2/G3 are explicit arcs, not tangent corner shortcuts.
  */
-static const char *g_leancam_templates[] = {
-"OD|T{(1)}|D1{(SETUP.OD)}|Z1{(0)}|Z2{(-50)}|D2{(THIS.D1)}|RND{(0)}|CHMF{(0)}|DT{(THIS.D2)}|Q{(0)}",
-"ID|T{(1)}|D1{(10)}|Z1{(0)}|Z2{(-50)}|D2{(20)}|RND{(0)}|CHMF{(0)}|DT{(THIS.D2)}|Q{(2)}",
-"FACE|T{(1)}|D{(SETUP.OD)}|Z1{(1)}|Z{(0)}|Q{(0)}",
-"DRILL|T{(1)}|Z1{(0)}|DEPTH{}|PECK{(0)}|FEED{(120)}|S{(800)}",
-"TAP|T{(1)}|Z1{(0)}|DEPTH{}|PITCH{}|RPM{(300)}",
-"CUT|T{(1)}|D{(0)}|Z{(-50)}|WIDTH{(3)}|Q{(1)}",
-"CHAMFER|T{(1)}|D{}|Z{}|SIZE{(1.0)}|Q{(0)}",
-"THR_OD|T{(1)}|M{}|P{}|Z1{(0)}|Z2{(-50)}|N{(0)}|ST{(1)}|Q{(0)}",
-"THR_ID|T{(1)}|M{}|P{}|Z1{(0)}|Z2{(-50)}|N{(0)}|ST{(1)}|Q{(2)}",
-"RADIUS_OD|T{(1)}|D{}|Z1{(0)}|Z2{(-20)}|R{}|Q{(0)}",
-"RADIUS_ID|T{(1)}|D{}|Z1{(0)}|Z2{(-20)}|R{}|Q{(2)}",
-"GROOVE|T{(1)}|D1{(SETUP.OD)}|D2{(40)}|Z1{(-20)}|Z2{(-40)}|WIDTH{(3)}|Q{(1)}",
-"PART|T{(1)}|D{(0)}|Z{(-50)}|WIDTH{(3)}|Q{(1)}"
+static const char *g_leancam_gcode_templates[] = {
+"G71 U{} R{} X{} Z{} F{}",
+"G72 W{} R{} X{} Z{} F{}",
+"G1 X{} Z{} C{(0)} R{(0)}",
+"G2 X{} Z{} R{}",
+"G3 X{} Z{} R{}",
+"G80",
+"G74 Z{} K{} F{}",
+"G84 Z{} PITCH{} RPM{}",
+"G33 X{} Z{} K{}",
+"G76 X{} Z{} K{} DEPTH{} DOC{} FIN{(0)} SPRING{(1)} ANGLE{(29.5)}"
+};
+
+static const char *g_leancam_preset_templates[] = {
+"OD T{(TOOLCALL.T)} O{(TOOL.ORIENT)} U{(TOOLCALL.DOC)} R{(SETUP.CLR)} X{(TOOLCALL.FIN_DOC)} Z{(TOOLCALL.FIN_DOC)} F_R{(TOOLCALL.R_FEED)} F_F{(TOOLCALL.FIN_FEED)} RPM{(TOOLCALL.RPM)}",
+"ID T{(TOOLCALL.T)} O{(TOOL.ORIENT)} U{(TOOLCALL.DOC)} R{(SETUP.CLR)} X{(TOOLCALL.FIN_DOC)} Z{(TOOLCALL.FIN_DOC)} F_R{(TOOLCALL.R_FEED)} F_F{(TOOLCALL.FIN_FEED)} RPM{(TOOLCALL.RPM)}",
+"FACE T{(TOOLCALL.T)} O{(TOOL.ORIENT)} W{(TOOLCALL.DOC)} R{(SETUP.CLR)} X{(TOOLCALL.FIN_DOC)} Z{(TOOLCALL.FIN_DOC)} F_R{(TOOLCALL.R_FEED)} F_F{(TOOLCALL.FIN_FEED)} RPM{(TOOLCALL.RPM)}",
+"RECESS T{(TOOLCALL.T)} O{(TOOL.ORIENT)} U{(TOOLCALL.DOC)} R{(SETUP.CLR)} X{(TOOLCALL.FIN_DOC)} Z{(TOOLCALL.FIN_DOC)} F_R{(TOOLCALL.R_FEED)} F_F{(TOOLCALL.FIN_FEED)} RPM{(TOOLCALL.RPM)}"
 };
 
 
 
 enum
 {
-    LC_TMPL_OD = 0,
-    LC_TMPL_ID,
-    LC_TMPL_FACE,
-    LC_TMPL_DRILL,
-    LC_TMPL_TAP,
-    LC_TMPL_CUT,
-    LC_TMPL_CHAMFER,
-    LC_TMPL_THR_OD,
-    LC_TMPL_THR_ID,
-    LC_TMPL_RADIUS_OD,
-    LC_TMPL_RADIUS_ID,
-    LC_TMPL_GROOVE,
-    LC_TMPL_PART
+    LC_GCODE_TMPL_G71 = 0,
+    LC_GCODE_TMPL_G72,
+    LC_GCODE_TMPL_G1,
+    LC_GCODE_TMPL_G2,
+    LC_GCODE_TMPL_G3,
+    LC_GCODE_TMPL_G80,
+    LC_GCODE_TMPL_G74,
+    LC_GCODE_TMPL_G84,
+    LC_GCODE_TMPL_G33,
+    LC_GCODE_TMPL_G76
 };
+
+enum
+{
+    LC_PRESET_TMPL_OD = 0,
+    LC_PRESET_TMPL_ID,
+    LC_PRESET_TMPL_FACE,
+    LC_PRESET_TMPL_RECESS
+};
+
+typedef enum
+{
+    LC_TEMPLATE_ACTION_NONE = 0,
+    LC_TEMPLATE_ACTION_DRAFT,
+    LC_TEMPLATE_ACTION_PRESET
+} lc_template_action_t;
+
+typedef struct
+{
+    lc_template_action_t action;
+    const char *text;
+} lc_template_selection_t;
+
+static inline const char *lc_template_setup(void)
+{
+    return g_leancam_setup_template;
+}
+
+static inline const char *lc_template_catalog(lc_menu_catalog_kind_t catalog)
+{
+    switch (catalog)
+    {
+        case LC_MENU_CATALOG_TOOLS:
+            return g_leancam_tool_template;
+        default:
+            return NULL;
+    }
+}
+
+static inline lc_template_selection_t lc_template_select(lc_menu_template_t tmpl)
+{
+    lc_template_selection_t selection = {LC_TEMPLATE_ACTION_NONE, NULL};
+
+    switch (tmpl)
+    {
+        case LC_MENU_TEMPLATE_TOOLCALL:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_tool_call_template;
+            break;
+        case LC_MENU_TEMPLATE_PROCESSCALL:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_process_call_template;
+            break;
+        case LC_MENU_TEMPLATE_OD:
+            selection.action = LC_TEMPLATE_ACTION_PRESET;
+            selection.text = g_leancam_preset_templates[LC_PRESET_TMPL_OD];
+            break;
+        case LC_MENU_TEMPLATE_ID:
+            selection.action = LC_TEMPLATE_ACTION_PRESET;
+            selection.text = g_leancam_preset_templates[LC_PRESET_TMPL_ID];
+            break;
+        case LC_MENU_TEMPLATE_FACE:
+            selection.action = LC_TEMPLATE_ACTION_PRESET;
+            selection.text = g_leancam_preset_templates[LC_PRESET_TMPL_FACE];
+            break;
+        case LC_MENU_TEMPLATE_RECESS:
+            selection.action = LC_TEMPLATE_ACTION_PRESET;
+            selection.text = g_leancam_preset_templates[LC_PRESET_TMPL_RECESS];
+            break;
+        case LC_MENU_TEMPLATE_L:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_gcode_templates[LC_GCODE_TMPL_G1];
+            break;
+        case LC_MENU_TEMPLATE_C:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_gcode_templates[LC_GCODE_TMPL_G2];
+            break;
+        case LC_MENU_TEMPLATE_DRILL:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_gcode_templates[LC_GCODE_TMPL_G74];
+            break;
+        case LC_MENU_TEMPLATE_TAP:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_gcode_templates[LC_GCODE_TMPL_G84];
+            break;
+        case LC_MENU_TEMPLATE_THREAD:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_gcode_templates[LC_GCODE_TMPL_G76];
+            break;
+        case LC_MENU_TEMPLATE_END:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_gcode_templates[LC_GCODE_TMPL_G80];
+            break;
+        default:
+            break;
+    }
+
+    return selection;
+}
 
 #undef LC_TEMPLATE_UNUSED
 

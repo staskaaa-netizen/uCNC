@@ -1,6 +1,6 @@
 #include "leancam_files.h"
+#include "leancam_resource.h"
 #include "../file_system.h"
-#include "../../cnc.h"
 #include "../../interface/grbl_stream.h"
 
 #include <string.h>
@@ -11,10 +11,9 @@
 static char g_lc_files[LC_MAX_FILES][LC_FILE_NAME_MAX];
 static int  g_lc_file_count = 0;
 static bool g_lc_busy = false;
-static bool g_lc_show_all = false;
 
 #ifndef LC_FILE_SAVE_DBG
-#define LC_FILE_SAVE_DBG 1
+#define LC_FILE_SAVE_DBG 0
 #endif
 
 #if LC_FILE_SAVE_DBG
@@ -30,15 +29,18 @@ void __attribute__((weak)) leancam_files_debug_probe(const char *stage)
 
 /* ---------- IO GUARD ---------- */
 
-static void lc_file_io_begin(void)
+static bool lc_file_io_begin(void)
 {
+    if (!lc_resource_file_begin("files"))
+        return false;
+
     g_lc_busy = true;
-    cnc_set_file_io_critical(true);
+    return true;
 }
 
 static void lc_file_io_end(void)
 {
-    cnc_set_file_io_critical(false);
+    lc_resource_file_end();
     g_lc_busy = false;
 }
 
@@ -89,131 +91,102 @@ static void lc_sort_files(void)
     }
 }
 
-/* ---------- INIT ---------- */
-
-bool leancam_files_init(void)
-{
-    lc_clear_file_list();
-    return true;
-}
-
-bool leancam_files_busy(void)
-{
-    return g_lc_busy;
-}
-
-/* ---------- SAVE ---------- */
-
-bool leancam_files_save(const char *path, const program_t *p)
+static bool lc_write_program_path(const char *path, const program_t *p, uint32_t t0, const char *tag)
 {
     fs_file_t *fp;
     int i;
-    uint32_t t0;
+    static char write_buf[(MAX_LINES * (MAX_LEN + 1)) + 1];
+    size_t used = 0;
 
-    if (!path || !p) return false;
-
-    t0 = mcu_millis();
-    LC_SAVE_LOG(__romstr__("[MSG:LC file save enter t=%lu path=%s count=%d]\r\n"),
-                (unsigned long)t0,
-                path,
-                p->count);
-    leancam_files_debug_probe("save-enter");
-    lc_file_io_begin();
-    LC_SAVE_LOG(__romstr__("[MSG:LC file save guard on dt=%lu]\r\n"),
-                (unsigned long)(mcu_millis() - t0));
-    leancam_files_debug_probe("guard-on");
-
-    LC_SAVE_LOG(__romstr__("[MSG:LC file save open begin dt=%lu]\r\n"),
-                (unsigned long)(mcu_millis() - t0));
-    leancam_files_debug_probe("open-begin");
-    fp = fs_open(path, "w");
-    if (!fp)
-    {
-        LC_SAVE_LOG(__romstr__("[MSG:LC file save open fail dt=%lu]\r\n"),
-                    (unsigned long)(mcu_millis() - t0));
-        lc_file_io_end();
-        return false;
-    }
-    LC_SAVE_LOG(__romstr__("[MSG:LC file save open ok dt=%lu]\r\n"),
-                (unsigned long)(mcu_millis() - t0));
-    leancam_files_debug_probe("open-ok");
+#if !LC_FILE_SAVE_DBG
+    (void)t0;
+    (void)tag;
+#endif
 
     for (i = 0; i < p->count; ++i)
     {
         const char *line = p->lines[i];
         size_t len = (line && line[0]) ? strlen(line) : 0u;
 
-        LC_SAVE_LOG(__romstr__("[MSG:LC file save line begin i=%d len=%lu dt=%lu]\r\n"),
-                    i,
-                    (unsigned long)len,
-                    (unsigned long)(mcu_millis() - t0));
-        leancam_files_debug_probe("line-begin");
+        if ((used + len + 1u) > sizeof(write_buf))
+            return false;
 
         if (len)
         {
-            size_t wrote = fs_write(fp, (const uint8_t *)line, len);
-            if (wrote != len)
-            {
-                LC_SAVE_LOG(__romstr__("[MSG:LC file save line fail i=%d wrote=%lu want=%lu dt=%lu]\r\n"),
-                            i,
-                            (unsigned long)wrote,
-                            (unsigned long)len,
-                            (unsigned long)(mcu_millis() - t0));
-                fs_close(fp);
-                lc_file_io_end();
-                return false;
-            }
+            memcpy(write_buf + used, line, len);
+            used += len;
         }
 
-        uint8_t nl = '\n';
-        if (fs_write(fp, &nl, 1) != 1)
-        {
-            LC_SAVE_LOG(__romstr__("[MSG:LC file save nl fail i=%d dt=%lu]\r\n"),
-                        i,
-                        (unsigned long)(mcu_millis() - t0));
-            fs_close(fp);
-            lc_file_io_end();
-            return false;
-        }
-        LC_SAVE_LOG(__romstr__("[MSG:LC file save line ok i=%d dt=%lu]\r\n"),
-                    i,
-                    (unsigned long)(mcu_millis() - t0));
-        leancam_files_debug_probe("line-ok");
+        write_buf[used++] = '\n';
     }
 
-    LC_SAVE_LOG(__romstr__("[MSG:LC file save close begin dt=%lu]\r\n"),
+    LC_SAVE_LOG(__romstr__("[MSG:LC file save open begin tag=%s dt=%lu]\r\n"),
+                tag,
+                (unsigned long)(mcu_millis() - t0));
+    leancam_files_debug_probe("open-begin");
+    fp = fs_open(path, "w");
+    if (!fp)
+    {
+        LC_SAVE_LOG(__romstr__("[MSG:LC file save open fail tag=%s dt=%lu]\r\n"),
+                    tag,
+                    (unsigned long)(mcu_millis() - t0));
+        return false;
+    }
+    LC_SAVE_LOG(__romstr__("[MSG:LC file save open ok tag=%s dt=%lu]\r\n"),
+                tag,
+                (unsigned long)(mcu_millis() - t0));
+    leancam_files_debug_probe("open-ok");
+
+    if (used)
+    {
+        size_t wrote;
+
+        LC_SAVE_LOG(__romstr__("[MSG:LC file save write begin tag=%s bytes=%lu dt=%lu]\r\n"),
+                    tag,
+                    (unsigned long)used,
+                    (unsigned long)(mcu_millis() - t0));
+        leancam_files_debug_probe("write-begin");
+
+        wrote = fs_write(fp, (const uint8_t *)write_buf, used);
+        if (wrote != used)
+        {
+            LC_SAVE_LOG(__romstr__("[MSG:LC file save write fail tag=%s wrote=%lu want=%lu dt=%lu]\r\n"),
+                        tag,
+                        (unsigned long)wrote,
+                        (unsigned long)used,
+                        (unsigned long)(mcu_millis() - t0));
+            fs_close(fp);
+            return false;
+        }
+
+        LC_SAVE_LOG(__romstr__("[MSG:LC file save write ok tag=%s dt=%lu]\r\n"),
+                    tag,
+                    (unsigned long)(mcu_millis() - t0));
+        leancam_files_debug_probe("write-ok");
+    }
+
+    LC_SAVE_LOG(__romstr__("[MSG:LC file save close begin tag=%s dt=%lu]\r\n"),
+                tag,
                 (unsigned long)(mcu_millis() - t0));
     leancam_files_debug_probe("close-begin");
     fs_close(fp);
-    LC_SAVE_LOG(__romstr__("[MSG:LC file save close ok dt=%lu]\r\n"),
+    LC_SAVE_LOG(__romstr__("[MSG:LC file save close ok tag=%s dt=%lu]\r\n"),
+                tag,
                 (unsigned long)(mcu_millis() - t0));
     leancam_files_debug_probe("close-ok");
-    lc_file_io_end();
-    LC_SAVE_LOG(__romstr__("[MSG:LC file save guard off dt=%lu]\r\n"),
-                (unsigned long)(mcu_millis() - t0));
-    leancam_files_debug_probe("guard-off");
 
     return true;
 }
 
-/* ---------- LOAD ---------- */
-
-bool leancam_files_load(const char *path, program_t *p)
+static bool lc_load_program_path(const char *path, program_t *p)
 {
     fs_file_t *fp;
     char line[MAX_LEN];
     int pos = 0;
 
-    if (!path || !p) return false;
-
-    lc_file_io_begin();
-
     fp = fs_open(path, "r");
     if (!fp)
-    {
-        lc_file_io_end();
         return false;
-    }
 
     prog_init(p);
 
@@ -224,7 +197,6 @@ bool leancam_files_load(const char *path, program_t *p)
         if (!fs_read(fp, (uint8_t *)&c, 1))
         {
             fs_close(fp);
-            lc_file_io_end();
             return false;
         }
 
@@ -237,7 +209,6 @@ bool leancam_files_load(const char *path, program_t *p)
             if (!prog_add(p, line))
             {
                 fs_close(fp);
-                lc_file_io_end();
                 return false;
             }
 
@@ -252,13 +223,92 @@ bool leancam_files_load(const char *path, program_t *p)
     if (pos > 0)
     {
         line[pos] = 0;
-        prog_add(p, line);
+        if (!prog_add(p, line))
+        {
+            fs_close(fp);
+            return false;
+        }
     }
 
     fs_close(fp);
+    return true;
+}
+
+/* ---------- INIT ---------- */
+
+bool leancam_files_init(void)
+{
+    lc_clear_file_list();
+    return true;
+}
+
+bool leancam_files_busy(void)
+{
+    return g_lc_busy || lc_resource_file_busy();
+}
+
+/* ---------- SAVE ---------- */
+
+bool leancam_files_save(const char *path, const program_t *p)
+{
+    uint32_t t0;
+
+    if (!path || !p) return false;
+
+    t0 = mcu_millis();
+    LC_SAVE_LOG(__romstr__("[MSG:LC file save enter t=%lu path=%s count=%d]\r\n"),
+                (unsigned long)t0,
+                path,
+                p->count);
+    leancam_files_debug_probe("save-enter");
+    if (!lc_file_io_begin())
+        return false;
+    LC_SAVE_LOG(__romstr__("[MSG:LC file save guard on dt=%lu]\r\n"),
+                (unsigned long)(mcu_millis() - t0));
+    leancam_files_debug_probe("guard-on");
+
+    if (!lc_write_program_path(path, p, t0, "final"))
+    {
+        lc_file_io_end();
+        return false;
+    }
+
     lc_file_io_end();
+    LC_SAVE_LOG(__romstr__("[MSG:LC file save guard off dt=%lu]\r\n"),
+                (unsigned long)(mcu_millis() - t0));
+    leancam_files_debug_probe("guard-off");
 
     return true;
+}
+
+bool leancam_files_save_plain(const char *path, const program_t *p)
+{
+    uint32_t t0;
+    bool ok;
+
+    if (!path || !p) return false;
+
+    t0 = mcu_millis();
+    if (!lc_file_io_begin())
+        return false;
+    ok = lc_write_program_path(path, p, t0, "plain");
+    lc_file_io_end();
+    return ok;
+}
+
+/* ---------- LOAD ---------- */
+
+bool leancam_files_load(const char *path, program_t *p)
+{
+    bool ok;
+
+    if (!path || !p) return false;
+
+    if (!lc_file_io_begin())
+        return false;
+    ok = lc_load_program_path(path, p);
+    lc_file_io_end();
+    return ok;
 }
 
 /* ---------- REFRESH ---------- */
@@ -271,7 +321,8 @@ bool leancam_files_refresh(const char *dir)
     if (!dir || !dir[0]) return false;
 
     lc_clear_file_list();
-    lc_file_io_begin();
+    if (!lc_file_io_begin())
+        return false;
 
     dp = fs_opendir(dir);
     if (!dp)
@@ -292,7 +343,7 @@ bool leancam_files_refresh(const char *dir)
         if (!name) continue;
         name++;
 
-        if (!g_lc_show_all && !lc_has_suffix_ci(name, ".lcam") && !lc_has_suffix_ci(name, ".nc"))
+        if (!lc_has_suffix_ci(name, ".nc"))
             continue;
 
         strncpy(g_lc_files[g_lc_file_count], name, LC_FILE_NAME_MAX - 1);
@@ -305,16 +356,6 @@ bool leancam_files_refresh(const char *dir)
     lc_file_io_end();
 
     return true;
-}
-
-void leancam_files_set_show_all(bool show_all)
-{
-    g_lc_show_all = show_all;
-}
-
-bool leancam_files_show_all(void)
-{
-    return g_lc_show_all;
 }
 
 /* ---------- ACCESS ---------- */
@@ -352,10 +393,10 @@ bool leancam_files_make_new_path(const char *dir, const char *name, char *out, i
     if (!dir || !name || !name[0] || !out)
         return false;
 
-    if (lc_has_suffix_ci(name, ".lcam"))
+    if (lc_has_suffix_ci(name, ".nc"))
         snprintf(out, out_sz, "%s/%s", dir, name);
     else
-        snprintf(out, out_sz, "%s/%s.lcam", dir, name);
+        snprintf(out, out_sz, "%s/%s.nc", dir, name);
 
     return true;
 }
@@ -367,7 +408,8 @@ bool leancam_files_delete_path(const char *path)
     if (!path || !path[0])
         return false;
 
-    lc_file_io_begin();
+    if (!lc_file_io_begin())
+        return false;
     ok = fs_remove(path);
     lc_file_io_end();
 

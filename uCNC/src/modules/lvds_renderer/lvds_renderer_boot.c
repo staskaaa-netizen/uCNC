@@ -36,6 +36,7 @@ static bool lvds_renderer_update(void *args)
     watchdog_update();
 #endif
     lvds_renderer_state_poll();
+    lvds_renderer_prepare_poll();
     lvds_renderer_draw_poll();
     return EVENT_CONTINUE;
 }

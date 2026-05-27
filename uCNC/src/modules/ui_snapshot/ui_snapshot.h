@@ -64,11 +64,15 @@ typedef struct
 #endif
 
 #ifndef UI_LC_LINE_LEN
-#define UI_LC_LINE_LEN 96
+#define UI_LC_LINE_LEN 160
 #endif
 
 #ifndef UI_LC_HELPER_LEN
 #define UI_LC_HELPER_LEN 129
+#endif
+
+#ifndef UI_LC_PREVIEW_REGION_MAX
+#define UI_LC_PREVIEW_REGION_MAX 10
 #endif
 
 
@@ -88,6 +92,8 @@ typedef struct
     char footer[UI_SNAPSHOT_TITLE_LEN];
     char popup[UI_SNAPSHOT_POPUP_LEN];
     char status_line[UI_SNAPSHOT_TITLE_LEN];
+    uint32_t diag_uptime_s;
+    uint32_t diag_build_count;
 
     /* LeanCam preview. Built on core1, rendered on core0. */
     bool leancam_active;
@@ -102,6 +108,15 @@ typedef struct
     uint8_t leancam_line_selected[UI_LC_MAX_LINES];
     char leancam_setup_line[UI_LC_LINE_LEN];
     char leancam_preview_line[UI_LC_LINE_LEN];
+    char leancam_preview_region[UI_LC_PREVIEW_REGION_MAX][UI_LC_LINE_LEN];
+    uint8_t leancam_preview_region_selected[UI_LC_PREVIEW_REGION_MAX];
+    uint8_t leancam_preview_region_count;
+    bool leancam_fullscreen_sim;
+    bool leancam_sim_preview_active;
+    uint16_t leancam_sim_preview_seq;
+    uint16_t leancam_sim_preview_index;
+    uint16_t leancam_sim_preview_count;
+    char leancam_sim_preview_line[UI_LC_LINE_LEN];
     char leancam_tool_line[UI_LC_LINE_LEN];
     char leancam_active_field[12];
     bool leancam_thread_lane_valid;

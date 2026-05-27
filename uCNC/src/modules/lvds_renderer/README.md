@@ -62,9 +62,45 @@ and rejected because it was slow and caused sync loss on the panel.
 Do not poll `fs_file_run_active()` from the LVDS renderer state path. On this
 RP2350 SD/LVDS setup that call can deadlock during the live renderer loop.
 
+Do not generate LeanCam G-code inside the LVDS renderer. This was tested with
+local preview burst modes that built the generated G-code cache on the renderer
+side and then skipped both parsing and pixel drawing; that still reset uCNC.
+The likely mechanism is not the final pixel draw itself, but running the
+LeanCam generation/state/cache path in the render/HSTX timing domain while
+core1 scanout, PSRAM backbuffer, snapshot publication, and uCNC tasks are
+active. In practice it can starve or corrupt timing-sensitive work enough to
+reset the controller.
+
+Safe generated preview architecture:
+
+- LeanCam bridge owns G-code generation.
+- The bridge queues generated lines and advances them at a fixed pace.
+- The snapshot carries only the current generated preview line and sequence.
+- The LVDS renderer consumes snapshot data only and draws at most one generated
+  line per preview tick.
+- Do not call `lc_raw_preview_cached_region_gcode()` from sim preview drawing.
+
 LeanCam renderer scope:
 
 - normal editor rows and right-side stock/cycle preview
 - tool catalog preview for `TOOL|...` entries
 - full-screen live material-removal view while running/holding
 - no PROCESS or T+P catalog preview path in the current minimal model
+
+Tool preview notes:
+
+- `TOOL.ORIENT` is interpreted as a keypad code using the 3x3 layout:
+  `7 8 9 / 4 5 6 / 1 2 3`
+- `0` or missing `ORIENT` draws only a red DOC-sized dot at X0/Z0
+- one digit draws the legacy square/drill preview
+- three or four digits draw a simple polygon insert preview from those keypad
+  points
+- three-digit shapes anchor at the middle digit; four-digit shapes use their
+  middle pair as the X/Z reference, so `2486` hangs from the origin by `4-8`
+  instead of being centered on it
+- examples: `276` rhombic, `183`/`176`/`172`/`679` triangular, `2486`
+  rotated square with `4-8` emphasized as the cutting side
+- non-cutting polygon sides are filled but not outlined in red; for example
+  `172` does not draw a red border between `1` and `2`
+- live simulation still uses the fast legacy marker path; for multi-digit
+  shapes it collapses the code to the inferred tip direction

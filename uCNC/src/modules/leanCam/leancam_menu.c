@@ -5,6 +5,18 @@
 #include <stdio.h>
 #include <string.h>
 
+static bool g_program_other_templates;
+
+void leancam_menu_set_program_other_templates(bool enabled)
+{
+    g_program_other_templates = enabled;
+}
+
+bool leancam_menu_program_other_templates(void)
+{
+    return g_program_other_templates;
+}
+
 static bool lc_menu_is_digit(ui_key_t key)
 {
     return key >= UI_KEY_DIGIT_0 && key <= UI_KEY_DIGIT_9;
@@ -54,7 +66,7 @@ static bool lc_menu_handle_files(void *user, const lc_menu_actions_t *a, ui_key_
         return true;
     }
     if (key == UI_KEY_FINISH) {
-        if (a->files_generate_gcode) a->files_generate_gcode(user);
+        if (a->files_prepare_run) a->files_prepare_run(user);
         return true;
     }
     if (key == UI_KEY_BACKSPACE) {
@@ -94,16 +106,16 @@ static bool lc_menu_handle_files(void *user, const lc_menu_actions_t *a, ui_key_
             if (a->files_delete_selected) a->files_delete_selected(user);
             return true;
 
+        case LC_SCHEMA_ACT_FILE_DUPLICATE:
+            if (a->files_duplicate_selected) a->files_duplicate_selected(user);
+            return true;
+
         case LC_SCHEMA_ACT_FILE_REFRESH:
             if (a->files_refresh) a->files_refresh(user);
             return true;
 
-        case LC_SCHEMA_ACT_FILE_TOGGLE_ALL:
-            if (a->files_toggle_all) a->files_toggle_all(user);
-            return true;
-
-        case LC_SCHEMA_ACT_FILE_GENERATE:
-            if (a->files_generate_gcode) a->files_generate_gcode(user);
+        case LC_SCHEMA_ACT_FILE_PREPARE:
+            if (a->files_prepare_run) a->files_prepare_run(user);
             return true;
 
         default:
@@ -189,7 +201,6 @@ static bool lc_menu_handle_catalog_program(void *user, const lc_menu_actions_t *
         return true;
     }
     if (key == UI_KEY_FINISH) {
-        if (a->catalog_duplicate_entry) a->catalog_duplicate_entry(user);
         return true;
     }
     if (key == UI_KEY_BACKSPACE) {
@@ -244,6 +255,7 @@ static bool lc_menu_handle_program(void *user, const lc_menu_actions_t *a, ui_ke
 {
     const lc_schema_menu_item_t *item;
     char keych;
+    lc_schema_page_id_t page_id;
 
     if (!a) return false;
 
@@ -273,13 +285,21 @@ static bool lc_menu_handle_program(void *user, const lc_menu_actions_t *a, ui_ke
         return false;
     }
 
-    item = leancam_schema_find_key_for(LC_MENU_MODE_PROGRAM, LC_MENU_CATALOG_NONE, keych);
+    page_id = g_program_other_templates ? LC_SCHEMA_PAGE_PROGRAM_OTHER : LC_SCHEMA_PAGE_PROGRAM;
+    item = leancam_schema_find_key(leancam_schema_page(page_id), keych);
     if (!item) {
         return false;
     }
 
     switch (item->action)
     {
+        case LC_SCHEMA_ACT_TEMPLATE_MORE:
+            g_program_other_templates = !g_program_other_templates;
+            if (a->set_message) {
+                a->set_message(user, g_program_other_templates ? "LC: other cycles" : "LC: main cycles");
+            }
+            return true;
+
         case LC_SCHEMA_ACT_TEMPLATE:
             if (a->program_begin_template) a->program_begin_template(user, (lc_menu_template_t)item->value);
             return true;
@@ -520,13 +540,13 @@ void leancam_menu_copy_footer(char *out,
                               size_t out_size,
                               lc_menu_mode_t mode,
                               lc_menu_catalog_kind_t catalog,
-                              bool files_show_all,
                               bool draft_active,
                               unsigned draft_field_index,
                               unsigned draft_field_count,
                               const char *draft_input)
 {
     const lc_schema_page_t *page;
+    (void)draft_input;
 
     if (!out || out_size == 0) {
         return;
@@ -536,10 +556,9 @@ void leancam_menu_copy_footer(char *out,
         if (draft_field_index < draft_field_count) {
             snprintf(out,
                      out_size,
-                     "F %u/%u|0-9 %.18s|B +/-|C .|D Next|# Save|* Back|A Cancel",
+                     "F %u/%u|0-9 Value|B +/-|C .|D Next|# Save|* Back|A Cancel",
                      draft_field_index + 1u,
-                     draft_field_count,
-                     (draft_input && draft_input[0]) ? draft_input : "Value");
+                     draft_field_count);
         } else {
             lc_menu_copy(out, out_size, "F Done|# Save|* Back|A Cancel");
         }
@@ -551,12 +570,6 @@ void leancam_menu_copy_footer(char *out,
         case LC_MENU_MODE_FILES:
             page = leancam_schema_page(LC_SCHEMA_PAGE_FILES);
             leancam_schema_format_footer(out, out_size, page);
-            if (files_show_all) {
-                char *p = strstr(out, "9 All");
-                if (p) {
-                    snprintf(p, out_size - (size_t)(p - out), "9 LCAM");
-                }
-            }
             break;
 
         case LC_MENU_MODE_FILE_NAME:
@@ -567,7 +580,7 @@ void leancam_menu_copy_footer(char *out,
             leancam_schema_format_footer(out,
                                          out_size,
                                          leancam_schema_page(catalog == LC_MENU_CATALOG_NONE ?
-                                                            LC_SCHEMA_PAGE_PROGRAM :
+                                                            (g_program_other_templates ? LC_SCHEMA_PAGE_PROGRAM_OTHER : LC_SCHEMA_PAGE_PROGRAM) :
                                                             LC_SCHEMA_PAGE_CATALOG));
             break;
 

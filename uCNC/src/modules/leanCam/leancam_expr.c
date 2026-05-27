@@ -1,4 +1,5 @@
 #include "leancam_expr.h"
+#include "leancam_text.h"
 
 #include <string.h>
 
@@ -38,6 +39,30 @@ static int lc_find_named_field(const char *line,
     if (!line || !field || !field[0])
         return 0;
 
+    if (!strchr(line, '{'))
+    {
+        static char plain_value[UI_LC_LINE_LEN + 1u];
+
+        plain_value[0] = '{';
+        if (!lc_text_get_field_text(line, field, plain_value + 1, sizeof(plain_value) - 1u))
+        {
+            if (strcmp(field, "RPM") == 0 &&
+                (lc_text_get_field_text(line, "S", plain_value + 1, sizeof(plain_value) - 1u) ||
+                 lc_text_get_field_text(line, "SPINDLE_RPM", plain_value + 1, sizeof(plain_value) - 1u)))
+            {
+                /* handled below */
+            }
+            else
+            {
+                return 0;
+            }
+        }
+
+        if (open_out) *open_out = plain_value;
+        if (close_out) *close_out = plain_value + strlen(plain_value);
+        return 1;
+    }
+
     flen = (uint32_t)strlen(field);
     scan = line;
 
@@ -52,7 +77,9 @@ static int lc_find_named_field(const char *line,
             return 0;
 
         name_start = o;
-        while (name_start > line && *(name_start - 1) != '|')
+        while (name_start > line &&
+               *(name_start - 1) != ' ' &&
+               *(name_start - 1) != '\t')
             name_start--;
 
         name_len = (uint32_t)(o - name_start);
@@ -127,16 +154,24 @@ static int lc_resolve_raw_value(const char *raw,
 
     if (lc_strip_default_expr(raw, expr, sizeof(expr)))
     {
-        if (strncmp(expr, "SETUP.", 6) == 0)
-            return lc_resolve_value_from_line(setup_line, expr + 6, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
+        raw = expr;
+    }
 
-        if (strncmp(expr, "TOOL.", 5) == 0)
-            return lc_resolve_value_from_line(tool_line, expr + 5, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
+    if (strncmp(raw, "SETUP.", 6) == 0)
+        return lc_resolve_value_from_line(setup_line, raw + 6, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
 
-        if (strncmp(expr, "THIS.", 5) == 0)
-            return lc_resolve_value_from_line(this_line, expr + 5, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
+    if (strncmp(raw, "TOOL.", 5) == 0)
+        return lc_resolve_value_from_line(tool_line, raw + 5, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
 
-        ui_snapshot_strcpy(out, expr, out_len);
+    if (strncmp(raw, "TOOLCALL.", 9) == 0)
+        return lc_resolve_value_from_line(tool_line, raw + 9, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
+
+    if (strncmp(raw, "THIS.", 5) == 0)
+        return lc_resolve_value_from_line(this_line, raw + 5, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
+
+    if (raw == expr)
+    {
+        ui_snapshot_strcpy(out, raw, out_len);
         return out[0] != 0;
     }
 
@@ -163,7 +198,21 @@ static int lc_resolve_value_from_line(const char *line,
     out[0] = 0;
 
     if (!lc_find_named_field(line, field, &open, &close))
+    {
+        if (field && strcmp(field, "RPM") == 0)
+        {
+            if (lc_find_named_field(line, "S", &open, &close) ||
+                lc_find_named_field(line, "SPINDLE_RPM", &open, &close))
+            {
+                if (!lc_copy_span(raw, sizeof(raw), open + 1, close))
+                    return 0;
+                return lc_resolve_raw_value(raw, setup_line, tool_line, this_line, out, out_len, depth);
+            }
+            ui_snapshot_strcpy(out, "800", out_len);
+            return 1;
+        }
         return 0;
+    }
 
     if (!lc_copy_span(raw, sizeof(raw), open + 1, close))
         return 0;
@@ -252,10 +301,67 @@ void leancam_expr_build_draft_display(char *dst,
     if (!input) input = "";
     if (!this_line) this_line = draft;
 
-    lc_append_cstr(dst, dst_len, &pos, "> ");
-
     scan = draft;
     copy_from = draft;
+
+    if (!strchr(draft, '{'))
+    {
+        uint8_t plain_idx = 0;
+        const char *p = draft;
+
+        while (*p && pos + 1u < dst_len)
+        {
+            const char *tok;
+            const char *end;
+            const char *value;
+            uint32_t field_start;
+            uint32_t field_end;
+
+            if (*p == ' ' || *p == '\t')
+            {
+                dst[pos++] = *p++;
+                dst[pos] = 0;
+                continue;
+            }
+
+            tok = p;
+            while (*p && *p != ' ' && *p != '\t')
+                p++;
+            end = p;
+
+            value = tok;
+            while (value < end &&
+                   ((*value >= 'A' && *value <= 'Z') ||
+                    (*value >= 'a' && *value <= 'z') ||
+                    *value == '_'))
+                value++;
+            if (value < end && *value == '=')
+                value++;
+
+            if (tok == draft || value >= end)
+            {
+                lc_append_span(dst, dst_len, &pos, tok, end);
+                continue;
+            }
+
+            lc_append_span(dst, dst_len, &pos, tok, value);
+            field_start = pos;
+            if (plain_idx == active_index && input[0])
+                lc_append_cstr(dst, dst_len, &pos, input);
+            else
+                lc_append_span(dst, dst_len, &pos, value, end);
+            field_end = pos;
+
+            if (plain_idx == active_index)
+            {
+                if (hi_start) *hi_start = (field_start > 255u) ? 255u : (uint8_t)field_start;
+                if (hi_end)   *hi_end   = (field_end   > 255u) ? 255u : (uint8_t)field_end;
+            }
+            if (plain_idx < 250u)
+                plain_idx++;
+        }
+        return;
+    }
 
     while (scan && *scan && pos + 1u < dst_len)
     {

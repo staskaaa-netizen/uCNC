@@ -265,7 +265,7 @@ static void __no_inline_not_in_flash_func(prepare_next_dma_line)(uint ch_num)
 
     if ((g_v_scanline < LVDS_HSTX_V_FRONT_PORCH) ||
         ((g_v_scanline >= LVDS_HSTX_V_FRONT_PORCH + LVDS_HSTX_V_SYNC_WIDTH) &&
-         (g_v_scanline < LVDS_HSTX_V_INACTIVE))) {
+        (g_v_scanline < LVDS_HSTX_V_INACTIVE))) {
         ch->read_addr = (uintptr_t)g_inactive_line;
         if (g_v_scanline == (LVDS_HSTX_V_INACTIVE - 1)) {
             ch->read_addr = (uintptr_t)g_active_line[0];
@@ -610,6 +610,9 @@ void lvds_hstx_direct_scanout(bool direct)
     if (g_direct_scanout == direct) {
         return;
     }
+    if (cnc_is_file_io_critical()) {
+        return;
+    }
     g_direct_scanout = direct;
     if (direct) {
         memcpy(g_framebuffer, g_draw_buffer, LVDS_HSTX_FB_SIZE);
@@ -791,6 +794,9 @@ int lvds_hstx_text_width(const char *text, int font_id)
 
 void lvds_hstx_present(void)
 {
+    if (cnc_is_file_io_critical()) {
+        return;
+    }
     if (g_backbuffer_active && !g_direct_scanout) {
         memcpy(g_framebuffer, g_draw_buffer, LVDS_HSTX_FB_SIZE);
         g_dirty = false;

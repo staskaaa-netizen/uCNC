@@ -144,15 +144,12 @@ void leancam_bridge_request_render(void)
 
 void leancam_bridge_after_autosave(void)
 {
-    lvds_hstx_debug_dump("after-save");
-    lvds_hstx_debug_probe("after-save", 2000u);
-    lvds_renderer_trace_next_frames(2);
     g_lvds_frame_dirty = true;
 }
 
 void leancam_files_debug_probe(const char *stage)
 {
-    lvds_hstx_debug_probe(stage, 500u);
+    (void)stage;
 }
 
 void lvds_renderer_state_init(void)
@@ -173,6 +170,10 @@ void lvds_renderer_state_poll(void)
 
     lc_poll_inputs();
     leancam_bridge_tick();
+
+    if (cnc_is_file_io_critical()) {
+        return;
+    }
 
     if (!g_lvds_frame_dirty && (uint32_t)(now - last_ms) < LVDS_RENDERER_STATE_MS) {
         return;

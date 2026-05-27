@@ -15,6 +15,7 @@ typedef enum
     LC_SCHEMA_PAGE_FILES = 0,
     LC_SCHEMA_PAGE_FILE_NAME,
     LC_SCHEMA_PAGE_PROGRAM,
+    LC_SCHEMA_PAGE_PROGRAM_OTHER,
     LC_SCHEMA_PAGE_CATALOG,
     LC_SCHEMA_PAGE_DRAFT,
     LC_SCHEMA_PAGE_NC_VIEW
@@ -27,10 +28,11 @@ typedef enum
     LC_SCHEMA_ACT_FILE_OPEN,
     LC_SCHEMA_ACT_FILE_NEW,
     LC_SCHEMA_ACT_FILE_DELETE,
+    LC_SCHEMA_ACT_FILE_DUPLICATE,
     LC_SCHEMA_ACT_FILE_REFRESH,
-    LC_SCHEMA_ACT_FILE_TOGGLE_ALL,
-    LC_SCHEMA_ACT_FILE_GENERATE,
+    LC_SCHEMA_ACT_FILE_PREPARE,
     LC_SCHEMA_ACT_TEMPLATE,
+    LC_SCHEMA_ACT_TEMPLATE_MORE,
     LC_SCHEMA_ACT_PROGRAM_EDIT,
     LC_SCHEMA_ACT_CATALOG_NEW,
     LC_SCHEMA_ACT_PROGRAM_COPY,
@@ -81,7 +83,6 @@ const lc_schema_menu_item_t *leancam_schema_find_key(const lc_schema_page_t *pag
 const lc_schema_menu_item_t *leancam_schema_find_key_for(lc_menu_mode_t mode,
                                                          lc_menu_catalog_kind_t catalog,
                                                          char key);
-bool leancam_schema_template_for_key(char key, lc_menu_template_t *out);
 void leancam_schema_format_footer(char *out, size_t out_size, const lc_schema_page_t *page);
 void leancam_schema_format_title(char *out, size_t out_size, const lc_schema_page_t *page);
 

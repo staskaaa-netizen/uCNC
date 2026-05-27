@@ -109,42 +109,18 @@ bool field_is_required_or_unresolved(const char *line, int s, int e)
     return false;
 }
 
-bool find_first_required_or_unresolved(const char *line, int *s, int *e)
-{
-    int cs, ce;
-    int pos = 0;
-
-    while (find_field(line, pos, &cs, &ce)) {
-        if (field_is_required_or_unresolved(line, cs, ce)) {
-            *s = cs;
-            *e = ce;
-            return true;
-        }
-        pos = ce;
-    }
-
-    return false;
-}
-
-bool find_next_required_or_unresolved(const char *line, int from, int *s, int *e)
-{
-    int cs, ce;
-    int pos = from;
-
-    while (find_field(line, pos, &cs, &ce)) {
-        if (field_is_required_or_unresolved(line, cs, ce)) {
-            *s = cs;
-            *e = ce;
-            return true;
-        }
-        pos = ce;
-    }
-
-    return false;
-}
-
 bool line_has_unresolved_required(const char *line)
 {
-    int s, e;
-    return find_first_required_or_unresolved(line, &s, &e);
+    int s;
+    int e;
+    int pos = 0;
+
+    while (find_field(line, pos, &s, &e))
+    {
+        if (field_is_required_or_unresolved(line, s, e))
+            return true;
+        pos = e;
+    }
+
+    return false;
 }

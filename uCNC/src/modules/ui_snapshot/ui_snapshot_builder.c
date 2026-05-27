@@ -12,6 +12,7 @@
  */
 
 #include "../../cnc.h"
+#include "../../interface/grbl_protocol.h"
 #include "../system_menu.h"
 #include "ui_snapshot.h"
 #ifndef LEANCAM_RP2350_NO_CAM_KEYBOARD
@@ -21,6 +22,7 @@
 #include "../encoder.h"
 #include "../file_system.h"
 #include "../leanCam/leancam_bridge.h"
+#include "../lvds_renderer/lvds_renderer.h"
 
 
 #include <stdint.h>
@@ -39,6 +41,7 @@ SemaphoreHandle_t g_ui_snapshot_mutex = NULL;
 #endif
 
 static char g_ui_popup_text[UI_SNAPSHOT_POPUP_LEN] = {0};
+static uint32_t g_ui_snapshot_build_count = 0;
 
 bool __attribute__((weak)) encoder_get_index_debug_line(uint8_t i, char *line, uint32_t line_len, uint32_t *seq)
 {
@@ -187,8 +190,11 @@ void ui_snapshot_build_live(void)
 #endif
 
     ui_snapshot_prepare_frame(&f);
+    g_ui_snapshot_build_count++;
 
     f.screen_kind        = ui_builder_detect_screen_kind_simple();
+    f.diag_uptime_s      = mcu_millis() / 1000u;
+    f.diag_build_count   = g_ui_snapshot_build_count;
     f.current_menu_id    = g_system_menu.current_menu;
     f.current_index      = g_system_menu.current_index;
     f.menu_flags         = g_system_menu.flags;
@@ -217,6 +223,18 @@ void ui_snapshot_build_live(void)
         ui_snapshot_set_popup(&f, g_ui_popup_text[0] ? g_ui_popup_text : "Popup");
 
     ui_snapshot_publish(&g_ui_snapshot, &f);
+}
+
+static bool ui_snapshot_proto_status(void *args)
+{
+    (void)args;
+
+    proto_printf("|LCB:%lu|LCU:%lu|LRX:%lu|LMAX:%lu",
+                 (unsigned long)g_ui_snapshot_build_count,
+                 (unsigned long)(mcu_millis() / 1000u),
+                 (unsigned long)lvds_renderer_reentry_count(),
+                 (unsigned long)lvds_renderer_max_draw_us());
+    return EVENT_CONTINUE;
 }
 
 
@@ -251,6 +269,7 @@ static bool ui_snapshot_builder_force(void *args)
 
 
 CREATE_EVENT_LISTENER(cnc_dotasks, ui_snapshot_builder_update);
+CREATE_EVENT_LISTENER(proto_status, ui_snapshot_proto_status);
 
 CREATE_EVENT_LISTENER(cnc_reset,   ui_snapshot_builder_force);
 CREATE_EVENT_LISTENER(cnc_alarm,   ui_snapshot_builder_force);
@@ -272,6 +291,7 @@ DECL_MODULE(ui_snapshot_builder)
     ui_snapshot_build_live();
 
     ADD_EVENT_LISTENER(cnc_dotasks, ui_snapshot_builder_update);
+    ADD_EVENT_LISTENER(proto_status, ui_snapshot_proto_status);
     /* Keep these disabled if they caused extra churn before. */
     /* ADD_EVENT_LISTENER(cnc_reset, ui_snapshot_builder_force); */
     /* ADD_EVENT_LISTENER(cnc_alarm, ui_snapshot_builder_force); */

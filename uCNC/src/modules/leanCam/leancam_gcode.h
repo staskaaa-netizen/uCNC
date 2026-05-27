@@ -22,6 +22,14 @@ typedef struct
     int emit_spindle_stop;
 } lc_gcode_line_options_t;
 
+typedef struct
+{
+    unsigned char bytes[8192];
+} lc_gcode_state_snapshot_t;
+
+int leancam_gcode_save_state(lc_gcode_state_snapshot_t *snapshot);
+int leancam_gcode_restore_state(const lc_gcode_state_snapshot_t *snapshot);
+
 lc_gcode_result_t leancam_gcode_run_line(const char *line,
                                          const char *setup_line,
                                          const char *tool_line,
@@ -50,6 +58,10 @@ lc_gcode_result_t leancam_gcode_run_program_line_ex(const char *line,
                                                     char *err,
                                                     unsigned err_len);
 int leancam_gcode_emit_program_header(lc_gcode_send_fn send, void *user);
+int leancam_gcode_emit_program_footer_ex(lc_gcode_send_fn send,
+                                         void *user,
+                                         char *err,
+                                         unsigned err_len);
 int leancam_gcode_emit_program_footer(lc_gcode_send_fn send, void *user);
 
 #ifdef __cplusplus

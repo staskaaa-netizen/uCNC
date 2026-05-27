@@ -15,6 +15,10 @@ The active converter supports:
 * `CUT`
 * `PART`
 * `GROOVE`
+* `CHAMFER`
+* `CHMF_ID`
+* `R_OD`
+* `R_ID`
 * `THR_OD`
 * `THR_ID`
 
@@ -254,11 +258,12 @@ A small host-side test harness exercises the supported cycles plus common bad in
 gcc -std=c99 -Wall -Wextra -IuCNC/src/modules/leanCam `
   uCNC/src/modules/leanCam/tests/leancam_gcode_host_test.c `
   uCNC/src/modules/leanCam/leancam_gcode.c `
+  uCNC/src/modules/leanCam/leancam_text.c `
   -o $env:TEMP\leancam_gcode_host_test.exe
 & $env:TEMP\leancam_gcode_host_test.exe
 ```
 
-The tests check that normal OD/ID/FACE/DRILL/CUT/PART/GROOVE/THR_OD/THR_ID cycles emit output, while malformed numbers, missing setup, impossible geometry, unsupported cycles, excessive pecks, and oversized values fail cleanly. They also check the program-file wrapper so the shared header/footer path does not drift away from the single-cycle path.
+The tests check that normal OD/ID/FACE/DRILL/CUT/PART/GROOVE/CHAMFER/CHMF_ID/R_OD/R_ID/THR_OD/THR_ID cycles emit output, while malformed numbers, missing setup, impossible geometry, unsupported cycles, excessive pecks, and oversized values fail cleanly. They also check the program-file wrapper so the shared header/footer path does not drift away from the single-cycle path.
 
 ## Output Policy
 

@@ -26,16 +26,18 @@ typedef enum
 
 typedef enum
 {
-    LC_MENU_TEMPLATE_TOOL = 0,
+    LC_MENU_TEMPLATE_TOOLCALL = 0,
+    LC_MENU_TEMPLATE_PROCESSCALL,
     LC_MENU_TEMPLATE_OD,
     LC_MENU_TEMPLATE_ID,
     LC_MENU_TEMPLATE_FACE,
+    LC_MENU_TEMPLATE_RECESS,
+    LC_MENU_TEMPLATE_L,
+    LC_MENU_TEMPLATE_C,
     LC_MENU_TEMPLATE_DRILL,
     LC_MENU_TEMPLATE_TAP,
-    LC_MENU_TEMPLATE_CUT,
-    LC_MENU_TEMPLATE_CHAMFER,
-    LC_MENU_TEMPLATE_THR_OD,
-    LC_MENU_TEMPLATE_THR_ID
+    LC_MENU_TEMPLATE_THREAD,
+    LC_MENU_TEMPLATE_END
 } lc_menu_template_t;
 
 typedef struct
@@ -51,10 +53,9 @@ typedef struct
     void (*file_set_selected)(void *user, int selected);
     void (*files_refresh)(void *user);
     void (*files_delete_selected)(void *user);
-    void (*files_generate_gcode)(void *user);
+    void (*files_duplicate_selected)(void *user);
+    void (*files_prepare_run)(void *user);
     void (*files_open_selected)(void *user);
-    void (*files_toggle_all)(void *user);
-    bool (*files_show_all)(void *user);
 
     void (*filename_clear)(void *user);
     size_t (*filename_len)(void *user);
@@ -91,6 +92,8 @@ typedef struct
 } lc_menu_actions_t;
 
 bool leancam_menu_handle_key(void *user, const lc_menu_actions_t *actions, ui_key_t key);
+void leancam_menu_set_program_other_templates(bool enabled);
+bool leancam_menu_program_other_templates(void);
 void leancam_menu_copy_title(char *out,
                              size_t out_size,
                              lc_menu_mode_t mode,
@@ -99,7 +102,6 @@ void leancam_menu_copy_footer(char *out,
                               size_t out_size,
                               lc_menu_mode_t mode,
                               lc_menu_catalog_kind_t catalog,
-                              bool files_show_all,
                               bool draft_active,
                               unsigned draft_field_index,
                               unsigned draft_field_count,

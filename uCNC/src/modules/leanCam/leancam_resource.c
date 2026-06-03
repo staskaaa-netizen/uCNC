@@ -1,3 +1,9 @@
+/* LeanCam module contract:
+ * Purpose: coarse LeanCam resource guard for file/autosave/preview-sensitive operations.
+ * Called by: bridge and file/run code before doing work that can interfere with UI timing.
+ * Calls into: platform time/resource status helpers only.
+ * Owns: simple busy/defer counters and resource flags.
+ */
 #include "leancam_resource.h"
 #include "../../cnc.h"
 
@@ -10,8 +16,6 @@
 
 #define LC_RESOURCE_PSRAM_LIVE_SIM_OFFSET            (512u * 1024u)
 #define LC_RESOURCE_PSRAM_TOOL_CATALOG_OFFSET        (768u * 1024u)
-#define LC_RESOURCE_PSRAM_PREVIEW_GCODE_OFFSET       (896u * 1024u)
-#define LC_RESOURCE_PSRAM_PREVIEW_GCODE_STATE_OFFSET (912u * 1024u)
 
 static bool g_lc_resource_file_busy = false;
 static bool g_lc_resource_frame_busy = false;
@@ -60,12 +64,6 @@ void *lc_resource_psram_region(lc_psram_region_t id, size_t size)
         case LC_PSRAM_REGION_TOOL_CATALOG:
             offset = LC_RESOURCE_PSRAM_TOOL_CATALOG_OFFSET;
             break;
-        case LC_PSRAM_REGION_PREVIEW_GCODE:
-            offset = LC_RESOURCE_PSRAM_PREVIEW_GCODE_OFFSET;
-            break;
-        case LC_PSRAM_REGION_PREVIEW_GCODE_STATE:
-            offset = LC_RESOURCE_PSRAM_PREVIEW_GCODE_STATE_OFFSET;
-            break;
         default:
             return NULL;
     }
@@ -92,3 +90,5 @@ void lc_resource_frame_end(void)
 {
     g_lc_resource_frame_busy = false;
 }
+
+

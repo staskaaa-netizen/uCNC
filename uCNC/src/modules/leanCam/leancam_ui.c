@@ -1,6 +1,12 @@
+/* LeanCam module contract:
+ * Purpose: editor-screen cursor, scroll, draft row, and display list bookkeeping.
+ * Called by: leancam_bridge and snapshot formatting code.
+ * Calls into: program/editor helpers only.
+ * Owns: leancam_ui_t view/edit state supplied by the bridge.
+ */
 #include "leancam_ui.h"
 #include "leancam_files.h"
-#include "leancam_text.h"
+#include "leancam_code.h"
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -8,14 +14,14 @@
 
 static bool line_get_field_value(const char *line, const char *key, char *out, int out_sz)
 {
-    return lc_text_get_field_text(line, key, out, (size_t)out_sz);
+    return lc_code_get_field_text(line, key, out, (size_t)out_sz);
 }
 
 static const char *find_last_setup_line_before(const program_t *p, int after_idx)
 {
     int i;
     for (i = after_idx; i >= 0; --i) {
-        if (lc_text_command_is(p->lines[i], "SETUP"))
+        if (lc_code_command_is(p->lines[i], "SETUP"))
             return p->lines[i];
     }
     return NULL;
@@ -123,7 +129,7 @@ static void lc_format_saved_float(char *dst, size_t dst_sz, float v)
 
 static bool lc_line_get_float_local(const char *line, const char *field, float *out)
 {
-    return lc_text_get_field_float(line, field, out);
+    return lc_code_get_field_float(line, field, out);
 }
 
 static void lc_resolve_line_for_save(const char *in, char *out, size_t out_sz)
@@ -208,10 +214,10 @@ static bool lc_line_is_plain_command_storage(const char *line)
              line[1] >= '0' &&
              line[1] <= '9' &&
              (line[2] == 0 || line[2] == ' ' || (line[2] >= '0' && line[2] <= '9'))) ||
-            lc_text_command_is(line, "SETUP") ||
-            lc_text_command_is(line, "TOOL") ||
-            lc_text_command_is(line, "TOOLCALL") ||
-            lc_text_command_is(line, "PROCESSCALL"));
+            lc_code_command_is(line, "SETUP") ||
+            lc_code_command_is(line, "TOOL") ||
+            lc_code_command_is(line, "TOOLCALL") ||
+            lc_code_command_is(line, "PROCESSCALL"));
 }
 
 static void lc_strip_plain_command_field_braces(char *line)
@@ -325,7 +331,7 @@ void leancam_ui_delete_line(leancam_ui_t *ui)
     if (ui->draft_active) return;
     if (ui->cur_line < 0 || ui->cur_line >= ui->prog.count) return;
 
-    if (ui->cur_line == 0 && lc_text_command_is(ui->prog.lines[0], "SETUP"))
+    if (ui->cur_line == 0 && lc_code_command_is(ui->prog.lines[0], "SETUP"))
         return;
 
     prog_delete(&ui->prog, ui->cur_line);
@@ -339,13 +345,10 @@ bool leancam_ui_save(leancam_ui_t *ui, const char *path)
     if (!path || !path[0]) return false;
 
     if (!leancam_files_save(path, &ui->prog)) return false;
-    leancam_files_debug_probe("ui-save-return");
 
     strncpy(ui->current_path, path, sizeof(ui->current_path) - 1);
     ui->current_path[sizeof(ui->current_path) - 1] = 0;
-    leancam_files_debug_probe("ui-path-copied");
     ui->dirty = false;
-    leancam_files_debug_probe("ui-dirty-clear");
     return true;
 }
 
@@ -374,3 +377,5 @@ void leancam_get_module_name(const char *line, char *out, int out_sz)
     }
     out[i] = 0;
 }
+
+

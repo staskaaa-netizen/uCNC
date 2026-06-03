@@ -1,5 +1,11 @@
+/* LeanCam module contract:
+ * Purpose: expand stored G-code-ish LeanCam rows into executable NC/G-code lines.
+ * Called by: run/preflight/sim preview code through explicit emit callbacks.
+ * Calls into: schema/text/tool catalog helpers and caller-provided line emit callbacks.
+ * Owns: generator-local parse/geometry state only; it must not render, poll keys, or perform file I/O directly.
+ */
 #include "leancam_gcode.h"
-#include "leancam_text.h"
+#include "leancam_code.h"
 
 #include <stdarg.h>
 #include <float.h>
@@ -16,6 +22,8 @@
 #ifndef LC_GCODE_SPINDLE_RPM
 #define LC_GCODE_SPINDLE_RPM 800
 #endif
+
+
 
 #ifndef LC_GCODE_MAX_PASSES
 #define LC_GCODE_MAX_PASSES 500
@@ -94,6 +102,84 @@ typedef struct
 {
     lc_raw_region_t raw_region;
 } lc_gcode_internal_state_t;
+
+typedef enum
+{
+    LC_STEP_PHASE_IDLE = 0,
+    LC_STEP_PHASE_HEADER,
+    LC_STEP_PHASE_BODY,
+    LC_STEP_PHASE_DIRECT,
+    LC_STEP_PHASE_G71,
+    LC_STEP_PHASE_G76,
+    LC_STEP_PHASE_FOOTER,
+    LC_STEP_PHASE_DONE,
+    LC_STEP_PHASE_ERROR
+} lc_step_phase_t;
+
+typedef struct
+{
+    program_t prog;
+    int start;
+    int end;
+    int src;
+    int err_line;
+    lc_step_phase_t phase;
+    unsigned header_idx;
+    unsigned footer_idx;
+    unsigned direct_idx;
+    unsigned direct_count;
+    char direct[8][96];
+    lc_raw_region_t region;
+    lc_raw_region_t effective;
+    int g80_line;
+    float clearance;
+    float xsafe;
+    float zsafe;
+    float start_x;
+    float start_z;
+    float min_x;
+    float max_x;
+    float min_z;
+    float max_z;
+    float rough_start_x;
+    float pass;
+    float final_pass;
+    int rough_dir;
+    int pass_dir;
+    int g71_stage;
+    int g76_stage;
+    int finish_stage;
+    unsigned finish_i;
+    int g76_pass;
+    int g76_pass_count;
+    int g76_spring_left;
+    int g76_strategy;
+    float g76_d_start;
+    float g76_d_end;
+    float g76_depth;
+    float g76_doc;
+    float g76_pitch;
+    float g76_z1;
+    float g76_z2;
+    float g76_zsafe;
+    float g76_xsafe;
+    float g76_taper;
+    float g76_z_span;
+    float g76_angle_tan;
+    float g76_final_z_shift;
+    float g76_degression;
+    float g76_last_depth;
+    float g76_pass_x1;
+    float g76_pass_x2;
+    float g76_pass_z1;
+    float g76_pass_zsafe;
+    bool final_pending;
+    bool rough_done;
+} lc_gcode_stepper_state_t;
+
+typedef char lc_gcode_stepper_size_check[
+    sizeof(lc_gcode_stepper_state_t) <= sizeof(lc_gcode_stepper_t) ? 1 : -1
+];
 
 typedef char lc_gcode_state_snapshot_size_check[
     sizeof(lc_gcode_internal_state_t) <= sizeof(lc_gcode_state_snapshot_t) ? 1 : -1
@@ -375,7 +461,7 @@ static int lc_get_field_text(const char *line, const char *name, char *out, unsi
     if (!line || !name || !out || out_len == 0)
         return 0;
     out[0] = 0;
-    return lc_text_get_field_text(line, name, out, (size_t)out_len) ? 1 : 0;
+    return lc_code_get_field_text(line, name, out, (size_t)out_len) ? 1 : 0;
 }
 
 static int lc_field_float(const char *line, const char *name, float *out)
@@ -687,25 +773,27 @@ static lc_gcode_result_t lc_run_tap(const char *line,
 static lc_gcode_result_t lc_run_thread(const char *line,
                                        const char *setup,
                                        const char *tool,
-                                       int is_od,
                                        const lc_gcode_line_options_t *options,
                                        lc_gcode_send_fn send,
                                        void *user,
                                        char *err,
                                        unsigned err_len)
 {
-    const char *cycle = is_od ? "THR_OD" : "THR_ID";
+    const char *cycle = "G76";
     float d_start = 0.0f;
     float d_end = 0.0f;
     float z1;
     float z2;
     float pitch;
-    float nominal = 0.0f;
     float depth = 0.0f;
     float doc = 0.0f;
     float tc;
     float lead;
     float taper = 0.0f;
+    float compound_angle = 0.0f;
+    float degression = 2.0f;
+    float spring_value = 0.0f;
+    float i_offset = 0.0f;
     float n_value = 0.0f;
     float strategy_value = 1.0f;
     char field_text[32];
@@ -714,66 +802,52 @@ static lc_gcode_result_t lc_run_thread(const char *line,
     float xsafe;
     float zsafe;
     float z_span;
+    float angle_tan = 0.0f;
+    float final_z_shift = 0.0f;
     int pass = 0;
     int pass_count = 0;
+    int spring_passes = 0;
     int strategy = 1;
-    int has_nominal;
     lc_cut_ctx_t ctx;
     lc_gcode_result_t r;
+    int has_i;
+    int has_x_end;
 
     if (!setup)
         return lc_fail(LC_GCODE_NO_SETUP, err, err_len, "%s: no SETUP", cycle);
 
-    if (!lc_field_float3(line, "P", "PITCH", "K", &pitch))
+    /* LeanCam expands G76 into explicit G33 passes. LinuxCNC-style words are
+     * accepted where they map cleanly: P=pitch, J=first cut/DOC, K=full thread
+     * depth, R=degression, Q=compound angle, H=spring passes. Older LeanCam
+     * aliases remain supported: X=final diameter, DEPTH=full depth, DOC=pass
+     * depth, ANGLE=Q, SPRING=H.
+     */
+    if (!lc_field_float2(line, "P", "PITCH", &pitch) &&
+        !lc_field_float2(line, "K_PITCH", "PITCH_K", &pitch))
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: missing/bad P", cycle);
 
-    has_nominal = lc_field_float2(line, "M", "NOM", &nominal);
-
-    if (is_od)
-    {
-        if (!lc_field_float3(line, "D", "MAJOR", "OD", &d_start) &&
-            !lc_field_float2(line, "D1", "OUTSIDE_DIAMETER", &d_start) &&
-            (!setup || !lc_field_float2(setup, "OD", "OUTER_DIAMETER", &d_start)) &&
-            has_nominal)
-            d_start = nominal;
-        if (lc_field_text3(line, "D2", "MINOR", "ID", field_text, sizeof(field_text)) &&
-            !lc_parse_float_text(field_text, &d_end))
-            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "THR_OD: bad D2/MINOR");
-        if (lc_field_text2(line, "X", "X_END", field_text, sizeof(field_text)) &&
-            !lc_parse_float_text(field_text, &d_end))
-            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "THR_OD: bad X");
-        if (d_end <= 0.0f && has_nominal)
-            d_end = nominal - (1.22687f * pitch);
-    }
-    else
-    {
-        if (!lc_field_float3(line, "D", "MINOR", "ID", &d_start) &&
-            !lc_field_float2(line, "D1", "INSIDE_DIAMETER", &d_start) &&
-            (!setup || !lc_field_float2(setup, "ID", "INNER_DIAMETER", &d_start)) &&
-            has_nominal)
-            d_start = nominal - (1.08253f * pitch);
-        if (lc_field_text3(line, "D2", "MAJOR", "OD", field_text, sizeof(field_text)) &&
-            !lc_parse_float_text(field_text, &d_end))
-            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "THR_ID: bad D2/MAJOR");
-        if (lc_field_text2(line, "X", "X_END", field_text, sizeof(field_text)) &&
-            !lc_parse_float_text(field_text, &d_end))
-            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "THR_ID: bad X");
-        if (d_end <= 0.0f && has_nominal)
-            d_end = nominal;
-    }
+    if (!lc_field_float2(line, "START_X", "X_START", &d_start) &&
+        !lc_field_float2(setup, "OD", "OUTER_DIAMETER", &d_start))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: need START_X or SETUP.OD", cycle);
+    has_x_end = lc_field_text2(line, "X", "X_END", field_text, sizeof(field_text));
+    if (has_x_end && !lc_parse_float_text(field_text, &d_end))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: bad X", cycle);
 
     if (!lc_field_float2(line, "Z1", "Z_START", &z1))
         z1 = 0.0f;
     if (!lc_field_float3(line, "Z2", "Z_END", "Z", &z2)) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: missing/bad Z", cycle);
 
+    has_i = lc_field_float2(line, "I", "PEAK_OFFSET", &i_offset);
     (void)lc_field_float3(line, "THR_DEPTH", "THREAD_DEPTH", "DEPTH", &depth);
-    if (d_end <= 0.0f && depth > 0.0f)
-        d_end = is_od ? (d_start - depth) : (d_start + depth);
+    (void)lc_field_float2(line, "K", "FULL_DEPTH", &depth);
+    depth = lc_absf(depth);
+    if (!has_x_end && depth > 0.0f)
+        d_end = d_start + ((has_i && i_offset > 0.0f) ? depth : -depth);
 
     r = lc_setup_clearance(cycle, setup, &tc, err, err_len);
     if (r != LC_GCODE_OK)
         return r;
-    if (lc_field_text3(line, "DOC", "J", "DEPTH_OF_CUT", field_text, sizeof(field_text)))
+    if (lc_field_text3(line, "J", "DOC", "DEPTH_OF_CUT", field_text, sizeof(field_text)))
     {
         if (!lc_parse_float_text(field_text, &doc))
             return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: bad DOC", cycle);
@@ -784,7 +858,11 @@ static lc_gcode_result_t lc_run_thread(const char *line,
     }
     if (!lc_field_float2(line, "LEAD", "LEAD_IN", &lead))
         lead = pitch;
-    (void)lc_field_float3(line, "TAPER", "D_TAPER", "TAPER_DIAMETER", &taper);
+    (void)lc_field_float3(line, "D", "TAPER", "D_TAPER", &taper);
+    (void)lc_field_float2(line, "Q", "ANGLE", &compound_angle);
+    (void)lc_field_float2(line, "R", "DEGRESSION", &degression);
+    if (lc_field_float2(line, "H", "SPRING", &spring_value) && spring_value > 0.0f)
+        spring_passes = (int)(spring_value + 0.5f);
     if (lc_field_float3(line, "N", "PASS", "PASSES", &n_value) && n_value > 0.0f)
         pass_count = (int)(n_value + 0.5f);
     if (lc_field_float3(line, "ST", "STRAT", "STRATEGY", &strategy_value))
@@ -792,30 +870,46 @@ static lc_gcode_result_t lc_run_thread(const char *line,
 
     if (d_start <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: M/D must be > 0", cycle);
     if (d_end <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: need M or D2/depth", cycle);
-    if (is_od && d_end >= d_start) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "THR_OD: final diameter must be smaller than start");
-    if (!is_od && d_end <= d_start) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "THR_ID: final diameter must be larger than start");
+    if (d_end == d_start) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: final diameter must differ from start", cycle);
     if (z1 == z2) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: Z span must be nonzero", cycle);
     if (pitch <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: P must be > 0", cycle);
     if (doc <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: DOC must be > 0", cycle);
     if (lead < 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: LEAD must be >= 0", cycle);
+    if (degression < 1.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: R/degression must be >= 1", cycle);
+    if (compound_angle < 0.0f || compound_angle >= 89.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: Q/ANGLE must be 0..89", cycle);
+    if (spring_passes < 0 || spring_passes > LC_GCODE_MAX_PASSES) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: bad spring pass count", cycle);
     if (pass_count < 0 || pass_count > LC_GCODE_MAX_PASSES) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: bad pass count", cycle);
 
     depth = lc_absf(d_start - d_end);
     if (pass_count == 0 && lc_too_many_steps(depth, doc))
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: too many passes", cycle);
+    if (pass_count == 0)
+        pass_count = (int)ceilf(depth / doc);
+    if (pass_count <= 0)
+        pass_count = 1;
 
     lc_read_cut_ctx(tool, &ctx);
     lc_override_ctx_from_line(line, &ctx);
 
     z_span = z2 - z1;
+    if (compound_angle > 0.001f) {
+        angle_tan = tanf(compound_angle * 0.01745329252f);
+        if (!isfinite(angle_tan) || angle_tan <= 0.0001f)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: bad Q/ANGLE", cycle);
+        final_z_shift = (depth * 0.5f) * angle_tan;
+        if (z_span < 0.0f)
+            final_z_shift = -final_z_shift;
+    }
     zsafe = z1 + ((z_span < 0.0f) ? lead : -lead);
-    xsafe = is_od ? (lc_maxf(d_start, d_start + taper) + tc)
-                  : (lc_minf(d_start, d_start + taper) - tc);
+    if (d_end < d_start)
+        xsafe = lc_maxf(d_start, d_start + taper) + lc_absf(has_i ? i_offset : tc);
+    else
+        xsafe = lc_minf(d_start, d_start + taper) - lc_absf(has_i ? i_offset : tc);
     if (xsafe < 0.0f)
         xsafe = 0.0f;
 
-    if (!lc_emit(send, user, "(LC %s M %.3f D %.3f D2 %.3f P %.3f DOC %.3f N %d ST %d)",
-                 cycle, nominal, d_start, d_end, pitch, doc, pass_count, strategy))
+    if (!lc_emit(send, user, "(LC %s D %.3f X %.3f P %.3f DOC %.3f R %.3f Q %.3f H %d N %d)",
+                 cycle, d_start, d_end, pitch, doc, degression, compound_angle, spring_passes, pass_count))
         return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
     if (!lc_emit(send, user, "(ELS RAMP: lead-in and lead-out are reserve space, not finished thread)"))
         return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
@@ -828,34 +922,55 @@ static lc_gcode_result_t lc_run_thread(const char *line,
     {
         float pass_x1;
         float pass_x2;
+        float pass_z1 = z1;
+        float pass_zsafe = zsafe;
+        float z_shift = 0.0f;
 
         if (++pass > LC_GCODE_MAX_PASSES)
             return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: too many passes", cycle);
 
-        if (pass_count > 0)
         {
             float t = (float)pass / (float)pass_count;
-            pass_depth = depth * (strategy ? sqrtf(t) : t);
-        }
-        else
-        {
-            pass_depth = strategy ? (doc * sqrtf((float)pass)) : (doc * (float)pass);
+            pass_depth = depth * (strategy ? powf(t, 1.0f / degression) : t);
         }
         if (pass_depth > depth)
             pass_depth = depth;
         if (pass_depth <= last_depth)
             pass_depth = depth;
 
-        pass_x1 = is_od ? (d_start - pass_depth) : (d_start + pass_depth);
+        pass_x1 = d_start + ((d_end < d_start) ? -pass_depth : pass_depth);
         pass_x2 = pass_x1 + taper;
+        if (angle_tan > 0.0f) {
+            z_shift = (pass_depth * 0.5f) * angle_tan;
+            if (z_span < 0.0f)
+                z_shift = -z_shift;
+            pass_z1 = z1 + z_shift - final_z_shift;
+            pass_zsafe = pass_z1 + ((z_span < 0.0f) ? lead : -lead);
+        }
 
-        if (!lc_emit(send, user, "(THREAD pass %d X%.3f)", pass, pass_x1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
-        if (!lc_emit(send, user, "G0 X%.3f Z%.3f", xsafe, zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
+        if (!lc_emit(send, user, "(THREAD pass %d X%.3f Z%.3f)", pass, pass_x1, pass_z1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
+        if (!lc_emit(send, user, "G0 X%.3f Z%.3f", xsafe, pass_zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
         if (!lc_emit(send, user, "G0 X%.3f", pass_x1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
+        if (!lc_emit(send, user, "G0 Z%.3f", pass_z1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
         if (!lc_emit(send, user, "G33 X%.3f Z%.3f K%.3f", pass_x2, z2, pitch)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
         if (!lc_emit(send, user, "G0 X%.3f", xsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
 
         last_depth = pass_depth;
+    }
+
+    while (spring_passes-- > 0)
+    {
+        float pass_x1 = d_end;
+        float pass_x2 = pass_x1 + taper;
+        float pass_z1 = angle_tan > 0.0f ? z1 : z1;
+        float pass_zsafe = angle_tan > 0.0f ? (pass_z1 + ((z_span < 0.0f) ? lead : -lead)) : zsafe;
+
+        if (!lc_emit(send, user, "(THREAD spring X%.3f Z%.3f)", pass_x1, pass_z1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
+        if (!lc_emit(send, user, "G0 X%.3f Z%.3f", xsafe, pass_zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
+        if (!lc_emit(send, user, "G0 X%.3f", pass_x1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
+        if (!lc_emit(send, user, "G0 Z%.3f", pass_z1)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
+        if (!lc_emit(send, user, "G33 X%.3f Z%.3f K%.3f", pass_x2, z2, pitch)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
+        if (!lc_emit(send, user, "G0 X%.3f", xsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
     }
 
     if (!lc_emit(send, user, "G0 Z%.3f", zsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "%s: write failed", cycle);
@@ -878,6 +993,57 @@ static lc_gcode_result_t lc_emit_direct_gcode(const char *line,
     return LC_GCODE_OK;
 }
 
+static lc_gcode_result_t lc_emit_standalone_motion(const char *line,
+                                                   const char *tool,
+                                                   const lc_gcode_line_options_t *options,
+                                                   lc_gcode_send_fn send,
+                                                   void *user,
+                                                   char *err,
+                                                   unsigned err_len)
+{
+    lc_cut_ctx_t ctx;
+    float x = 0.0f;
+    float z = 0.0f;
+    float r = 0.0f;
+    int has_x;
+    int has_z;
+    int has_r;
+
+    if (options && options->emit_modal_header && !lc_emit_modal_header(send, user))
+        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G-code: preamble write failed");
+
+    lc_read_cut_ctx(tool, &ctx);
+    lc_override_ctx_from_line(line, &ctx);
+
+    has_x = lc_field_float(line, "X", &x);
+    has_z = lc_field_float(line, "Z", &z);
+    has_r = lc_field_float(line, "R", &r);
+
+    if (!has_x && !has_z)
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G-code: missing X/Z");
+
+    if (lc_command_is(line, "G1"))
+    {
+        if (has_x && has_z && !lc_emit(send, user, "G1 X%.3f Z%.3f F%.3f", x, z, ctx.rough_feed))
+            return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G-code: write failed");
+        if (has_x && !has_z && !lc_emit(send, user, "G1 X%.3f F%.3f", x, ctx.rough_feed))
+            return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G-code: write failed");
+        if (!has_x && has_z && !lc_emit(send, user, "G1 Z%.3f F%.3f", z, ctx.rough_feed))
+            return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G-code: write failed");
+        return LC_GCODE_OK;
+    }
+
+    if (!has_r || r <= 0.0f)
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G2/G3: missing/bad R");
+    if (has_x && has_z && !lc_emit(send, user, "%s X%.3f Z%.3f R%.3f F%.3f", lc_command_is(line, "G2") ? "G2" : "G3", x, z, r, ctx.rough_feed))
+        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G-code: write failed");
+    if (has_x && !has_z && !lc_emit(send, user, "%s X%.3f R%.3f F%.3f", lc_command_is(line, "G2") ? "G2" : "G3", x, r, ctx.rough_feed))
+        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G-code: write failed");
+    if (!has_x && has_z && !lc_emit(send, user, "%s Z%.3f R%.3f F%.3f", lc_command_is(line, "G2") ? "G2" : "G3", z, r, ctx.rough_feed))
+        return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G-code: write failed");
+    return LC_GCODE_OK;
+}
+
 static float lc_raw_max_x(const lc_raw_region_t *region)
 {
     float x = 0.0f;
@@ -888,6 +1054,19 @@ static float lc_raw_max_x(const lc_raw_region_t *region)
     x = region->elements[0].d;
     for (i = 1; i < region->count; ++i)
         x = lc_maxf(x, region->elements[i].d);
+    return x;
+}
+
+static float lc_raw_min_x(const lc_raw_region_t *region)
+{
+    float x = 0.0f;
+    unsigned i;
+
+    if (!region || region->count == 0)
+        return 0.0f;
+    x = region->elements[0].d;
+    for (i = 1; i < region->count; ++i)
+        x = lc_minf(x, region->elements[i].d);
     return x;
 }
 
@@ -1011,7 +1190,8 @@ static bool lc_raw_expand_corner(const lc_contour_element_t *prev,
     float b_x;
     float dot;
     float angle;
-    float trim;
+    float trim1;
+    float trim2;
     float t1z;
     float t1x;
     float t2z;
@@ -1035,16 +1215,23 @@ static bool lc_raw_expand_corner(const lc_contour_element_t *prev,
     if (angle <= 0.0001f || lc_absf(3.14159265f - angle) <= 0.0001f)
         return false;
 
-    trim = corner->outgoing_kind == LC_CORNER_RND ?
-           corner->outgoing_amount / tanf(angle * 0.5f) :
-           corner->outgoing_amount;
-    if (trim <= eps || trim >= l1 || trim >= l2)
+    if (corner->outgoing_kind == LC_CORNER_RND)
+    {
+        trim1 = corner->outgoing_amount / tanf(angle * 0.5f);
+        trim2 = trim1;
+    }
+    else
+    {
+        trim1 = (lc_absf(a_x) > eps && lc_absf(a_z) <= eps) ? corner->outgoing_amount * 2.0f : corner->outgoing_amount;
+        trim2 = (lc_absf(b_x) > eps && lc_absf(b_z) <= eps) ? corner->outgoing_amount * 2.0f : corner->outgoing_amount;
+    }
+    if (trim1 <= eps || trim2 <= eps || trim1 >= l1 || trim2 >= l2)
         return false;
 
-    t1z = corner->z - (a_z * trim);
-    t1x = x1 - (a_x * trim);
-    t2z = corner->z + (b_z * trim);
-    t2x = x1 + (b_x * trim);
+    t1z = corner->z - (a_z * trim1);
+    t1x = x1 - (a_x * trim1);
+    t2z = corner->z + (b_z * trim2);
+    t2x = x1 + (b_x * trim2);
 
     *line_to_tangent = *corner;
     line_to_tangent->d = t1x;
@@ -1204,9 +1391,11 @@ static bool lc_raw_axis_monotonic(const lc_raw_region_t *region, int use_z, int 
     return true;
 }
 
-static bool lc_raw_first_x_at_z(const lc_raw_region_t *region, float z, float *x_out)
+static bool lc_raw_x_boundary_at_z(const lc_raw_region_t *region, float z, int x_dir, float *x_out)
 {
     unsigned i;
+    bool found = false;
+    float best = 0.0f;
 
     if (!region || !x_out || region->count < 2)
         return false;
@@ -1223,8 +1412,10 @@ static bool lc_raw_first_x_at_z(const lc_raw_region_t *region, float z, float *x
         {
             if (lc_absf(z - z0) <= 0.0001f)
             {
-                *x_out = x0;
-                return true;
+                float a = x_dir < 0 ? lc_minf(x0, x1) : lc_maxf(x0, x1);
+                if (!found || (x_dir < 0 ? a < best : a > best))
+                    best = a;
+                found = true;
             }
             continue;
         }
@@ -1235,13 +1426,23 @@ static bool lc_raw_first_x_at_z(const lc_raw_region_t *region, float z, float *x
             float t = (z - z0) / dz;
             if (t >= -0.0001f && t <= 1.0001f)
             {
-                *x_out = x0 + ((x1 - x0) * t);
-                return true;
+                float x = x0 + ((x1 - x0) * t);
+                if (!found || (x_dir < 0 ? x < best : x > best))
+                    best = x;
+                found = true;
             }
         }
     }
 
-    return false;
+    if (!found)
+        return false;
+    *x_out = best;
+    return true;
+}
+
+static bool lc_raw_pass_before_finish(float pass, float finish, int dir)
+{
+    return dir < 0 ? pass > finish + 0.0001f : pass < finish - 0.0001f;
 }
 
 static bool lc_raw_seg_crosses_x(float x0, float x1, float x)
@@ -1707,6 +1908,10 @@ static lc_gcode_result_t lc_flush_raw_region(const char *setup,
     max_z = lc_raw_max_z(run_region);
     xsafe = max_x + clearance;
     zsafe = max_z + clearance;
+    if (run_region->cycle == LC_RAW_G72 &&
+        lc_raw_axis_monotonic(run_region, 0, &rough_dir) &&
+        rough_dir > 0)
+        xsafe = lc_raw_min_x(run_region) - clearance;
 
     if (!lc_emit(send, user, "(LC %s region elements %u)",
                  g_raw_region.cycle == LC_RAW_G72 ? "G72" : "G71",
@@ -1725,25 +1930,46 @@ static lc_gcode_result_t lc_flush_raw_region(const char *setup,
 
     if (run_region->cycle == LC_RAW_G72)
     {
-        float finish_z = min_z + run_region->z_allow;
+        int pass_dir = start_z > ((min_z + max_z) * 0.5f) ? -1 : 1;
+        float finish_z = pass_dir < 0 ? min_z + run_region->z_allow : max_z - run_region->z_allow;
         if (!lc_raw_axis_monotonic(run_region, 0, &rough_dir))
             return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72 contour is non-monotonic in X");
-        pass = max_z - run_region->cut.rough_doc;
-        while (pass > finish_z)
+        if (rough_dir > 0)
+            xsafe = lc_raw_min_x(run_region) - clearance;
+        if (lc_too_many_steps(finish_z - start_z, run_region->cut.rough_doc))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72: too many rough passes");
+        pass = start_z + ((float)pass_dir * run_region->cut.rough_doc);
+        while (lc_raw_pass_before_finish(pass, finish_z, pass_dir))
         {
             float x_hit;
             float rough_x;
 
             if (++passes > LC_GCODE_MAX_PASSES)
                 return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72: too many rough passes");
-            if (!lc_raw_first_x_at_z(run_region, pass, &x_hit))
+            if (!lc_raw_x_boundary_at_z(run_region, pass, rough_dir, &x_hit))
                 return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72: unsupported roughing intersection");
             rough_x = x_hit - ((float)rough_dir * run_region->x_allow);
             if (!lc_emit(send, user, "(G72 rough Z%.3f)", pass)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
             if (!lc_emit(send, user, "G0 Z%.3f", pass)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
             if (!lc_emit(send, user, "G1 X%.3f F%.3f", rough_x, run_region->cut.rough_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
             if (!lc_emit(send, user, "G0 X%.3f", xsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
-            pass -= run_region->cut.rough_doc;
+            pass += (float)pass_dir * run_region->cut.rough_doc;
+        }
+        if (lc_raw_pass_before_finish(start_z, finish_z, pass_dir))
+        {
+            float x_hit;
+            float rough_x;
+            if (++passes > LC_GCODE_MAX_PASSES)
+                return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72: too many rough passes");
+            pass = finish_z;
+            if (lc_raw_x_boundary_at_z(run_region, pass, rough_dir, &x_hit))
+            {
+                rough_x = x_hit - ((float)rough_dir * run_region->x_allow);
+                if (!lc_emit(send, user, "(G72 rough Z%.3f)", pass)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
+                if (!lc_emit(send, user, "G0 Z%.3f", pass)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
+                if (!lc_emit(send, user, "G1 X%.3f F%.3f", rough_x, run_region->cut.rough_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
+                if (!lc_emit(send, user, "G0 X%.3f", xsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
+            }
         }
     }
     else
@@ -1882,7 +2108,11 @@ lc_gcode_result_t leancam_gcode_run_line_with_options(const char *line,
     if (lc_command_is(line, "G71") || lc_command_is(line, "G72"))
         return lc_start_raw_region(line, setup_line, tool_line, options, send, user, err, err_len);
     if (lc_command_is(line, "G1") || lc_command_is(line, "G2") || lc_command_is(line, "G3"))
-        return lc_add_raw_contour_element(line, err, err_len);
+    {
+        if (g_raw_region.active)
+            return lc_add_raw_contour_element(line, err, err_len);
+        return lc_emit_standalone_motion(line, tool_line, options, send, user, err, err_len);
+    }
     if (lc_command_is(line, "G80"))
         return lc_flush_raw_region(setup_line, options, send, user, err, err_len);
 
@@ -1890,12 +2120,12 @@ lc_gcode_result_t leancam_gcode_run_line_with_options(const char *line,
         return lc_fail(LC_GCODE_UNSUPPORTED, err, err_len, "PROCESSCALL: preset store not available");
     if (lc_command_is(line, "G0") || lc_command_is(line, "G33"))
         return lc_emit_direct_gcode(line, options, send, user, err, err_len);
-    if (lc_command_is(line, "G74") || lc_command_is(line, "DRILL"))
+    if (lc_command_is(line, "G74"))
         return lc_run_drill(line, tool_line, options, send, user, err, err_len);
-    if (lc_command_is(line, "G84") || lc_command_is(line, "TAP"))
+    if (lc_command_is(line, "G84"))
         return lc_run_tap(line, tool_line, options, send, user, err, err_len);
-    if (lc_command_is(line, "G76") || lc_command_is(line, "THREAD"))
-        return lc_run_thread(line, setup_line, tool_line, 1, options, send, user, err, err_len);
+    if (lc_command_is(line, "G76"))
+        return lc_run_thread(line, setup_line, tool_line, options, send, user, err, err_len);
 
     return lc_fail(LC_GCODE_UNSUPPORTED, err, err_len, "unsupported command");
 }
@@ -1974,3 +2204,747 @@ lc_gcode_result_t leancam_gcode_run_line(const char *line,
 {
     return leancam_gcode_run_line_ex(line, setup_line, tool_line, send, user, NULL, 0);
 }
+
+static lc_gcode_stepper_state_t *lc_step_state(lc_gcode_stepper_t *stepper)
+{
+    return stepper ? (lc_gcode_stepper_state_t *)stepper->bytes : NULL;
+}
+
+static const char *lc_step_setup_for_line(const program_t *prog, int before_or_at)
+{
+    for (int i = before_or_at; prog && i >= 0; --i)
+        if (lc_command_is(prog->lines[i], "SETUP"))
+            return prog->lines[i];
+    return NULL;
+}
+
+static const char *lc_step_tool_for_line(const program_t *prog, int before_or_at)
+{
+    for (int i = before_or_at; prog && i >= 0; --i)
+        if (lc_command_is(prog->lines[i], "TOOLCALL") || lc_command_is(prog->lines[i], "TOOL"))
+            return prog->lines[i];
+    return NULL;
+}
+
+static bool lc_step_is_context_line(const char *line)
+{
+    return line &&
+           (lc_command_is(line, "SETUP") ||
+            lc_command_is(line, "TOOLCALL") ||
+            lc_command_is(line, "TOOL") ||
+            line[0] == '(');
+}
+
+static bool lc_step_put(char *out, unsigned out_len, const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+
+    if (!out || out_len == 0)
+        return false;
+    va_start(ap, fmt);
+    n = vsnprintf(out, out_len, fmt, ap);
+    va_end(ap);
+    return n >= 0 && n < (int)out_len;
+}
+
+typedef struct
+{
+    char (*lines)[96];
+    unsigned count;
+    unsigned max;
+} lc_step_capture_t;
+
+static int lc_step_capture_line(const char *line, void *user)
+{
+    lc_step_capture_t *ctx = (lc_step_capture_t *)user;
+    if (!ctx || !line || ctx->count >= ctx->max)
+        return 0;
+    snprintf(ctx->lines[ctx->count++], 96, "%.95s", line);
+    return 1;
+}
+
+static lc_gcode_result_t lc_step_prepare_direct(lc_gcode_stepper_state_t *s,
+                                                const char *line,
+                                                char *err,
+                                                unsigned err_len)
+{
+    lc_step_capture_t cap;
+    lc_gcode_state_snapshot_t snap;
+    lc_gcode_result_t r;
+
+    memset(&cap, 0, sizeof(cap));
+    cap.lines = s->direct;
+    cap.max = sizeof(s->direct) / sizeof(s->direct[0]);
+    (void)leancam_gcode_save_state(&snap);
+    memset(&g_raw_region, 0, sizeof(g_raw_region));
+    r = leancam_gcode_run_program_line_ex(line,
+                                          lc_step_setup_for_line(&s->prog, s->src),
+                                          lc_step_tool_for_line(&s->prog, s->src),
+                                          lc_step_capture_line,
+                                          &cap,
+                                          err,
+                                          err_len);
+    (void)leancam_gcode_restore_state(&snap);
+    if (r != LC_GCODE_OK)
+        return r;
+    s->direct_count = cap.count;
+    s->direct_idx = 0;
+    s->phase = LC_STEP_PHASE_DIRECT;
+    return LC_GCODE_OK;
+}
+
+static lc_gcode_result_t lc_step_prepare_g71(lc_gcode_stepper_state_t *s,
+                                             char *err,
+                                             unsigned err_len)
+{
+    lc_gcode_state_snapshot_t snap;
+    lc_gcode_result_t r;
+    int i;
+    unsigned finish_count;
+
+    (void)leancam_gcode_save_state(&snap);
+    memset(&g_raw_region, 0, sizeof(g_raw_region));
+    r = lc_start_raw_region(s->prog.lines[s->src],
+                            lc_step_setup_for_line(&s->prog, s->src),
+                            lc_step_tool_for_line(&s->prog, s->src),
+                            &lc_program_line_options,
+                            lc_step_capture_line,
+                            NULL,
+                            err,
+                            err_len);
+    if (r != LC_GCODE_OK)
+    {
+        (void)leancam_gcode_restore_state(&snap);
+        return r;
+    }
+    for (i = s->src + 1; i <= s->end; ++i)
+    {
+        const char *line = s->prog.lines[i];
+        if (lc_command_is(line, "G80"))
+            break;
+        if (lc_command_is(line, "G1") || lc_command_is(line, "G2") || lc_command_is(line, "G3"))
+        {
+            r = lc_add_raw_contour_element(line, err, err_len);
+            if (r != LC_GCODE_OK)
+            {
+                (void)leancam_gcode_restore_state(&snap);
+                return r;
+            }
+        }
+    }
+    if (i > s->end || !lc_command_is(s->prog.lines[i], "G80"))
+    {
+        (void)leancam_gcode_restore_state(&snap);
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G71/G72: missing G80");
+    }
+    s->region = g_raw_region;
+    s->g80_line = i;
+    (void)leancam_gcode_restore_state(&snap);
+
+    if (s->region.count < 1)
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G7x: empty contour");
+    if (!lc_raw_build_effective_region(&s->region, &s->effective))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G7x: bad corner geometry");
+    if (!lc_raw_rough_supported(&s->effective))
+    {
+        const char *reason = lc_raw_rough_unsupported_reason(&s->effective);
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s", reason ? reason : "G7x: unsupported roughing contour");
+    }
+    (void)lc_setup_clearance("G7x", lc_step_setup_for_line(&s->prog, s->src), &s->clearance, err, err_len);
+
+    s->start_x = s->effective.elements[0].d;
+    s->start_z = s->effective.elements[0].z;
+    s->max_x = lc_raw_max_x(&s->effective);
+    s->min_x = lc_raw_min_x(&s->effective);
+    s->min_z = lc_raw_min_z(&s->effective);
+    s->max_z = lc_raw_max_z(&s->effective);
+    s->xsafe = s->max_x + s->clearance;
+    s->zsafe = s->max_z + s->clearance;
+    finish_count = lc_raw_finish_count_without_close(&s->effective);
+    if (finish_count < 2)
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G7x: empty finish contour");
+
+    if (s->effective.cycle == LC_RAW_G72)
+    {
+        if (!lc_raw_axis_monotonic(&s->effective, 0, &s->rough_dir))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72 contour is non-monotonic in X");
+        if (s->rough_dir > 0)
+            s->xsafe = s->min_x - s->clearance;
+        s->pass_dir = s->start_z > ((s->min_z + s->max_z) * 0.5f) ? -1 : 1;
+        s->final_pass = s->pass_dir < 0 ? s->min_z + s->effective.z_allow : s->max_z - s->effective.z_allow;
+        if (lc_too_many_steps(s->final_pass - s->start_z, s->effective.cut.rough_doc))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72: too many rough passes");
+        s->pass = s->start_z + ((float)s->pass_dir * s->effective.cut.rough_doc);
+        s->final_pending = lc_raw_pass_before_finish(s->start_z, s->final_pass, s->pass_dir);
+    }
+    else
+    {
+        if (!lc_raw_axis_monotonic(&s->effective, 1, &s->rough_dir))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G71 contour is non-monotonic in Z");
+        s->rough_start_x = s->start_x;
+        for (i = 1; i < (int)finish_count; ++i)
+        {
+            if (s->effective.elements[i].d < s->min_x)
+                s->min_x = s->effective.elements[i].d;
+            if (s->effective.elements[i].d > s->rough_start_x)
+                s->rough_start_x = s->effective.elements[i].d;
+        }
+        for (i = (int)finish_count; i < (int)s->effective.count; ++i)
+            if (s->effective.elements[i].d > s->rough_start_x)
+                s->rough_start_x = s->effective.elements[i].d;
+
+        if (lc_too_many_steps(s->rough_start_x - (s->min_x + s->effective.x_allow), s->effective.cut.rough_doc))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G71: too many rough passes");
+        s->pass = s->rough_start_x - s->effective.cut.rough_doc;
+        s->final_pass = s->min_x + s->effective.x_allow;
+        s->final_pending = s->final_pass < s->rough_start_x - 0.0001f;
+    }
+    s->rough_done = false;
+    s->g71_stage = 0;
+    s->finish_stage = 0;
+    s->finish_i = 1;
+    s->phase = LC_STEP_PHASE_G71;
+    return LC_GCODE_OK;
+}
+
+static lc_gcode_result_t lc_step_prepare_g76(lc_gcode_stepper_state_t *s,
+                                             const char *line,
+                                             char *err,
+                                             unsigned err_len)
+{
+    const char *setup = lc_step_setup_for_line(&s->prog, s->src);
+    const char *tool = lc_step_tool_for_line(&s->prog, s->src);
+    lc_cut_ctx_t ctx;
+    float tc = 0.0f;
+    float z1 = 0.0f;
+    float z2 = 0.0f;
+    float pitch = 0.0f;
+    float d_start = 0.0f;
+    float d_end = 0.0f;
+    float depth = 0.0f;
+    float doc = 0.2f;
+    float lead = 0.0f;
+    float taper = 0.0f;
+    float compound_angle = 0.0f;
+    float degression = 2.0f;
+    float spring_value = 0.0f;
+    float pass_value = 0.0f;
+    float strategy_value = 1.0f;
+    float i_offset = 0.0f;
+    bool has_i;
+    int spring_passes = 0;
+    int pass_count = 0;
+    int strategy = 1;
+    char field_text[32];
+    lc_gcode_result_t r;
+
+    if (!line)
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: missing line");
+    if (!setup)
+        return lc_fail(LC_GCODE_NO_SETUP, err, err_len, "G76: no SETUP");
+
+    r = lc_setup_clearance("G76", setup, &tc, err, err_len);
+    if (r != LC_GCODE_OK)
+        return r;
+
+    lc_read_cut_ctx(tool, &ctx);
+    lc_override_ctx_from_line(line, &ctx);
+
+    if (!lc_field_float2(line, "P", "PITCH", &pitch) &&
+        !lc_field_float2(line, "K_PITCH", "PITCH_K", &pitch))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: missing/bad P");
+    if (!lc_field_float2(line, "START_X", "X_START", &d_start) &&
+        !lc_field_float2(setup, "OD", "OUTER_DIAMETER", &d_start))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: need START_X or SETUP.OD");
+    if (!lc_field_float2(line, "Z1", "Z_START", &z1))
+        z1 = 0.0f;
+    if (!lc_field_float3(line, "Z2", "Z_END", "Z", &z2))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: missing/bad Z");
+
+    has_i = lc_field_float2(line, "I", "PEAK_OFFSET", &i_offset);
+    (void)lc_field_float3(line, "K", "THR_DEPTH", "DEPTH", &depth);
+    (void)lc_field_float2(line, "K", "FULL_DEPTH", &depth);
+    if (lc_field_text2(line, "X", "X_END", field_text, sizeof(field_text)) &&
+        !lc_parse_float_text(field_text, &d_end))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: bad X");
+    depth = lc_absf(depth);
+    if (d_end == 0.0f && depth > 0.0f)
+        d_end = d_start + ((has_i && i_offset > 0.0f) ? depth : -depth);
+
+    if (lc_field_text3(line, "J", "DOC", "DEPTH_OF_CUT", field_text, sizeof(field_text)))
+    {
+        if (!lc_parse_float_text(field_text, &doc))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: bad DOC");
+    }
+    if (!lc_field_float2(line, "LEAD", "LEAD_IN", &lead))
+        lead = pitch;
+    (void)lc_field_float3(line, "D", "TAPER", "D_TAPER", &taper);
+    (void)lc_field_float2(line, "Q", "ANGLE", &compound_angle);
+    (void)lc_field_float2(line, "R", "DEGRESSION", &degression);
+    if (lc_field_float2(line, "H", "SPRING", &spring_value) && spring_value > 0.0f)
+        spring_passes = (int)(spring_value + 0.5f);
+    if (lc_field_float3(line, "N", "PASS", "PASSES", &pass_value) && pass_value > 0.0f)
+        pass_count = (int)(pass_value + 0.5f);
+    if (lc_field_float3(line, "ST", "STRAT", "STRATEGY", &strategy_value))
+        strategy = strategy_value > 0.5f ? 1 : 0;
+
+    if (d_start <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: M/D must be > 0");
+    if (d_end <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: need X or depth");
+    if (d_end == d_start) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: final diameter must differ from start");
+    if (z1 == z2) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: Z span must be nonzero");
+    if (pitch <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: P must be > 0");
+    if (doc <= 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: DOC must be > 0");
+    if (lead < 0.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: LEAD must be >= 0");
+    if (degression < 1.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: R/degression must be >= 1");
+    if (compound_angle < 0.0f || compound_angle >= 89.0f) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: Q/ANGLE must be 0..89");
+    if (spring_passes < 0 || spring_passes > LC_GCODE_MAX_PASSES) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: bad spring pass count");
+    if (pass_count < 0 || pass_count > LC_GCODE_MAX_PASSES) return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: bad pass count");
+
+    depth = lc_absf(d_start - d_end);
+    if (pass_count == 0 && lc_too_many_steps(depth, doc))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: too many passes");
+    if (pass_count == 0)
+        pass_count = (int)ceilf(depth / doc);
+    if (pass_count <= 0)
+        pass_count = 1;
+
+    s->g76_d_start = d_start;
+    s->g76_d_end = d_end;
+    s->g76_depth = depth;
+    s->g76_doc = doc;
+    s->g76_pitch = pitch;
+    s->g76_z1 = z1;
+    s->g76_z2 = z2;
+    s->g76_taper = taper;
+    s->g76_z_span = z2 - z1;
+    s->g76_degression = degression;
+    s->g76_pass_count = pass_count;
+    s->g76_spring_left = spring_passes;
+    s->g76_strategy = strategy;
+    s->g76_pass = 0;
+    s->g76_last_depth = 0.0f;
+    s->g76_angle_tan = 0.0f;
+    s->g76_final_z_shift = 0.0f;
+    if (compound_angle > 0.001f)
+    {
+        s->g76_angle_tan = tanf(compound_angle * 0.01745329252f);
+        if (!isfinite(s->g76_angle_tan) || s->g76_angle_tan <= 0.0001f)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: bad Q/ANGLE");
+        s->g76_final_z_shift = (depth * 0.5f) * s->g76_angle_tan;
+        if (s->g76_z_span < 0.0f)
+            s->g76_final_z_shift = -s->g76_final_z_shift;
+    }
+    s->g76_zsafe = z1 + ((s->g76_z_span < 0.0f) ? lead : -lead);
+    if (d_end < d_start)
+        s->g76_xsafe = lc_maxf(d_start, d_start + taper) + lc_absf(has_i ? i_offset : tc);
+    else
+        s->g76_xsafe = lc_minf(d_start, d_start + taper) - lc_absf(has_i ? i_offset : tc);
+    if (s->g76_xsafe < 0.0f)
+        s->g76_xsafe = 0.0f;
+    s->g76_stage = 0;
+    s->phase = LC_STEP_PHASE_G76;
+    return LC_GCODE_OK;
+}
+
+static bool lc_step_g76_prepare_next_pass(lc_gcode_stepper_state_t *s)
+{
+    float pass_depth;
+    float z_shift = 0.0f;
+
+    if (s->g76_pass < s->g76_pass_count)
+    {
+        s->g76_pass++;
+        {
+            float t = (float)s->g76_pass / (float)s->g76_pass_count;
+            pass_depth = s->g76_depth * (s->g76_strategy ? powf(t, 1.0f / s->g76_degression) : t);
+        }
+        if (pass_depth > s->g76_depth)
+            pass_depth = s->g76_depth;
+        if (pass_depth <= s->g76_last_depth)
+            pass_depth = s->g76_depth;
+        s->g76_last_depth = pass_depth;
+        s->g76_pass_x1 = s->g76_d_start + ((s->g76_d_end < s->g76_d_start) ? -pass_depth : pass_depth);
+    }
+    else if (s->g76_spring_left > 0)
+    {
+        s->g76_spring_left--;
+        s->g76_pass_x1 = s->g76_d_end;
+    }
+    else
+    {
+        return false;
+    }
+
+    s->g76_pass_x2 = s->g76_pass_x1 + s->g76_taper;
+    s->g76_pass_z1 = s->g76_z1;
+    s->g76_pass_zsafe = s->g76_zsafe;
+    if (s->g76_angle_tan > 0.0f)
+    {
+        float pass_depth_for_z = lc_absf(s->g76_d_start - s->g76_pass_x1);
+        z_shift = (pass_depth_for_z * 0.5f) * s->g76_angle_tan;
+        if (s->g76_z_span < 0.0f)
+            z_shift = -z_shift;
+        s->g76_pass_z1 = s->g76_z1 + z_shift - s->g76_final_z_shift;
+        s->g76_pass_zsafe = s->g76_pass_z1 + ((s->g76_z_span < 0.0f) ? s->g76_pitch : -s->g76_pitch);
+    }
+    return true;
+}
+
+static bool lc_step_next_g76(lc_gcode_stepper_state_t *s, char *out, unsigned out_len)
+{
+    for (;;)
+    {
+        switch (s->g76_stage++)
+        {
+            case 0:
+                return lc_step_put(out, out_len,
+                                   "(LC G76 D %.3f X %.3f P %.3f DOC %.3f R %.3f N %d)",
+                                   s->g76_d_start,
+                                   s->g76_d_end,
+                                   s->g76_pitch,
+                                   s->g76_doc,
+                                   s->g76_degression,
+                                   s->g76_pass_count);
+            case 1:
+                return lc_step_put(out, out_len, "(ELS RAMP: lead-in and lead-out are reserve space, not finished thread)");
+            case 2:
+                return lc_step_put(out, out_len, "G0 X%.3f Z%.3f", s->g76_xsafe, s->g76_zsafe);
+            case 3:
+                if (!lc_step_g76_prepare_next_pass(s))
+                {
+                    s->g76_stage = 10;
+                    continue;
+                }
+                if (s->g76_pass <= s->g76_pass_count)
+                    return lc_step_put(out, out_len, "(THREAD pass %d X%.3f Z%.3f)", s->g76_pass, s->g76_pass_x1, s->g76_pass_z1);
+                return lc_step_put(out, out_len, "(THREAD spring X%.3f Z%.3f)", s->g76_pass_x1, s->g76_pass_z1);
+            case 4:
+                return lc_step_put(out, out_len, "G0 X%.3f Z%.3f", s->g76_xsafe, s->g76_pass_zsafe);
+            case 5:
+                return lc_step_put(out, out_len, "G0 X%.3f", s->g76_pass_x1);
+            case 6:
+                return lc_step_put(out, out_len, "G0 Z%.3f", s->g76_pass_z1);
+            case 7:
+                return lc_step_put(out, out_len, "G33 X%.3f Z%.3f K%.3f", s->g76_pass_x2, s->g76_z2, s->g76_pitch);
+            case 8:
+                return lc_step_put(out, out_len, "G0 X%.3f", s->g76_xsafe);
+            case 9:
+                s->g76_stage = 3;
+                continue;
+            case 10:
+                return lc_step_put(out, out_len, "G0 Z%.3f", s->g76_zsafe);
+            case 11:
+                s->src++;
+                s->phase = LC_STEP_PHASE_BODY;
+                s->g76_stage = 0;
+
+                return lc_step_put(out, out_len, "M5");
+
+            default:
+                s->src++;
+                s->phase = LC_STEP_PHASE_BODY;
+                s->g76_stage = 0;
+                return false;
+        }
+    }
+}
+
+static bool lc_step_next_g71_rough(lc_gcode_stepper_state_t *s, char *out, unsigned out_len)
+{
+    float query_x;
+    float z_limit;
+    float cut_z_end;
+    float safe_x;
+    float retract = lc_absf(s->effective.retract);
+
+    if (retract <= 0.0001f)
+        retract = s->clearance;
+    while (s->pass > s->min_x + s->effective.x_allow + 0.0001f)
+    {
+        query_x = s->pass - s->effective.x_allow;
+        if (lc_raw_z_limit_at_x(&s->effective, s->effective.count, query_x, s->rough_dir, &z_limit))
+            break;
+        s->pass -= s->effective.cut.rough_doc;
+        s->g71_stage = 0;
+    }
+    if (s->pass <= s->min_x + s->effective.x_allow + 0.0001f)
+    {
+        if (!s->final_pending)
+        {
+            s->rough_done = true;
+            s->g71_stage = 0;
+            return false;
+        }
+        s->pass = s->final_pass;
+        query_x = s->pass - s->effective.x_allow;
+        if (!lc_raw_z_limit_at_x(&s->effective, s->effective.count, query_x, s->rough_dir, &z_limit))
+        {
+            s->final_pending = false;
+            s->rough_done = true;
+            s->g71_stage = 0;
+            return false;
+        }
+    }
+
+    query_x = s->pass - s->effective.x_allow;
+    (void)lc_raw_z_limit_at_x(&s->effective, s->effective.count, query_x, s->rough_dir, &z_limit);
+    cut_z_end = z_limit + ((float)s->rough_dir * s->effective.z_allow * -1.0f);
+    safe_x = s->pass + retract;
+    switch (s->g71_stage++)
+    {
+        case 0: return lc_step_put(out, out_len, "(G71 rough X%.3f)", s->pass);
+        case 1: return lc_step_put(out, out_len, "G0 X%.3f Z%.3f", safe_x, s->start_z);
+        case 2: return lc_step_put(out, out_len, "G1 X%.3f F%.3f", s->pass, s->effective.cut.rough_feed);
+        case 3: return lc_step_put(out, out_len, "G1 Z%.3f F%.3f", cut_z_end, s->effective.cut.rough_feed);
+        case 4: return lc_step_put(out, out_len, "G0 X%.3f", safe_x);
+        default:
+            s->g71_stage = 0;
+            if (s->pass == s->final_pass)
+                s->final_pending = false;
+            else
+                s->pass -= s->effective.cut.rough_doc;
+            return lc_step_put(out, out_len, "G0 Z%.3f", s->start_z + ((float)s->rough_dir * s->clearance * -1.0f));
+    }
+}
+
+static bool lc_step_next_g72_rough(lc_gcode_stepper_state_t *s, char *out, unsigned out_len)
+{
+    float x_hit;
+    float rough_x;
+
+    while (lc_raw_pass_before_finish(s->pass, s->final_pass, s->pass_dir))
+    {
+        if (lc_raw_x_boundary_at_z(&s->effective, s->pass, s->rough_dir, &x_hit))
+            break;
+        s->pass += (float)s->pass_dir * s->effective.cut.rough_doc;
+        s->g71_stage = 0;
+    }
+
+    if (!lc_raw_pass_before_finish(s->pass, s->final_pass, s->pass_dir))
+    {
+        if (!s->final_pending)
+        {
+            s->rough_done = true;
+            s->g71_stage = 0;
+            return false;
+        }
+        s->pass = s->final_pass;
+        if (!lc_raw_x_boundary_at_z(&s->effective, s->pass, s->rough_dir, &x_hit))
+        {
+            s->final_pending = false;
+            s->rough_done = true;
+            s->g71_stage = 0;
+            return false;
+        }
+    }
+
+    (void)lc_raw_x_boundary_at_z(&s->effective, s->pass, s->rough_dir, &x_hit);
+    rough_x = x_hit - ((float)s->rough_dir * s->effective.x_allow);
+    switch (s->g71_stage++)
+    {
+        case 0: return lc_step_put(out, out_len, "(G72 rough Z%.3f)", s->pass);
+        case 1: return lc_step_put(out, out_len, "G0 Z%.3f", s->pass);
+        case 2: return lc_step_put(out, out_len, "G1 X%.3f F%.3f", rough_x, s->effective.cut.rough_feed);
+        default:
+            s->g71_stage = 0;
+            if (s->pass == s->final_pass)
+                s->final_pending = false;
+            else
+                s->pass += (float)s->pass_dir * s->effective.cut.rough_doc;
+            return lc_step_put(out, out_len, "G0 X%.3f", s->xsafe);
+    }
+}
+
+void leancam_gcode_stepper_reset(lc_gcode_stepper_t *stepper)
+{
+    if (stepper)
+        memset(stepper, 0, sizeof(*stepper));
+}
+
+lc_gcode_result_t leancam_gcode_stepper_begin(lc_gcode_stepper_t *stepper,
+                                              const program_t *prog,
+                                              int start,
+                                              int end,
+                                              char *err,
+                                              unsigned err_len,
+                                              int *err_line_out)
+{
+    lc_gcode_stepper_state_t *s = lc_step_state(stepper);
+
+    if (err && err_len)
+        err[0] = 0;
+    if (err_line_out)
+        *err_line_out = start + 1;
+    if (!s || !prog || start < 0 || end < start || end >= prog->count)
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "bad step range");
+    memset(s, 0, sizeof(*s));
+    s->prog = *prog;
+    s->start = start;
+    s->end = end;
+    s->src = start;
+    s->err_line = start + 1;
+    s->phase = LC_STEP_PHASE_HEADER;
+    return LC_GCODE_OK;
+}
+
+lc_gcode_step_result_t leancam_gcode_stepper_next(lc_gcode_stepper_t *stepper,
+                                                  char *out,
+                                                  unsigned out_len,
+                                                  char *err,
+                                                  unsigned err_len,
+                                                  int *err_line_out)
+{
+    static const char *headers[] = { "(LeanCam runtime stepped)", "G21", "G90", "G18", "G7" };
+    static const char *footers[] = { "M5", "M30" };
+    lc_gcode_stepper_state_t *s = lc_step_state(stepper);
+
+    if (err && err_len)
+        err[0] = 0;
+    if (out && out_len)
+        out[0] = 0;
+    if (!s || !out || out_len == 0)
+        return LC_GCODE_STEP_ERROR;
+
+    for (;;)
+    {
+        if (err_line_out)
+            *err_line_out = s->err_line;
+        if (s->phase == LC_STEP_PHASE_HEADER)
+        {
+            if (s->header_idx < sizeof(headers) / sizeof(headers[0]))
+            {
+                lc_step_put(out, out_len, "%s", headers[s->header_idx++]);
+                return LC_GCODE_STEP_LINE;
+            }
+            s->phase = LC_STEP_PHASE_BODY;
+        }
+        if (s->phase == LC_STEP_PHASE_DIRECT)
+        {
+            if (s->direct_idx < s->direct_count)
+            {
+                lc_step_put(out, out_len, "%s", s->direct[s->direct_idx++]);
+                return LC_GCODE_STEP_LINE;
+            }
+            s->src++;
+            s->phase = LC_STEP_PHASE_BODY;
+        }
+        if (s->phase == LC_STEP_PHASE_G71)
+        {
+            if (s->finish_stage == 0)
+            {
+                s->finish_stage = 1;
+                lc_step_put(out, out_len, "(LC G71 region elements %u)", s->effective.count);
+                return LC_GCODE_STEP_LINE;
+            }
+            if (s->finish_stage == 1)
+            {
+                s->finish_stage = 2;
+
+                lc_step_put(out, out_len, "S%d M3", s->effective.cut.spindle_rpm);
+                return LC_GCODE_STEP_LINE;
+            }
+            if (s->finish_stage == 2)
+            {
+                s->finish_stage = 3;
+                lc_step_put(out, out_len, "G0 X%.3f Z%.3f", s->xsafe, s->zsafe);
+                return LC_GCODE_STEP_LINE;
+            }
+            if (!s->rough_done)
+            {
+                bool emitted = s->effective.cycle == LC_RAW_G72 ?
+                               lc_step_next_g72_rough(s, out, out_len) :
+                               lc_step_next_g71_rough(s, out, out_len);
+                if (emitted)
+                    return LC_GCODE_STEP_LINE;
+            }
+            if (s->finish_stage == 3)
+            {
+                s->finish_stage = 4;
+                lc_step_put(out, out_len, "(G7x finish continuous contour)");
+                return LC_GCODE_STEP_LINE;
+            }
+            if (s->finish_stage == 4)
+            {
+                s->finish_stage = 5;
+                lc_step_put(out, out_len, "G1 X%.3f Z%.3f F%.3f", s->start_x, s->start_z, s->effective.cut.finish_feed);
+                return LC_GCODE_STEP_LINE;
+            }
+            if (s->finish_i < s->effective.count)
+            {
+                const lc_contour_element_t *el = &s->effective.elements[s->finish_i++];
+                if (el->kind == LC_CONTOUR_ARC)
+                {
+                    if (el->has_center)
+                        lc_step_put(out, out_len, "%s X%.3f Z%.3f I%.3f K%.3f", el->gcode_cw ? "G2" : "G3", el->d, el->z, el->i, el->k);
+                    else
+                        lc_step_put(out, out_len, "%s X%.3f Z%.3f R%.3f", el->gcode_cw ? "G2" : "G3", el->d, el->z, el->r);
+                }
+                else
+                    lc_step_put(out, out_len, "G1 X%.3f Z%.3f", el->d, el->z);
+                return LC_GCODE_STEP_LINE;
+            }
+            s->src = s->g80_line + 1;
+            s->phase = LC_STEP_PHASE_BODY;
+            lc_step_put(out, out_len, "G0 X%.3f Z%.3f", s->xsafe, s->zsafe);
+            return LC_GCODE_STEP_LINE;
+        }
+        if (s->phase == LC_STEP_PHASE_G76)
+        {
+            if (lc_step_next_g76(s, out, out_len))
+                return LC_GCODE_STEP_LINE;
+            continue;
+        }
+        if (s->phase == LC_STEP_PHASE_BODY)
+        {
+            lc_gcode_result_t r;
+            const char *line;
+
+            while (s->src <= s->end && lc_step_is_context_line(s->prog.lines[s->src]))
+                s->src++;
+            if (s->src > s->end)
+            {
+                s->phase = LC_STEP_PHASE_FOOTER;
+                continue;
+            }
+            s->err_line = s->src + 1;
+            if (err_line_out)
+                *err_line_out = s->err_line;
+            line = s->prog.lines[s->src];
+            if (lc_command_is(line, "G71") || lc_command_is(line, "G72"))
+            {
+                r = lc_step_prepare_g71(s, err, err_len);
+                if (r != LC_GCODE_OK)
+                    return LC_GCODE_STEP_ERROR;
+                lc_step_put(out, out_len, "(--- LeanCam L%d ---)", s->src + 1);
+                return LC_GCODE_STEP_LINE;
+            }
+            if (lc_command_is(line, "G76"))
+            {
+                r = lc_step_prepare_g76(s, line, err, err_len);
+                if (r != LC_GCODE_OK)
+                    return LC_GCODE_STEP_ERROR;
+                lc_step_put(out, out_len, "(--- LeanCam L%d ---)", s->src + 1);
+                return LC_GCODE_STEP_LINE;
+            }
+            r = lc_step_prepare_direct(s, line, err, err_len);
+            if (r != LC_GCODE_OK)
+                return LC_GCODE_STEP_ERROR;
+            lc_step_put(out, out_len, "(--- LeanCam L%d ---)", s->src + 1);
+            return LC_GCODE_STEP_LINE;
+        }
+        if (s->phase == LC_STEP_PHASE_FOOTER)
+        {
+            if (s->footer_idx < sizeof(footers) / sizeof(footers[0]))
+            {
+                lc_step_put(out, out_len, "%s", footers[s->footer_idx++]);
+                return LC_GCODE_STEP_LINE;
+            }
+            s->phase = LC_STEP_PHASE_DONE;
+        }
+        if (s->phase == LC_STEP_PHASE_DONE)
+            return LC_GCODE_STEP_DONE;
+        return LC_GCODE_STEP_ERROR;
+    }
+}
+

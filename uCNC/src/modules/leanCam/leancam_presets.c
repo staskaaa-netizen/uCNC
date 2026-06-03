@@ -1,6 +1,11 @@
+/* LeanCam module contract:
+ * Purpose: expand operator preset buttons into visible G-code-ish program rows.
+ * Called by: leancam_bridge/template menu actions.
+ * Calls into: template/schema/expression helpers and program insertion helpers.
+ * Owns: no persistent state; presets are edit-time conveniences, not stored private cycle commands.
+ */
 #include "leancam_presets.h"
-#include "leancam_regions.h"
-#include "leancam_text.h"
+#include "leancam_code.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +21,7 @@ static bool lc_preset_setup_positive(const char *setup_line,
 {
     float v;
 
-    if (!lc_text_get_field_text(setup_line, key, out, out_sz))
+    if (!lc_code_get_field_text(setup_line, key, out, out_sz))
         return false;
     v = strtof(out, NULL);
     return v > 0.0f;
@@ -36,10 +41,10 @@ void lc_presets_clear_meta(void)
 
 lc_preset_meta_kind_t lc_presets_kind_from_line(const char *line)
 {
-    if (lc_text_command_is(line, "OD")) return LC_PRESET_META_OD;
-    if (lc_text_command_is(line, "ID")) return LC_PRESET_META_ID;
-    if (lc_text_command_is(line, "FACE")) return LC_PRESET_META_FACE;
-    if (lc_text_command_is(line, "RECESS")) return LC_PRESET_META_RECESS;
+    if (lc_code_command_is(line, "OD")) return LC_PRESET_META_OD;
+    if (lc_code_command_is(line, "ID")) return LC_PRESET_META_ID;
+    if (lc_code_command_is(line, "FACE")) return LC_PRESET_META_FACE;
+    if (lc_code_command_is(line, "RECESS")) return LC_PRESET_META_RECESS;
     return LC_PRESET_META_NONE;
 }
 
@@ -49,7 +54,7 @@ lc_preset_meta_kind_t lc_presets_region_kind(const program_t *prog, int header_i
 
     if (!prog || header_idx < 0 || header_idx >= prog->count)
         return LC_PRESET_META_NONE;
-    if (!lc_region_is_header(prog->lines[header_idx]))
+    if (!lc_code_region_is_header(prog->lines[header_idx]))
         return LC_PRESET_META_NONE;
 
     if (header_idx < MAX_LINES)
@@ -59,7 +64,7 @@ lc_preset_meta_kind_t lc_presets_region_kind(const program_t *prog, int header_i
             return kind;
     }
 
-    if (lc_text_command_is(prog->lines[header_idx], "G72"))
+    if (lc_code_command_is(prog->lines[header_idx], "G72"))
         return LC_PRESET_META_FACE;
 
     return LC_PRESET_META_OD;
@@ -108,16 +113,16 @@ bool lc_presets_expand_committed(program_t *prog,
     if (kind == LC_PRESET_META_NONE)
         return false;
 
-    (void)lc_text_get_field_text(preset, "T", t, sizeof(t));
-    (void)lc_text_get_field_text(preset, "O", o, sizeof(o));
-    (void)lc_text_get_field_text(preset, "U", u, sizeof(u));
-    (void)lc_text_get_field_text(preset, "W", w, sizeof(w));
-    (void)lc_text_get_field_text(preset, "R", r, sizeof(r));
-    (void)lc_text_get_field_text(preset, "X", x_allow, sizeof(x_allow));
-    (void)lc_text_get_field_text(preset, "Z", z_allow, sizeof(z_allow));
-    (void)lc_text_get_field_text(preset, "F_R", f_r, sizeof(f_r));
-    (void)lc_text_get_field_text(preset, "F_F", f_f, sizeof(f_f));
-    (void)lc_text_get_field_text(preset, "RPM", rpm, sizeof(rpm));
+    (void)lc_code_get_field_text(preset, "T", t, sizeof(t));
+    (void)lc_code_get_field_text(preset, "O", o, sizeof(o));
+    (void)lc_code_get_field_text(preset, "U", u, sizeof(u));
+    (void)lc_code_get_field_text(preset, "W", w, sizeof(w));
+    (void)lc_code_get_field_text(preset, "R", r, sizeof(r));
+    (void)lc_code_get_field_text(preset, "X", x_allow, sizeof(x_allow));
+    (void)lc_code_get_field_text(preset, "Z", z_allow, sizeof(z_allow));
+    (void)lc_code_get_field_text(preset, "F_R", f_r, sizeof(f_r));
+    (void)lc_code_get_field_text(preset, "F_F", f_f, sizeof(f_f));
+    (void)lc_code_get_field_text(preset, "RPM", rpm, sizeof(rpm));
 
     if (kind == LC_PRESET_META_ID)
     {
@@ -158,10 +163,10 @@ bool lc_presets_expand_committed(program_t *prog,
         lc_preset_meta_t *meta = &g_preset_meta[row];
         memset(meta, 0, sizeof(*meta));
         meta->kind = kind;
-        if (lc_text_get_field_float(preset, "T", &vf)) meta->t = (int)vf;
-        if (lc_text_get_field_float(preset, "O", &vf)) meta->o = (int)vf;
-        if (lc_text_get_field_float(preset, "F_F", &vf)) meta->finish_feed = vf;
-        if (lc_text_get_field_float(preset, "RPM", &vf)) meta->rpm = (int)vf;
+        if (lc_code_get_field_float(preset, "T", &vf)) meta->t = (int)vf;
+        if (lc_code_get_field_float(preset, "O", &vf)) meta->o = (int)vf;
+        if (lc_code_get_field_float(preset, "F_F", &vf)) meta->finish_feed = vf;
+        if (lc_code_get_field_float(preset, "RPM", &vf)) meta->rpm = (int)vf;
     }
 
     cur_line = row;
@@ -201,3 +206,6 @@ bool lc_presets_expand_committed(program_t *prog,
         *target_row = cur_line;
     return true;
 }
+
+
+

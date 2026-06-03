@@ -1,3 +1,9 @@
+/* LeanCam module contract:
+ * Purpose: command/field schema for the current G-code-ish stored row format.
+ * Called by: editor, validation, preset expansion, display formatting, and generator parsing.
+ * Calls into: text helpers only.
+ * Owns: static command definitions; it should not contain runtime UI or file state.
+ */
 #include "leancam_schema.h"
 
 #include <stdio.h>
@@ -75,8 +81,11 @@ static const lc_schema_menu_item_t g_draft_items[] = {
 static const lc_schema_menu_item_t g_nc_items[] = {
     {'B', "Up", LC_SCHEMA_ACT_NC_UP, 0, 0},
     {'C', "Down", LC_SCHEMA_ACT_NC_DOWN, 0, 0},
-    {'A', "Files", LC_SCHEMA_ACT_NC_BACK, 0, 0},
-    {'#', "View", LC_SCHEMA_ACT_NC_VIEW, 0, 0}
+    {'1', "Single", LC_SCHEMA_ACT_NC_SINGLE, 0, 0},
+    {'2', "From", LC_SCHEMA_ACT_NC_FROM, 0, 0},
+    {'3', "Full", LC_SCHEMA_ACT_NC_FULL, 0, 0},
+    {'#', "Run", LC_SCHEMA_ACT_NC_RUN, 0, 0},
+    {'A', "Files", LC_SCHEMA_ACT_NC_BACK, 0, 0}
 };
 
 static const lc_schema_page_t g_pages[] = {
@@ -186,3 +195,5 @@ void leancam_schema_format_title(char *out, size_t out_size, const lc_schema_pag
     }
     snprintf(out, out_size, "%s", (page && page->title) ? page->title : "LeanCam");
 }
+
+

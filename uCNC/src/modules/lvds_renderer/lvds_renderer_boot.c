@@ -1,7 +1,6 @@
 #include "../../cnc.h"
+#include "lvds_renderer_boot.h"
 #include "lvds_hstx.h"
-#include "lvds_renderer.h"
-#include "lvds_renderer_state.h"
 
 #include "hardware/clocks.h"
 #include "hardware/watchdog.h"
@@ -16,7 +15,7 @@
 #endif
 
 #ifndef LVDS_RENDERER_WATCHDOG_MS
-#define LVDS_RENDERER_WATCHDOG_MS 500
+#define LVDS_RENDERER_WATCHDOG_MS 0
 #endif
 
 #if LEANCAM_USE_PSRAM_FB || LEANCAM_USE_PSRAM_BACKBUFFER || LEANCAM_USE_PSRAM_LIVE_SIM
@@ -29,23 +28,8 @@ static void lvds_debug_pause(const char *msg)
                (uint32_t)(clock_get_hz(clk_sys) / 1000U));
 }
 
-static bool lvds_renderer_update(void *args)
+bool lvds_renderer_boot_init(void)
 {
-    (void)args;
-#if LVDS_RENDERER_WATCHDOG_MS > 0
-    watchdog_update();
-#endif
-    lvds_renderer_state_poll();
-    lvds_renderer_prepare_poll();
-    lvds_renderer_draw_poll();
-    return EVENT_CONTINUE;
-}
-
-CREATE_EVENT_LISTENER(cnc_io_dotasks, lvds_renderer_update);
-
-DECL_MODULE(lvds_renderer)
-{
-
     bool display_ok;
     lvds_debug_pause("module entered");
 
@@ -83,15 +67,8 @@ DECL_MODULE(lvds_renderer)
 #if LVDS_RENDERER_WATCHDOG_MS > 0
     watchdog_update();
 #endif
-    proto_info("LVDS:display init returned ok=%d err=%d backbuf=%d",
-               display_ok ? 1 : 0,
-               lvds_hstx_last_error(),
-               lvds_hstx_backbuffer_active() ? 1 : 0);
+    proto_info("LVDS:display init returned ok=%d", display_ok ? 1 : 0);
 
-    if (display_ok) {
-        lvds_renderer_state_init();
-        lvds_renderer_draw_init();
-        ADD_EVENT_LISTENER(cnc_io_dotasks, lvds_renderer_update);
-    }
     lvds_debug_pause(display_ok ? "renderer armed" : "display unavailable");
+    return display_ok;
 }

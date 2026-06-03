@@ -12,7 +12,7 @@
 #endif
 
 #include "../../cnc.h"
-#include "../ui_snapshot/ui_snapshot.h"
+#include "../leanCam/leancam_snapshot_frame.h"
 
 #include "ra8876_ll.h"
 #include "ra_leancam_table.h"
@@ -107,6 +107,13 @@
 static uint32_t g_ra_last_snapshot_seq = 0;
 static bool g_ra_renderer_inited = false;
 static uint8_t g_ra_last_leancam_mode = 0xff;
+
+bool __attribute__((weak)) ra_renderer_get_snapshot(ui_snapshot_frame_t *frame, uint32_t *seq)
+{
+    (void)frame;
+    (void)seq;
+    return false;
+}
 #ifdef ARDUINO_ARCH_ESP32
 static TaskHandle_t g_ra_renderer_task = NULL;
 #endif
@@ -543,7 +550,7 @@ void ra_renderer_poll(void)
     if (!g_ra_renderer_inited)
         return;
 
-    if (!ui_snapshot_copy_latest(&g_ui_snapshot, &local_frame, &seq))
+    if (!ra_renderer_get_snapshot(&local_frame, &seq))
         return;
 
     if (!ui_snapshot_has_newer_seq(seq, g_ra_last_snapshot_seq))

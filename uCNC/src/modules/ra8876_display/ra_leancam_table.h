@@ -1,7 +1,7 @@
 #ifndef RA_LEANCAM_TABLE_H
 #define RA_LEANCAM_TABLE_H
 
-#include "../ui_snapshot/ui_snapshot.h"
+#include "../leanCam/leancam_snapshot_frame.h"
 
 #ifdef __cplusplus
 extern "C" {

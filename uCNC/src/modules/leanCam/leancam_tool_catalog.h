@@ -1,7 +1,7 @@
 #ifndef LEANCAM_TOOL_CATALOG_H
 #define LEANCAM_TOOL_CATALOG_H
 
-#include "conv_core.h"
+#include "leancam_program.h"
 
 #include <stdbool.h>
 
@@ -29,3 +29,4 @@ const char *lc_tool_catalog_find_in_program_or_catalog(const program_t *prog, in
 #endif
 
 #endif /* LEANCAM_TOOL_CATALOG_H */
+

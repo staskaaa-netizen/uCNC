@@ -58,6 +58,18 @@ Less architecture. More visible behavior.
 Less abstraction. More determinism.
 Less magic. More repairability.
 
+Upstream/module configuration rule:
+
+* `cnc_hal_overrides.h` must always remain active. Do not add guards or switches that disable it.
+* Treat `cnc_hal_overrides.h` and web-builder generated overrides as the normal place for user/module configuration.
+* Core µCNC may expose generic hooks, APIs, and low-cost infrastructure, but must not learn board-specific or module-specific policy.
+* Architecture-specific implementations such as ESP32 PCNT, RP2040/RP2350 PIO, display backends, storage backends, and G-code extensions belong in modules unless upstream explicitly asks for core support.
+* Module-specific enable flags, default pins, backend enum names, debug toggles, and compatibility aliases belong in the module source/README or in user overrides, not in `cnc_hal_config_helper.h`.
+* New optional behavior must be opt-in at compile time. Keep the default/no-feature path light in RAM, flash, and task hooks.
+* Prefer generic `ENCx`/indexed APIs over `ENC0`-only helpers. If a feature is useful for one encoder, design the public API so it can apply to any encoder.
+* If a module needs core support, add the smallest generic primitive and document the module contract. Do not smuggle a private board patch into core.
+* During PR cleanup, scan for suspicious config glue: forced `ENABLE_*` defines, backend names in core, board-specific constants, and one-off compatibility macros.
+
 ## Main decision
 
 King is dead. Long live the king: **G-code**.
@@ -93,7 +105,138 @@ Stored program should stay as close to recognizable G-code as possible.
 
 # DO NOW
 
+## -3. Big priority: stop caching and pacing where uCNC already does it
+
+Status: mostly done / keep watching.
+
+Problem:
+
+* We are shooting ourselves in the leg by stacking LeanCam caches and pacing
+  layers on top of the uCNC stream/planner path.
+* uCNC already has the meaningful runtime cache and reasonable execution
+  pacing: serial/stream input, parser, planner, motion buffers, and status.
+* LeanCam previously added extra program caching, generated stream staging,
+  direct stream pacing, step-stream pacing, preview pacing, and execution-controller
+  pacing. These layers can disagree, stall display work, hide the real owner of
+  runtime state, and make HSTX failures look like graphics bugs.
+
+Rule:
+
+* Do not cache NC/program text unless a screen needs those exact visible lines.
+* Do not generate a full expanded run buffer just to run a selected cycle.
+* Do not add another pacing layer before `execution_controller`.
+* Runtime should emit the next needed source/generated NC line only when uCNC is
+  ready to consume it.
+* Let uCNC own run buffering and motion pacing. LeanCam should be a source of
+  lines, not a second controller.
+
+Target:
+
+* NC viewer reads visible lines from file.
+* Preview reads only the small region it needs.
+* Selected G71/G72/G76 runtime uses a stateful line generator that emits one
+  generated line at a time.
+* Full/from-file run streams raw NC file lines through uCNC without full-file
+  LeanCam caching.
+* Execution controller only orders UI work; it must not become another runtime
+  scheduler for G-code execution.
+
+Progress:
+
+* Removed the old `cam_stream` alternate task/queue executor.
+* Removed the staged LeanCam direct-stream text buffer path.
+* Selected generated runs now use the `leancam_gcode_stepper_*()` demand-fed
+  line source.
+* Raw NC file runs now read the next source line from the file only when the
+  uCNC stream asks for it.
+* Bridge runtime now always uses the boring `grbl_stream_readonly()` line
+  source. The old target switch and selected-run temp-file fallback were
+  removed.
+* HSTX health/recovery/torture scaffolding was removed from the live release
+  path. The findings remain in the LVDS README as warnings/history only.
+
+Plan B if NC run-view keeps fighting the system:
+
+* Drop the special NC run-view executor entirely.
+* File manager `#` means: expand the selected source file into a temporary run
+  file, then run that file through the normal uCNC file-run path.
+* UI flow is:
+  * select source `.nc`
+  * press `#`
+  * LeanCam expands only as a preparation step
+  * uCNC runs the prepared file
+* LeanCam does not stream generated runtime lines itself in this mode.
+* LeanCam does not own line pacing in this mode.
+* The prepared file can be inspected/reused/deleted like any other NC artifact.
+* This is less clever and may be the safer machine behavior: one file in, one
+  expanded run file out, then uCNC owns execution.
+
+## -2. NC file-manager run view
+
+Status: implemented / needs machine-side use feedback.
+
+Decision:
+
+* File-manager `#` is an NC run action, not a LeanCam generator shortcut.
+* `#` opens a read-only NC run/view screen for `.nc`, `.ngc`, and `.gcode`.
+* The NC run screen reuses the split preview layout but does not allow code editing.
+* `B`/`C` move the selected line.
+* Footer run modes are explicit:
+  * `1 Single` - run current line, then advance selection.
+  * `2 From` - run from current line to EOF.
+  * `3 Full` - run the full selected file.
+  * `# Run` - execute the selected mode.
+* The selected run mode is highlighted with a yellow footer button background.
+* Raw NC execution must stay raw NC; do not pass file-manager runs through LeanCam cycle expansion.
+
+Runtime generator note:
+
+* Do not use the file/export generator as a fake stepper by replaying it and
+  skipping already emitted lines.
+* Runtime run needs a side generator with persistent state: each request emits
+  the next NC line and returns.
+* The current first pass is `leancam_gcode_stepper_*()` for selected LeanCam
+  runs. It keeps the original burst generator available for NC file generation
+  and moves selected G71 runtime output to one generated line at a time.
+
+## -1. execution_controller owns LeanCam/LVDS runtime order
+
+Status: done / preserve.
+
+Decision:
+
+* `cnc_io_dotasks` calls one visible runtime owner: `execution_controller_poll()`.
+* The controller owns deterministic order:
+  * poll keypad input
+  * feed keys to LeanCam bridge
+  * tick LeanCam bridge
+  * build/export UI snapshot
+  * render pixels
+* `lvds_renderer.c` must remain a pixel consumer.
+* `lvds_renderer_state.c` must not secretly poll input or advance LeanCam.
+* No module may secretly advance another module.
+
+Progress:
+
+* Added `execution_controller.c/h` under `leanCam`.
+* Moved keypad polling and `leancam_bridge_tick()` out of renderer state.
+* Changed LVDS boot listener so `cnc_io_dotasks` calls `execution_controller_poll()` only.
+* Moved LeanCam runtime snapshot, screen renderer, and LVDS UI helper files from `lvds_renderer` into `leanCam`.
+* Collapsed the unused `lvds_hw_renderer` wrapper; `lvds_draw_api` now calls HSTX primitives directly.
+* Removed the visual-side generated G-code cache and PSRAM state-save path.
+* Fullscreen/generated sim preview now draws only bridge-owned stepper lines
+  copied through the snapshot.
+* Removed execution-controller HSTX health/autorecover hooks; the controller now
+  orders input, bridge tick, snapshot, visual draw, and present only.
+
+Standing rule:
+
+* Keep preview generation incremental and bridge-owned, then let renderer draw
+  already prepared snapshot data only.
+
 ## 0. NC is the primary file/editor format
+
+Status: mostly done / SETUP replacement still pending.
 
 Decision update:
 
@@ -131,6 +274,8 @@ Progress:
 ---
 
 ## 1. Resource / bus owner
+
+Status: partially done / keep small.
 
 Create:
 
@@ -173,9 +318,23 @@ void lc_resource_frame_end(void);
 
 Goal: stop file/PSRAM/LVDS/HSTX/realtime loop fighting.
 
+Progress:
+
+* `leancam_resource.c/h` exists and owns file critical sections, autosave
+  permission, and fixed PSRAM regions.
+* HSTX frame access is now through draw/present APIs only; no bridge or renderer
+  direct-scanout fallback remains.
+
+Still not done:
+
+* Frame begin/end hooks are not a real separate API yet. Keep it that way unless
+  a concrete conflict appears.
+
 ---
 
 ## 2. Split bridge monster
+
+Status: partially done / still the largest remaining architecture debt.
 
 Current `leancam_bridge.c` became the application kernel. It must become thin.
 
@@ -194,8 +353,8 @@ tool catalog      -> leancam_tool_catalog.c/h
 preset expansion  -> leancam_presets.c/h
 G71/G72 regions   -> leancam_regions.c/h
 validation        -> leancam_validate.c/h
-app state         -> leancam_app.c/h
-file browser      -> leancam_file_browser.c/h
+app state         -> leancam_bridge.c
+file browser      -> merged into leancam_files.c/h
 preview model     -> leancam_preview.c/h
 ```
 
@@ -215,21 +374,24 @@ Progress:
 * G71/G72 region helpers extracted: `leancam_regions.c/h`
 * preset expansion extracted: `leancam_presets.c/h`
 * validation extracted: `leancam_validate.c/h`
-* app mode/catalog state extracted: `leancam_app.c/h`
-* file browser state extracted: `leancam_file_browser.c/h`
-* file prompt state extracted: `leancam_file_prompt.c/h`
+* app mode/catalog state merged back into bridge; the tiny `leancam_app.c/h` wrapper was removed.
+* file browser and prompt state merged back into `leancam_files.c/h`
 * NC viewer state extracted: `leancam_nc_viewer.c/h`
 * editor field/draft mechanics extracted: `leancam_editor.c/h`
-* autosave state extracted: `leancam_autosave.c/h`
+* autosave state merged back into bridge; the tiny `leancam_autosave.c/h` wrapper was removed.
 * sim arm state, selected-range emission, whole-program preflight, and expanded NC emission extracted: `leancam_run.c/h`
-* path/name helpers extracted: `leancam_paths.c/h`
+* path/name helpers merged into `leancam_files.c/h`
 * snapshot row/text formatting extracted: `leancam_snapshot.c/h`
 * snapshot frame reset/clear defaults moved to `leancam_snapshot.c/h`
 * draft field accept/commit resolution started moving from bridge to `leancam_editor.c/h`
 * removed the no-op run validation callback path; run preparation now relies on plain setup/tool lookup plus generator errors
 * removed a few bridge-only wrapper functions that only forwarded to the shared text/tool helpers
+* bridge runtime defaults moved into `leancam_templates.h` so templates/configuration start living in one place.
 * removed the generic run context callbacks; bridge now calls the run helpers directly
 * preset expansion no longer uses a setup-field callback; bridge passes the current `SETUP` line and presets parse it directly
+* bridge run-stream debug scaffolding is compiled out unless bridge serial debug
+  is enabled.
+* old direct-stream naming was removed from active bridge code.
 
 Still not done:
 
@@ -242,6 +404,8 @@ Still not done:
 ---
 
 ## 3. Menu / editor / preset separation
+
+Status: partially done.
 
 Separate these hard:
 
@@ -301,6 +465,8 @@ Still not done:
 ---
 
 ## 4. Stored format becomes real G-code-ish
+
+Status: mostly done.
 
 Replace pipe storage for program core.
 
@@ -380,6 +546,8 @@ Progress:
 
 ## 5. OD/ID/FACE/RECESS are presets only
 
+Status: mostly done.
+
 Do not store:
 
 ```text
@@ -434,6 +602,8 @@ Progress:
 
 ## 6. Explicit G80 regions
 
+Status: done / keep as invariant.
+
 Use explicit `G80`.
 
 Region:
@@ -475,6 +645,8 @@ Progress:
 
 ## 7. One command = one editor object
 
+Status: mostly done / editor ergonomics still evolving.
+
 One stored command:
 
 * one saved line
@@ -505,11 +677,13 @@ Progress:
 * Program display wraps long committed commands into continuation visual rows only.
 * Continuation visual rows share the owning command selection state and are not separate editor objects.
 * Removed the old UI-level draft field cursor; `leancam_editor.c` is now the single active field cursor for `D`/value editing.
-* Removed unused brace-era "next required field" navigation helpers from `conv_core`.
+* Removed unused brace-era "next required field" navigation helpers from `leancam_program`.
 
 ---
 
 ## 8. G1 chamfer/radius rules
+
+Status: implemented enough for current preview/generator.
 
 Use real-world style:
 
@@ -552,6 +726,8 @@ Progress:
 ---
 
 ## 9. G71/G72 scanline roughing only
+
+Status: implemented / deliberately conservative.
 
 Do not implement:
 
@@ -641,6 +817,8 @@ Progress:
 ---
 
 ## 10. Arc handling for scanline
+
+Status: implemented for current monotonic roughing; richer cases later only.
 
 For lines:
 
@@ -747,6 +925,8 @@ Progress:
 ---
 
 ## 10A. Fix G71 roughing scanline boundary with R/C profile geometry
+
+Status: implemented in the current test gate.
 
 Problem:
 
@@ -871,6 +1051,8 @@ Notes:
 
 ## 11. Validation
 
+Status: implemented for current conservative G71/G72 rules.
+
 G71:
 
 * contour must be monotonic in Z
@@ -904,6 +1086,8 @@ Progress:
 ---
 
 ## 12. G71/G72 test gate
+
+Status: active and passing in host/build checks when run.
 
 Before adding clever logic, create tests.
 
@@ -950,6 +1134,8 @@ Progress:
 
 ## 13. Preview from owning process
 
+Status: mostly done.
+
 Cursor on:
 
 * G71/G72
@@ -978,6 +1164,8 @@ Progress:
 ---
 
 ## 14. Preview path classes
+
+Status: partially done / normal editor generated-path preview remains parked.
 
 Every generated segment must be classified:
 
@@ -1011,6 +1199,8 @@ Progress:
 ---
 
 ## 14A. Robust graphic cycle preview fill
+
+Status: parked / still a good future cleanup, not needed for current stable path.
 
 Replace the temporary geometry-buffer hatch/fill with direct scanline drawing into the existing preview VRAM/draw area.
 
@@ -1047,9 +1237,9 @@ Implementation preference:
 
 Related sim task:
 
-* Fullscreen sim should use an already-generated expanded NC/G-code line cache.
-* Store generated sim lines in RAM/PSRAM with a signature of the source region.
-* Do not regenerate expanded G-code every frame.
+* Fullscreen sim uses a bridge-owned `leancam_gcode_stepper_*()` instance.
+* Do not store generated sim lines in a RAM/PSRAM source-region cache.
+* Do not regenerate expanded G-code inside the renderer.
 * Do not emit preview debug serial noise by default.
 * If generation fails, sim should show a clear message/empty path, not yellow editor fill.
 
@@ -1063,6 +1253,8 @@ Current parked state:
 ---
 
 ## 15.  Replace LeanCam SETUP block with Eltropilot-style setup/graphics G-codes
+
+Status: open / next real language cleanup.
 
 Goal:
 Remove current non-G-code SETUP block completely and replace it with old Eltropilot-inspired CNC-looking setup commands.
@@ -1133,6 +1325,8 @@ Old dead Eltropilot-style setup rebuilt with modern parser/editor/simulation.
 
 ## 15A Redesign LeanCam G71 roughing around Eltropilot/Heidenhain-style contour ownership - skip for now
 
+Status: skipped for now.
+
 Goal:
 Do not force one contour model only.
 Support both inline G80-owned contours and reusable referenced contours.
@@ -1202,6 +1396,8 @@ modern internals hidden underneath.
 
 ## 16. Renderer split
 
+Status: mostly done for current LVDS target.
+
 Split renderer into three layers.
 
 `ui_layout`:
@@ -1238,7 +1434,7 @@ No hardware renderer should know:
 Progress:
 
 * `draw_api` module started with `lvds_draw_api.c/h`.
-* `hw_renderer` module started with `lvds_hw_renderer.c/h` as the backend boundary over current LVDS/HSTX primitives.
+* Removed the `lvds_hw_renderer.c/h` pass-through layer; `lvds_draw_api` is now the backend boundary over current LVDS/HSTX primitives.
 * Basic draw primitives now have a renderer-facing wrapper over the current LVDS/HSTX backend.
 * Clipped text rendering moved behind the draw API; layout code still owns placement for now.
 * `lvds_renderer.c` now calls `lvds_draw_*` for text, text measurement, lines, rectangles, and ellipses instead of calling HSTX primitives directly.
@@ -1253,10 +1449,13 @@ Progress:
 * Removed the hard-disabled fullscreen asset-editor path instead of preserving another inactive renderer layer.
 * Main program screen shell drawing moved to `lvds_ui_program.c/h`.
 * Removed stale pipe-era fullscreen asset detail/title helpers left behind by the disabled asset editor.
+* Moved LeanCam LVDS screen/runtime files from `lvds_renderer` into `leanCam`; the LVDS module now keeps boot, HSTX, palette, fonts, PSRAM, and primitive draw API only.
 
 ---
 
 ## 17. ATC neighbor collision shadow preview skip for now
+
+Status: skipped for now.
 
 Add conservative 2D collision overlay.
 
@@ -1291,6 +1490,8 @@ No full 3D simulation.
 
 ## A. Named contour blocks - skipped
 
+Status: skipped.
+
 Possible future:
 
 ```gcode
@@ -1315,6 +1516,8 @@ Not needed for first stable version.
 ---
 
 ## B. Contour vector editor
+
+Status: later / experimental only.
 
 Task — Experimental ICP / Contour Vector Editor Mode
 
@@ -1705,6 +1908,8 @@ Final stored program must remain:
 
 ## C. Vector-based process starters
 
+Status: later / experimental only.
+
 Experimental.
 
 Possible:
@@ -1718,6 +1923,8 @@ Not approved yet. Could become elegant or could become private religion.
 ---
 
 ## D. Richer G71/G72
+
+Status: later only.
 
 Later only:
 

@@ -39,12 +39,14 @@ extern "C"
  * Do not define I2C_* here yet: in this target it pulls in the Arduino
  * Wire backend before the keyboard module is ready.
  */
-/* #define I2C_CLK_BIT 2 */
-/* #define I2C_DATA_BIT 3 */
+/* #define I2C_DATA_BIT 2 */
+/* #define I2C_CLK_BIT 3 */
 /* #define I2C_PORT 1 */
 
-#define DIN16_BIT 2
-#define DIN17_BIT 3
+#define DOUT16_BIT 2 /* keyboard SDA */
+#define DOUT17_BIT 3 /* keyboard SCL */
+#define CAM_KB_I2C_SDA DOUT16
+#define CAM_KB_I2C_SCL DOUT17
 
 /* Direct stepper pins. No 74HC595 expansion in this target. */
 #define STEP0_BIT 23
@@ -82,11 +84,6 @@ extern "C"
 
 /* Activity LED. */
 #define DOUT31_BIT 24
-
-
-#define CAM_KB_GPIO_SCL 2
-
-#define CAM_KB_GPIO_SDA 3
 
 /* Onboard SD socket: spi1 / uCNC SPI2. */
 #define SPI2_CLK_BIT 30

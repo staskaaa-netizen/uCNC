@@ -11,9 +11,7 @@ extern "C" {
 typedef enum
 {
     LC_PSRAM_REGION_LIVE_SIM = 0,
-    LC_PSRAM_REGION_TOOL_CATALOG,
-    LC_PSRAM_REGION_PREVIEW_GCODE,
-    LC_PSRAM_REGION_PREVIEW_GCODE_STATE
+    LC_PSRAM_REGION_TOOL_CATALOG
 } lc_psram_region_t;
 
 bool lc_resource_file_begin(const char *tag);
@@ -31,3 +29,4 @@ void lc_resource_frame_end(void);
 #endif
 
 #endif /* LEANCAM_RESOURCE_H */
+

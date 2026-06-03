@@ -1,3 +1,9 @@
+/* LeanCam module contract:
+ * Purpose: convert LeanCam internal UI state into renderer-neutral snapshot structures.
+ * Called by: visual state builder after bridge has updated application state.
+ * Calls into: text/program formatting helpers only.
+ * Owns: no long-lived application state; it prepares display data for consumers.
+ */
 #include "leancam_snapshot.h"
 
 #include <stdio.h>
@@ -152,3 +158,5 @@ int lc_snapshot_put_program_command(ui_snapshot_frame_t *f,
 
     return row;
 }
+
+

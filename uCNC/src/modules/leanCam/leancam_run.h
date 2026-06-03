@@ -1,7 +1,7 @@
 #ifndef LEANCAM_RUN_H
 #define LEANCAM_RUN_H
 
-#include "conv_core.h"
+#include "leancam_program.h"
 #include "leancam_gcode.h"
 
 #include <stdbool.h>
@@ -44,3 +44,4 @@ lc_gcode_result_t lc_run_emit_selected_range(const program_t *prog,
 #endif
 
 #endif
+

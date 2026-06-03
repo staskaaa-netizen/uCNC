@@ -89,6 +89,10 @@ typedef struct
     void (*nc_back_to_files)(void *user);
     void (*nc_scroll_prev)(void *user);
     void (*nc_scroll_next)(void *user);
+    void (*nc_select_single)(void *user);
+    void (*nc_select_from)(void *user);
+    void (*nc_select_full)(void *user);
+    void (*nc_run_selected_mode)(void *user);
 } lc_menu_actions_t;
 
 bool leancam_menu_handle_key(void *user, const lc_menu_actions_t *actions, ui_key_t key);
@@ -112,3 +116,4 @@ void leancam_menu_copy_footer(char *out,
 #endif
 
 #endif
+

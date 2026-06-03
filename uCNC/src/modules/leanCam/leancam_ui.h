@@ -2,7 +2,7 @@
 #define LEANCAM_UI_H
 
 #include <stdbool.h>
-#include "conv_core.h"
+#include "leancam_program.h"
 
 #define LEANCAM_INPUT_MAX 64
 #define LEANCAM_PATH_MAX  96
@@ -43,3 +43,4 @@ bool leancam_ui_load(leancam_ui_t *ui, const char *path);
 void leancam_get_module_name(const char *line, char *out, int out_sz);
 
 #endif
+

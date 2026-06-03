@@ -1,3 +1,10 @@
+/* LeanCam test contract:
+ * Purpose: host-side checks for G-code generation geometry and command expansion.
+ * Called by: developer test runs, not firmware runtime.
+ * Calls into: LeanCam generator/text/schema code under host stubs.
+ * Owns: test fixtures only.
+ */
+
 #include "../leancam_gcode.h"
 
 #include <stdio.h>
@@ -5,6 +12,14 @@
 #include <string.h>
 
 #define LC_TEST_MAX_CAPTURE 256
+
+const char *lc_tool_catalog_find_in_program_or_catalog(const program_t *prog, int before_or_at, int t)
+{
+    (void)prog;
+    (void)before_or_at;
+    (void)t;
+    return NULL;
+}
 
 typedef struct
 {
@@ -594,6 +609,31 @@ static int lc_run_raw_g7x_rough_checks(const char *setup, const char *tool)
 
     memset(&sink, 0, sizeof(sink));
     err[0] = 0;
+    got = leancam_gcode_run_program_line_ex("G72 W1 R1 X0.5 Z0.5 F120",
+                                            setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X50 Z0",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X50 Z-5 C0 R0",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X5 Z-5 C0 R0",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X5 Z2",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G80",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got != LC_GCODE_OK || lc_find_emitted_exact_from(&sink, 0, "G1 X5.500 F120.000") < 0)
+    {
+        printf("FAIL raw G72 rectangle result=%d err=%s\n", (int)got, err);
+        return 1;
+    }
+
+    memset(&sink, 0, sizeof(sink));
+    err[0] = 0;
     if (!leancam_gcode_emit_program_header(lc_test_send, &sink))
         return 1;
     got = leancam_gcode_run_program_line_ex("G72 W2 R1 X0.5 Z0.5 F120",
@@ -686,7 +726,7 @@ static int lc_run_g1_corner_rule_checks(const char *setup, const char *tool)
     const char *chamfer_finish[] = {
         "G1 X50.000 Z0.000 F45.000",
         "G1 X50.000 Z-9.000",
-        "G1 X49.000 Z-10.000",
+        "G1 X48.000 Z-10.000",
         "G1 X40.000 Z-10.000",
         "G1 X40.000 Z-20.000"
     };
@@ -942,3 +982,4 @@ int main(void)
     printf("ALL PASS\n");
     return 0;
 }
+

@@ -1,6 +1,12 @@
+/* LeanCam module contract:
+ * Purpose: parse and cache TOOL rows for lookup by T number.
+ * Called by: bridge, preset/default expansion, validation, and generator/tool checks.
+ * Calls into: program/text helpers only.
+ * Owns: current tool catalog cache, not the editable program itself.
+ */
 #include "leancam_tool_catalog.h"
 #include "leancam_resource.h"
-#include "leancam_text.h"
+#include "leancam_code.h"
 #include "../file_system.h"
 
 #include <stdio.h>
@@ -29,7 +35,7 @@ static bool g_catalogs_loaded = false;
 
 static bool lc_tool_line_is_tool(const char *line)
 {
-    return lc_text_command_is(line, "TOOL");
+    return lc_code_command_is(line, "TOOL");
 }
 
 static bool lc_tool_line_is_plain_storage(const char *line)
@@ -65,7 +71,7 @@ static void lc_tool_catalog_bind_storage(void)
 
 static bool lc_tool_line_get_float(const char *line, const char *key, float *out)
 {
-    return lc_text_get_field_float(line, key, out);
+    return lc_code_get_field_float(line, key, out);
 }
 
 void lc_tool_catalog_init(void)
@@ -92,7 +98,7 @@ int lc_tool_line_t_value(const char *line)
 
     if (!lc_tool_line_is_tool(line))
         return -1;
-    if (!lc_text_get_field_text(line, "T", val, sizeof(val)))
+    if (!lc_code_get_field_text(line, "T", val, sizeof(val)))
         return -1;
     t = strtol(val, &endp, 10);
     if (!endp || *endp != 0)
@@ -179,16 +185,16 @@ bool lc_tool_catalog_add_raw(const char *line)
     if (lc_tool_catalog_has_t(lc_tool_line_t_value(line)))
         return false;
 
-    (void)lc_text_get_field_text(line, "T", t, sizeof(t));
-    (void)lc_text_get_field_text(line, "R", r, sizeof(r));
-    (void)lc_text_get_field_text(line, "ORIENT", orient, sizeof(orient));
-    (void)lc_text_get_field_text(line, "R_FEED", r_feed, sizeof(r_feed));
-    (void)lc_text_get_field_text(line, "FIN_FEED", fin_feed, sizeof(fin_feed));
-    (void)lc_text_get_field_text(line, "DOC", doc, sizeof(doc));
-    (void)lc_text_get_field_text(line, "FIN_DOC", fin_doc, sizeof(fin_doc));
-    (void)lc_text_get_field_text(line, "RPM", rpm, sizeof(rpm));
-    (void)lc_text_get_field_text(line, "XOFF", xoff, sizeof(xoff));
-    (void)lc_text_get_field_text(line, "ZOFF", zoff, sizeof(zoff));
+    (void)lc_code_get_field_text(line, "T", t, sizeof(t));
+    (void)lc_code_get_field_text(line, "R", r, sizeof(r));
+    (void)lc_code_get_field_text(line, "ORIENT", orient, sizeof(orient));
+    (void)lc_code_get_field_text(line, "R_FEED", r_feed, sizeof(r_feed));
+    (void)lc_code_get_field_text(line, "FIN_FEED", fin_feed, sizeof(fin_feed));
+    (void)lc_code_get_field_text(line, "DOC", doc, sizeof(doc));
+    (void)lc_code_get_field_text(line, "FIN_DOC", fin_doc, sizeof(fin_doc));
+    (void)lc_code_get_field_text(line, "RPM", rpm, sizeof(rpm));
+    (void)lc_code_get_field_text(line, "XOFF", xoff, sizeof(xoff));
+    (void)lc_code_get_field_text(line, "ZOFF", zoff, sizeof(zoff));
 
     snprintf(normalized,
              sizeof(normalized),
@@ -419,3 +425,5 @@ const char *lc_tool_catalog_find_in_program_or_catalog(const program_t *prog, in
 
     return lc_tool_catalog_default_line(t);
 }
+
+

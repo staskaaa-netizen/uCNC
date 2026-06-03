@@ -8,6 +8,27 @@
 #endif
 
 #include "leancam_menu.h"
+#include "../../cnc_hal_config_helper.h"
+
+#ifndef LC_VISIBLE_PROGRAM_LINES
+#define LC_VISIBLE_PROGRAM_LINES 18
+#endif
+
+#ifndef LC_VISIBLE_TOOL_LINES
+#define LC_VISIBLE_TOOL_LINES 12
+#endif
+
+#ifndef LC_FILE_REFRESH_RETRY_MS
+#define LC_FILE_REFRESH_RETRY_MS 1500u
+#endif
+
+#ifndef LC_AUTOSAVE_RETRY_MS
+#define LC_AUTOSAVE_RETRY_MS 500u
+#endif
+
+#ifndef LC_AUTOSAVE_BUSY_MAX_TRIES
+#define LC_AUTOSAVE_BUSY_MAX_TRIES 3u
+#endif
 
 /* Template syntax:
  *   {}                  required user input
@@ -44,7 +65,7 @@ static const char *g_leancam_gcode_templates[] = {
 "G74 Z{} K{} F{}",
 "G84 Z{} PITCH{} RPM{}",
 "G33 X{} Z{} K{}",
-"G76 X{} Z{} K{} DEPTH{} DOC{} FIN{(0)} SPRING{(1)} ANGLE{(29.5)}"
+"G76 Z{} P{} K{} J{} H{(1)} Q{(29.5)} R{(2)}"
 };
 
 static const char *g_leancam_preset_templates[] = {
@@ -171,3 +192,4 @@ static inline lc_template_selection_t lc_template_select(lc_menu_template_t tmpl
 #undef LC_TEMPLATE_UNUSED
 
 #endif
+

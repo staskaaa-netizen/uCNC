@@ -1,7 +1,7 @@
 #ifndef LEANCAM_SNAPSHOT_H
 #define LEANCAM_SNAPSHOT_H
 
-#include "../ui_snapshot/ui_snapshot.h"
+#include "leancam_snapshot_frame.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -36,3 +36,4 @@ int lc_snapshot_put_program_command(ui_snapshot_frame_t *f,
 #endif
 
 #endif
+

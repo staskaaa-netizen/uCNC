@@ -36,10 +36,15 @@ Example for encoder 0:
 #define G33_ENCODER ENC0
 #define G33_FEEDBACK_LOOP_USE_HW_COUNTER
 
-#define ENC0_INDEX_VIRTUAL_FIRE_HOOK 1
-#define ENC0_VIRTUAL_INDEXES_PER_REV 10
-#define ENC0_VIRTUAL_MAX_CATCHUP_SLOTS 8
-#define ENC0_INDEX_AUTO_ORIGIN 0
+#define ENC0_VIRTUAL_INDEX 1
+#define ENC0_VIRTUAL_INDEX_CPR (ENC0_CPR / 10)
+#define ENC0_VIRTUAL_INDEX_OFFSET 0
+#define ENC0_VIRTUAL_INDEX_HYSTERESIS 1
+
+#define LOAD_MODULES_OVERRIDE() ({ \
+    LOAD_MODULE(rp2350_pio_encoder); \
+    LOAD_MODULE(g33); \
+})
 ```
 
 `ENC0_CPR` should match the effective quadrature counts per spindle revolution.
@@ -51,7 +56,7 @@ The PIO counter is the spindle position truth. The physical index GPIO is only a
 phase reference. G33 does not need to use the physical index directly; instead,
 this module emits the normal `enc0_index` hook at virtual modulo boundaries.
 
-With `ENC0_CPR = 4000` and `ENC0_VIRTUAL_INDEXES_PER_REV = 10`, a virtual index
+With `ENC0_CPR = 4000` and `ENC0_VIRTUAL_INDEX_CPR = ENC0_CPR / 10`, a virtual index
 should be emitted every 400 encoder counts.
 
 In `G33_FEEDBACK_LOOP_USE_HW_COUNTER` mode:
@@ -128,4 +133,3 @@ Healthy G33 logs should now show feed near spindle RPM for `K1`:
 [MSG:G33 start hw=... idx=1 empty=0]
 [MSG:G33 exp=... real=... err=0]
 ```
-

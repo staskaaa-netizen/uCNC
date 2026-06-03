@@ -12,7 +12,7 @@ typedef struct {
     lvds_palette_color_id_t color;
 } lvds_palette_element_def_t;
 
-#define LVDS_RENDERER_MAX_PALETTE_COLORS 64
+#define LVDS_RENDERER_MAX_PALETTE_COLORS 16
 
 #if LC_COLOR_COUNT > LVDS_RENDERER_MAX_PALETTE_COLORS
 #error "LeanCam LVDS color table exceeds the 64-color HSTX paletted output limit"

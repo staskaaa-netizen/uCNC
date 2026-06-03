@@ -31,13 +31,6 @@ enum {
 };
 
 bool lvds_hstx_init(void);
-bool lvds_hstx_recover(void);
-int lvds_hstx_last_error(void);
-void lvds_hstx_debug_dump(const char *tag);
-void lvds_hstx_debug_probe(const char *tag, uint32_t wait_us);
-void *lvds_hstx_scanout_buffer(void);
-bool lvds_hstx_backbuffer_active(void);
-void lvds_hstx_direct_scanout(bool direct);
 void lvds_hstx_clear(lvds_color_t color);
 void lvds_hstx_pixel(int x, int y, lvds_color_t color);
 void lvds_hstx_line(int x1, int y1, int x2, int y2, lvds_color_t color);
@@ -49,6 +42,9 @@ void lvds_hstx_fill_ellipse(int x, int y, int rx, int ry, lvds_color_t color);
 void lvds_hstx_text(int x, int y, const char *text, lvds_color_t fg, lvds_color_t bg, int font);
 int lvds_hstx_text_width(const char *text, int font);
 void lvds_hstx_present(void);
+void lvds_hstx_present_chunked_request(uint16_t chunks);
+bool lvds_hstx_present_chunked_step(void);
+bool lvds_hstx_present_chunked_busy(void);
 
 lvds_color_t lvds_hstx_rgb565(uint16_t rgb565);
 lvds_color_t lvds_hstx_rgb(uint8_t r, uint8_t g, uint8_t b);

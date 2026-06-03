@@ -54,7 +54,11 @@ typedef enum
     LC_SCHEMA_ACT_NC_UP,
     LC_SCHEMA_ACT_NC_DOWN,
     LC_SCHEMA_ACT_NC_BACK,
-    LC_SCHEMA_ACT_NC_VIEW
+    LC_SCHEMA_ACT_NC_VIEW,
+    LC_SCHEMA_ACT_NC_SINGLE,
+    LC_SCHEMA_ACT_NC_FROM,
+    LC_SCHEMA_ACT_NC_FULL,
+    LC_SCHEMA_ACT_NC_RUN
 } lc_schema_action_t;
 
 typedef struct
@@ -91,3 +95,4 @@ void leancam_schema_format_title(char *out, size_t out_size, const lc_schema_pag
 #endif
 
 #endif
+

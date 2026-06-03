@@ -1,3 +1,9 @@
+/* LeanCam module contract:
+ * Purpose: file paths, file browser model, filename prompt, and plain program load/save helpers.
+ * Called by: leancam_bridge and resource/autosave flow.
+ * Calls into: uCNC file_system APIs and program storage helpers.
+ * Owns: file browser/prompt transient state and path utilities; it must not advance editor or renderer state.
+ */
 #include "leancam_files.h"
 #include "leancam_resource.h"
 #include "../file_system.h"
@@ -11,9 +17,23 @@
 static char g_lc_files[LC_MAX_FILES][LC_FILE_NAME_MAX];
 static int  g_lc_file_count = 0;
 static bool g_lc_busy = false;
+static int g_lc_file_selected = 0;
+static bool g_lc_files_ready = false;
+static uint32_t g_lc_file_retry_due_ms = 0;
+static char g_lc_prompt_name[32];
+static bool g_lc_prompt_duplicate_pending = false;
+static char g_lc_prompt_duplicate_source[LC_FILE_PATH_MAX];
+
+#ifndef LEANCAM_DEBUG
+#define LEANCAM_DEBUG 0
+#endif
+
+#ifndef LEANCAM_DEBUG_FILES
+#define LEANCAM_DEBUG_FILES 0
+#endif
 
 #ifndef LC_FILE_SAVE_DBG
-#define LC_FILE_SAVE_DBG 0
+#define LC_FILE_SAVE_DBG LEANCAM_DEBUG_FILES
 #endif
 
 #if LC_FILE_SAVE_DBG
@@ -21,11 +41,6 @@ static bool g_lc_busy = false;
 #else
 #define LC_SAVE_LOG(...) do { } while (0)
 #endif
-
-void __attribute__((weak)) leancam_files_debug_probe(const char *stage)
-{
-    (void)stage;
-}
 
 /* ---------- IO GUARD ---------- */
 
@@ -64,6 +79,121 @@ static bool lc_has_suffix_ci(const char *name, const char *suffix)
     size_t ls = strlen(suffix);
     if (ln < ls) return false;
     return lc_stricmp(name + ln - ls, suffix) == 0;
+}
+
+const char *lc_path_basename(const char *path)
+{
+    const char *p1;
+    const char *p2;
+    const char *p;
+
+    if (!path || !path[0])
+        return "<no file>";
+
+    p1 = strrchr(path, '/');
+    p2 = strrchr(path, '\\');
+    p = p1 > p2 ? p1 : p2;
+    return p ? p + 1 : path;
+}
+
+int lc_path_stricmp(const char *a, const char *b)
+{
+    return lc_stricmp(a ? a : "", b ? b : "");
+}
+
+bool lc_path_has_suffix_ci(const char *name, const char *suffix)
+{
+    if (!name || !suffix)
+        return false;
+    return lc_has_suffix_ci(name, suffix);
+}
+
+static bool lc_path_is_name_char(char c)
+{
+    return (c >= 'A' && c <= 'Z') ||
+           (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9') ||
+           c == '_' || c == '-';
+}
+
+static void lc_path_sanitize_name_part(const char *in, char *out, size_t out_sz)
+{
+    size_t i = 0;
+    char last = 0;
+
+    if (!out || out_sz == 0)
+        return;
+
+    out[0] = 0;
+    if (!in)
+        return;
+
+    while (*in && i + 1 < out_sz)
+    {
+        char c = *in++;
+        if (!lc_path_is_name_char(c))
+            c = '_';
+        if (c == '_' && last == '_')
+            continue;
+        out[i++] = c;
+        last = c;
+    }
+
+    while (i > 0 && out[i - 1] == '_')
+        --i;
+    out[i] = 0;
+}
+
+void lc_path_get_program_stem(const char *current_path, char *out, size_t out_sz)
+{
+    const char *base;
+    const char *dot;
+    size_t len;
+    char tmp[40];
+
+    if (!out || out_sz == 0)
+        return;
+
+    base = lc_path_basename(current_path);
+    dot = strrchr(base, '.');
+    len = dot && dot > base ? (size_t)(dot - base) : strlen(base);
+    if (len >= sizeof(tmp))
+        len = sizeof(tmp) - 1u;
+
+    memcpy(tmp, base, len);
+    tmp[len] = 0;
+
+    lc_path_sanitize_name_part(tmp, out, out_sz);
+    if (!out[0])
+    {
+        strncpy(out, "program", out_sz - 1u);
+        out[out_sz - 1u] = 0;
+    }
+}
+
+void lc_path_get_operation_name(const char *line, char *out, size_t out_sz)
+{
+    char tmp[20];
+    size_t n = 0;
+
+    if (!out || out_sz == 0)
+        return;
+
+    if (!line)
+        line = "";
+
+    while (line[n] && line[n] != '{' && line[n] != ' ' && line[n] != '\t' && n + 1 < sizeof(tmp))
+        ++n;
+
+    memcpy(tmp, line, n);
+    tmp[n] = 0;
+
+    lc_path_sanitize_name_part(tmp, out, out_sz);
+    if (!out[0])
+    {
+        strncpy(out, "OP", out_sz - 1u);
+        out[out_sz - 1u] = 0;
+    }
 }
 
 static void lc_clear_file_list(void)
@@ -123,7 +253,6 @@ static bool lc_write_program_path(const char *path, const program_t *p, uint32_t
     LC_SAVE_LOG(__romstr__("[MSG:LC file save open begin tag=%s dt=%lu]\r\n"),
                 tag,
                 (unsigned long)(mcu_millis() - t0));
-    leancam_files_debug_probe("open-begin");
     fp = fs_open(path, "w");
     if (!fp)
     {
@@ -135,7 +264,6 @@ static bool lc_write_program_path(const char *path, const program_t *p, uint32_t
     LC_SAVE_LOG(__romstr__("[MSG:LC file save open ok tag=%s dt=%lu]\r\n"),
                 tag,
                 (unsigned long)(mcu_millis() - t0));
-    leancam_files_debug_probe("open-ok");
 
     if (used)
     {
@@ -145,8 +273,6 @@ static bool lc_write_program_path(const char *path, const program_t *p, uint32_t
                     tag,
                     (unsigned long)used,
                     (unsigned long)(mcu_millis() - t0));
-        leancam_files_debug_probe("write-begin");
-
         wrote = fs_write(fp, (const uint8_t *)write_buf, used);
         if (wrote != used)
         {
@@ -162,18 +288,15 @@ static bool lc_write_program_path(const char *path, const program_t *p, uint32_t
         LC_SAVE_LOG(__romstr__("[MSG:LC file save write ok tag=%s dt=%lu]\r\n"),
                     tag,
                     (unsigned long)(mcu_millis() - t0));
-        leancam_files_debug_probe("write-ok");
     }
 
     LC_SAVE_LOG(__romstr__("[MSG:LC file save close begin tag=%s dt=%lu]\r\n"),
                 tag,
                 (unsigned long)(mcu_millis() - t0));
-    leancam_files_debug_probe("close-begin");
     fs_close(fp);
     LC_SAVE_LOG(__romstr__("[MSG:LC file save close ok tag=%s dt=%lu]\r\n"),
                 tag,
                 (unsigned long)(mcu_millis() - t0));
-    leancam_files_debug_probe("close-ok");
 
     return true;
 }
@@ -239,6 +362,8 @@ static bool lc_load_program_path(const char *path, program_t *p)
 bool leancam_files_init(void)
 {
     lc_clear_file_list();
+    lc_file_browser_init();
+    lc_file_prompt_clear();
     return true;
 }
 
@@ -260,12 +385,10 @@ bool leancam_files_save(const char *path, const program_t *p)
                 (unsigned long)t0,
                 path,
                 p->count);
-    leancam_files_debug_probe("save-enter");
     if (!lc_file_io_begin())
         return false;
     LC_SAVE_LOG(__romstr__("[MSG:LC file save guard on dt=%lu]\r\n"),
                 (unsigned long)(mcu_millis() - t0));
-    leancam_files_debug_probe("guard-on");
 
     if (!lc_write_program_path(path, p, t0, "final"))
     {
@@ -276,7 +399,6 @@ bool leancam_files_save(const char *path, const program_t *p)
     lc_file_io_end();
     LC_SAVE_LOG(__romstr__("[MSG:LC file save guard off dt=%lu]\r\n"),
                 (unsigned long)(mcu_millis() - t0));
-    leancam_files_debug_probe("guard-off");
 
     return true;
 }
@@ -343,7 +465,10 @@ bool leancam_files_refresh(const char *dir)
         if (!name) continue;
         name++;
 
-        if (!lc_has_suffix_ci(name, ".nc"))
+        if (!lc_has_suffix_ci(name, ".nc") &&
+            !lc_has_suffix_ci(name, ".ngc") &&
+            !lc_has_suffix_ci(name, ".gcode") &&
+            !lc_has_suffix_ci(name, ".dxf"))
             continue;
 
         strncpy(g_lc_files[g_lc_file_count], name, LC_FILE_NAME_MAX - 1);
@@ -415,3 +540,168 @@ bool leancam_files_delete_path(const char *path)
 
     return ok;
 }
+
+void lc_file_browser_init(void)
+{
+    g_lc_file_selected = 0;
+    g_lc_files_ready = false;
+    g_lc_file_retry_due_ms = 0;
+}
+
+bool lc_file_browser_refresh(const char *dir, uint32_t retry_ms)
+{
+    int cnt;
+
+    if (!leancam_files_refresh(dir))
+    {
+        g_lc_files_ready = false;
+        g_lc_file_retry_due_ms = mcu_millis() + retry_ms;
+        g_lc_file_selected = 0;
+        return false;
+    }
+
+    g_lc_files_ready = true;
+    g_lc_file_retry_due_ms = 0;
+    cnt = leancam_files_count();
+
+    if (g_lc_file_selected < 0)
+        g_lc_file_selected = 0;
+    if (g_lc_file_selected > cnt)
+        g_lc_file_selected = cnt;
+
+    return true;
+}
+
+bool lc_file_browser_ready(void)
+{
+    return g_lc_files_ready;
+}
+
+bool lc_file_browser_should_retry(uint32_t now)
+{
+    if (g_lc_files_ready)
+        return false;
+    if (g_lc_file_retry_due_ms != 0 &&
+        (int32_t)(now - g_lc_file_retry_due_ms) < 0)
+        return false;
+    return true;
+}
+
+void lc_file_browser_mark_waiting(uint32_t due_ms)
+{
+    g_lc_files_ready = false;
+    g_lc_file_retry_due_ms = due_ms;
+}
+
+int lc_file_browser_selected(void)
+{
+    return g_lc_file_selected;
+}
+
+void lc_file_browser_set_selected(int selected)
+{
+    g_lc_file_selected = selected;
+    lc_file_browser_clamp_selected();
+}
+
+void lc_file_browser_clamp_selected(void)
+{
+    int cnt = leancam_files_count();
+
+    if (g_lc_file_selected < 0)
+        g_lc_file_selected = 0;
+    if (g_lc_file_selected > cnt)
+        g_lc_file_selected = cnt;
+}
+
+bool lc_file_browser_selected_valid(void)
+{
+    int cnt = leancam_files_count();
+    return g_lc_file_selected >= 0 && g_lc_file_selected < cnt;
+}
+
+const char *lc_file_browser_selected_name(void)
+{
+    if (!lc_file_browser_selected_valid())
+        return "";
+    return leancam_files_name(g_lc_file_selected);
+}
+
+bool lc_file_browser_selected_path(const char *dir, char *out, int out_sz)
+{
+    if (!lc_file_browser_selected_valid())
+        return false;
+    return leancam_files_build_path(dir, g_lc_file_selected, out, out_sz);
+}
+
+void lc_file_prompt_clear(void)
+{
+    g_lc_prompt_name[0] = 0;
+    g_lc_prompt_duplicate_pending = false;
+    g_lc_prompt_duplicate_source[0] = 0;
+}
+
+void lc_file_prompt_begin_new(void)
+{
+    lc_file_prompt_clear();
+}
+
+void lc_file_prompt_begin_duplicate(const char *source_path)
+{
+    g_lc_prompt_name[0] = 0;
+    g_lc_prompt_duplicate_pending = true;
+    if (!source_path)
+        source_path = "";
+    strncpy(g_lc_prompt_duplicate_source, source_path, sizeof(g_lc_prompt_duplicate_source) - 1);
+    g_lc_prompt_duplicate_source[sizeof(g_lc_prompt_duplicate_source) - 1] = 0;
+}
+
+bool lc_file_prompt_duplicate_pending(void)
+{
+    return g_lc_prompt_duplicate_pending;
+}
+
+const char *lc_file_prompt_duplicate_source(void)
+{
+    return g_lc_prompt_duplicate_source;
+}
+
+const char *lc_file_prompt_name(void)
+{
+    return g_lc_prompt_name;
+}
+
+bool lc_file_prompt_name_empty(void)
+{
+    return g_lc_prompt_name[0] == 0;
+}
+
+size_t lc_file_prompt_name_len(void)
+{
+    return strlen(g_lc_prompt_name);
+}
+
+void lc_file_prompt_backspace(void)
+{
+    size_t len = strlen(g_lc_prompt_name);
+    if (len > 0)
+        g_lc_prompt_name[len - 1] = 0;
+}
+
+void lc_file_prompt_append_digit(char digit)
+{
+    size_t len = strlen(g_lc_prompt_name);
+    if (len + 1 < sizeof(g_lc_prompt_name))
+    {
+        g_lc_prompt_name[len] = digit;
+        g_lc_prompt_name[len + 1] = 0;
+    }
+}
+
+void lc_file_prompt_finish_duplicate(void)
+{
+    g_lc_prompt_duplicate_pending = false;
+    g_lc_prompt_duplicate_source[0] = 0;
+}
+
+

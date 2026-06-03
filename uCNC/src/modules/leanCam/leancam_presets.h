@@ -1,7 +1,7 @@
 #ifndef LEANCAM_PRESETS_H
 #define LEANCAM_PRESETS_H
 
-#include "conv_core.h"
+#include "leancam_program.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -43,3 +43,4 @@ bool lc_presets_expand_committed(program_t *prog,
 #endif
 
 #endif /* LEANCAM_PRESETS_H */
+

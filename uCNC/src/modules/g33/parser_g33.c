@@ -40,11 +40,7 @@
 #endif
 
 #ifndef G33_INDEXES_PER_REV
-#if (G33_ENCODER == ENC0) && defined(ENC0_VIRTUAL_INDEXES_PER_REV)
-#define G33_INDEXES_PER_REV ENC0_VIRTUAL_INDEXES_PER_REV
-#else
 #define G33_INDEXES_PER_REV 1U
-#endif
 #endif
 
 #if (G33_INDEXES_PER_REV < 1)
@@ -141,6 +137,18 @@ static float motion_total_distance;
 static int32_t current_error;
 static float rpm_to_stepfeed_constant;
 static uint32_t enc_res;
+static uint32_t g33_indexes_per_rev = G33_INDEXES_PER_REV;
+
+static uint32_t g33_get_indexes_per_rev(uint32_t encoder_cpr)
+{
+#if (G33_ENCODER == ENC0) && defined(ENC0_VIRTUAL_INDEX) && ENC0_VIRTUAL_INDEX && defined(ENC0_VIRTUAL_INDEX_CPR) && (ENC0_VIRTUAL_INDEX_CPR > 0)
+	uint32_t virtual_cpr = (uint32_t)ENC0_VIRTUAL_INDEX_CPR;
+	return (encoder_cpr > virtual_cpr) ? MAX(1U, (encoder_cpr + (virtual_cpr >> 1)) / virtual_cpr) : 1U;
+#else
+	(void)encoder_cpr;
+	return (uint32_t)G33_INDEXES_PER_REV;
+#endif
+}
 
 bool g33_els_is_active(void)
 {
@@ -381,14 +389,17 @@ bool g33_exec(void *args)
 		}
 
 		enc_res = ((uint32_t)g_settings.encoders_resolution[G33_ENCODER]);
+		g33_indexes_per_rev = g33_get_indexes_per_rev(enc_res);
+		if (g33_indexes_per_rev < 1)
+		{
+			g33_indexes_per_rev = 1;
+		}
 
 		// Hard reset all G33 runtime state before attaching the index hook.
 		// This prevents second-run stale dt/rpm samples like TOOL RPM 1.5.
 		// reset virtual index too
 
-		#if defined(ENC0_INDEX_VIRTUAL_FIRE_HOOK) && (ENC0_INDEX_VIRTUAL_FIRE_HOOK != 0)
-		enc0_virtual_index_unarm();
-		#endif
+		encoder_virtual_index_clear(G33_ENCODER);
 
 		ATOMIC_CODEBLOCK
 		{
@@ -525,7 +536,7 @@ bool g33_exec(void *args)
 
 #ifdef G33_DEBUG
 		proto_info("MSG:G33 waiting for index sample idx_rev=%lu enc_res=%lu",
-		           (unsigned long)G33_INDEXES_PER_REV, (unsigned long)enc_res);
+		           (unsigned long)g33_indexes_per_rev, (unsigned long)enc_res);
 #endif
 		for (;;)
 		{
@@ -564,7 +575,7 @@ bool g33_exec(void *args)
 			cnc_dotasks();
 		}
 
-		float index_rpm = 1000000.0f / ((float)delta_t * MIN_SEC_MULT * (float)G33_INDEXES_PER_REV);
+		float index_rpm = 1000000.0f / ((float)delta_t * MIN_SEC_MULT * (float)g33_indexes_per_rev);
 #endif
 
 		// spindle speed ins not valid
@@ -657,13 +668,13 @@ bool g33_exec(void *args)
 
 		// calculates the expected number of steps per revolution
 		float steps_per_rev = (float)total_steps / total_revs;
-		steps_per_index = lroundf(steps_per_rev / (float)G33_INDEXES_PER_REV);
+		steps_per_index = lroundf(steps_per_rev / (float)g33_indexes_per_rev);
 #ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
 		steps_per_hw_count_q16 = (enc_res) ? (int32_t)lroundf((steps_per_rev * 65536.0f) / (float)enc_res) : 0;
 #ifdef G33_DEBUG
 		proto_info("MSG:G33 init total_steps=%lu total_revs=%f steps_rev=%f enc_res=%lu idx_rev=%lu spi=%lu q16=%ld rpm_const=%f feed=%f",
 		           (unsigned long)total_steps, total_revs, steps_per_rev, (unsigned long)enc_res,
-		           (unsigned long)G33_INDEXES_PER_REV, (unsigned long)steps_per_index,
+		           (unsigned long)g33_indexes_per_rev, (unsigned long)steps_per_index,
 		           steps_per_hw_count_q16, rpm_to_stepfeed_constant, feed);
 #endif
 #endif
@@ -725,7 +736,7 @@ bool g33_exec(void *args)
 		float g33_motion_accel = new_accel;
 		ptr->block_data->max_accel = new_accel;
 
-		spindle_index_counter_start = -(int32_t)lroundf(p_revs * (float)G33_INDEXES_PER_REV);
+		spindle_index_counter_start = -(int32_t)lroundf(p_revs * (float)g33_indexes_per_rev);
 
 		// resets indexes
 		spindle_index_counter = 0;
@@ -916,7 +927,7 @@ bool spindle_sync_update_loop(void *ptr)
 #ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
 		float index_rpm = g33_hw_rpm;
 #else
-		float index_rpm = 1000000.0f / ((float)delta_t * MIN_SEC_MULT * (float)G33_INDEXES_PER_REV);
+		float index_rpm = 1000000.0f / ((float)delta_t * MIN_SEC_MULT * (float)g33_indexes_per_rev);
 #endif
 #ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
 		// cnc_io_dotasks can occasionally poll late/early. hardware counter phase correction can
@@ -1078,7 +1089,7 @@ bool spindle_sync_update_loop(void *ptr)
 #ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
 				float index_rpm = g33_hw_rpm;
 #else
-				float index_rpm = 1000000.0f / ((float)delta_t * MIN_SEC_MULT * (float)G33_INDEXES_PER_REV);
+				float index_rpm = 1000000.0f / ((float)delta_t * MIN_SEC_MULT * (float)g33_indexes_per_rev);
 #endif
 #ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
 				{
@@ -1126,13 +1137,13 @@ DECL_MODULE(g33)
 #endif
 #ifdef G33_FEEDBACK_LOOP_USE_HW_COUNTER
 	proto_info("LC_FEATURE:G33 on encoder=%d mode=HW_COUNTER idx_rev=%lu debug=on itp_feed_task=%s",
-	           (int)G33_ENCODER, (unsigned long)G33_INDEXES_PER_REV, G33_ITP_FEED_TASK_STR);
+	           (int)G33_ENCODER, (unsigned long)g33_indexes_per_rev, G33_ITP_FEED_TASK_STR);
 #elif defined(G33_FEEDBACK_LOOP_USE_ENC_PULSE)
 	proto_info("LC_FEATURE:G33 on encoder=%d mode=ENC_PULSE idx_rev=%lu debug=on itp_feed_task=%s",
-	           (int)G33_ENCODER, (unsigned long)G33_INDEXES_PER_REV, G33_ITP_FEED_TASK_STR);
+	           (int)G33_ENCODER, (unsigned long)g33_indexes_per_rev, G33_ITP_FEED_TASK_STR);
 #else
 	proto_info("LC_FEATURE:G33 on encoder=%d mode=INDEX idx_rev=%lu debug=on itp_feed_task=%s",
-	           (int)G33_ENCODER, (unsigned long)G33_INDEXES_PER_REV, G33_ITP_FEED_TASK_STR);
+	           (int)G33_ENCODER, (unsigned long)g33_indexes_per_rev, G33_ITP_FEED_TASK_STR);
 #endif
 #endif
 

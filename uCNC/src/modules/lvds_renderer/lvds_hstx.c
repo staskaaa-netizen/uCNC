@@ -1,7 +1,5 @@
 #include "../../cnc.h"
 #include "lvds_hstx.h"
-#include "../../interface/grbl_stream.h"
-
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,6 +19,15 @@
 
 #include "lvds_fonts.h"
 #include "lvds_palette.h"
+
+/* HSTX/LVDS ownership model:
+ * - core0 may request draw/present through this module's public APIs only.
+ * - core1 owns LUT expansion, active line preparation, and scanout scheduler state.
+ * - DMA owns the live HSTX FIFO feed and descriptor/control progression.
+ * - UI/render code must not directly modify live DMA channel/control state.
+ * - Permanent realtime buffers are static/aligned; no large automatic locals in
+ *   the core1/HSTX realtime path.
+ */
 
 #ifndef LEANCAM_USE_PSRAM_BACKBUFFER
 #define LEANCAM_USE_PSRAM_BACKBUFFER 0
@@ -54,10 +61,42 @@
 #define LVDS_HSTX_INACTIVE_HS (LVDS_HSTX_CLOCK | 0x00400000u)
 #define LVDS_HSTX_INACTIVE_VS (LVDS_HSTX_CLOCK | 0x00200000u)
 #define LVDS_HSTX_INACTIVE_HSVS LVDS_HSTX_CLOCK
+#define LVDS_HSTX_COORD_GUARD 4096
+#define LVDS_HSTX_TEXT_GUARD 256
 
 #define LVDS_HSTX_DMACH_PING 10
 #define LVDS_HSTX_DMACH_PONG 11
 #define LVDS_HSTX_SYS_CLOCK_KHZ LVDS_SYS_CLOCK_KHZ
+#define LVDS_HSTX_PRESENT_MAX_CHUNKS 1024u
+#define LVDS_HSTX_ACTIVE_LINE_BUFFERS 4u
+
+#ifndef LVDS_HSTX_CORE1_READY_TIMEOUT_MS
+#define LVDS_HSTX_CORE1_READY_TIMEOUT_MS 1000u
+#endif
+
+#ifndef LVDS_HSTX_DESCRIPTOR_RING_LINES
+#define LVDS_HSTX_DESCRIPTOR_RING_LINES 1024u
+#endif
+
+#ifndef LVDS_HSTX_CORE1_STACK_WORDS
+#define LVDS_HSTX_CORE1_STACK_WORDS 2048u
+#endif
+
+#ifndef LVDS_HSTX_SECTION_CTX
+#define LVDS_HSTX_SECTION_CTX __attribute__((aligned(64)))
+#endif
+
+#ifndef LVDS_HSTX_SECTION_DMA
+#define LVDS_HSTX_SECTION_DMA __attribute__((aligned(64)))
+#endif
+
+#ifndef LVDS_HSTX_SECTION_LINES
+#define LVDS_HSTX_SECTION_LINES __attribute__((aligned(64)))
+#endif
+
+#ifndef LVDS_HSTX_SECTION_PALETTE
+#define LVDS_HSTX_SECTION_PALETTE __attribute__((aligned(64)))
+#endif
 
 #ifndef LEANCAM_USE_HSTX_PLL
 #define LEANCAM_USE_HSTX_PLL 0
@@ -71,27 +110,90 @@
 #define LVDS_HSTX_CLOCK_DIV 2
 #endif
 
-static uint8_t g_framebuffer[LVDS_HSTX_FB_SIZE] __attribute__((aligned(4)));
-static uint8_t *g_draw_buffer = g_framebuffer;
-static uint32_t g_active_line[3][LVDS_HSTX_LINE_TRANSFERS] __attribute__((aligned(4)));
-static uint32_t g_inactive_line[LVDS_HSTX_LINE_TRANSFERS] __attribute__((aligned(4)));
-static uint32_t g_inactive_line_vs[LVDS_HSTX_LINE_TRANSFERS] __attribute__((aligned(4)));
-static uint32_t g_colour_lut[7][256] __attribute__((aligned(4)));
-static uint16_t g_palette_rgb565[16];
-static bool g_palette_used[16];
-static uint8_t g_palette_next;
-static volatile bool g_display_started;
-static bool g_backbuffer_active;
-static bool g_direct_scanout = true;
-static bool g_dirty;
-static int g_last_error;
-static volatile bool g_core1_ready;
-static volatile bool g_recover_request;
-static volatile bool g_recover_done;
-static volatile uint32_t g_core1_heartbeat;
-static volatile uint32_t g_core1_loop_count;
-static volatile uint32_t g_dma_done_count;
-static volatile uint32_t g_recover_count;
+typedef struct {
+    uint8_t data[LVDS_HSTX_FB_SIZE];
+} lvds_hstx_fb_block_t;
+
+typedef struct {
+    uint32_t data[LVDS_HSTX_ACTIVE_LINE_BUFFERS][LVDS_HSTX_LINE_TRANSFERS];
+} lvds_hstx_active_line_block_t;
+
+typedef struct {
+    uint32_t data[LVDS_HSTX_LINE_TRANSFERS];
+} lvds_hstx_line_block_t;
+
+typedef struct {
+    uint32_t data[LVDS_HSTX_DESCRIPTOR_RING_LINES];
+} lvds_hstx_dma_ring_block_t;
+
+typedef struct {
+    uint32_t pad;
+    uint32_t data[LVDS_HSTX_CORE1_STACK_WORDS];
+} lvds_hstx_stack_block_t;
+
+typedef struct {
+    volatile bool display_started;
+    bool backbuffer_active;
+    bool dirty;
+    bool present_chunk_active;
+    uint16_t present_chunk_count;
+    uint16_t present_chunk_index;
+    uint32_t present_chunk_offset;
+} lvds_hstx_ctrl_state_t;
+
+typedef struct {
+    volatile bool ready;
+    uint32_t descriptor_last_index;
+} lvds_hstx_core1_state_t;
+
+typedef struct {
+    uint32_t colour_lut[7][256];
+    uint16_t rgb565[16];
+    bool used[16];
+    uint8_t next;
+} lvds_hstx_palette_state_t;
+
+static lvds_hstx_fb_block_t g_framebuffer_block LVDS_HSTX_SECTION_DMA;
+#define g_framebuffer (g_framebuffer_block.data)
+static uint8_t *g_draw_buffer LVDS_HSTX_SECTION_CTX = g_framebuffer;
+static lvds_hstx_active_line_block_t g_active_line_block LVDS_HSTX_SECTION_LINES;
+#define g_active_line (g_active_line_block.data)
+static lvds_hstx_line_block_t g_inactive_line_block LVDS_HSTX_SECTION_LINES;
+#define g_inactive_line (g_inactive_line_block.data)
+static lvds_hstx_line_block_t g_inactive_line_vs_block LVDS_HSTX_SECTION_LINES;
+#define g_inactive_line_vs (g_inactive_line_vs_block.data)
+static lvds_hstx_dma_ring_block_t g_scanout_line_addr_ring_block __attribute__((aligned(4096)));
+#define g_scanout_line_addr_ring (g_scanout_line_addr_ring_block.data)
+static lvds_hstx_stack_block_t g_core1_stack_block LVDS_HSTX_SECTION_CTX;
+#define g_core1_stack (g_core1_stack_block.data)
+static lvds_hstx_ctrl_state_t g_hstx_ctrl LVDS_HSTX_SECTION_CTX;
+static lvds_hstx_core1_state_t g_hstx_core1 LVDS_HSTX_SECTION_CTX = {
+    .descriptor_last_index = 0xffffffffu
+};
+static lvds_hstx_palette_state_t g_hstx_palette LVDS_HSTX_SECTION_PALETTE;
+
+#define g_colour_lut (g_hstx_palette.colour_lut)
+#define g_palette_rgb565 (g_hstx_palette.rgb565)
+#define g_palette_used (g_hstx_palette.used)
+#define g_palette_next (g_hstx_palette.next)
+#define g_display_started (g_hstx_ctrl.display_started)
+#define g_backbuffer_active (g_hstx_ctrl.backbuffer_active)
+#define g_dirty (g_hstx_ctrl.dirty)
+#define g_present_chunk_active (g_hstx_ctrl.present_chunk_active)
+#define g_present_chunk_count (g_hstx_ctrl.present_chunk_count)
+#define g_present_chunk_index (g_hstx_ctrl.present_chunk_index)
+#define g_present_chunk_offset (g_hstx_ctrl.present_chunk_offset)
+#define g_core1_ready (g_hstx_core1.ready)
+#define g_descriptor_last_index (g_hstx_core1.descriptor_last_index)
+
+static void __no_inline_not_in_flash_func(core1_entry)(void);
+
+static void lvds_hstx_launch_core1(void)
+{
+    multicore_launch_core1_with_stack(core1_entry,
+                                      g_core1_stack,
+                                      sizeof(g_core1_stack));
+}
 
 static uint16_t rgb_to_565(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -209,32 +311,32 @@ static void compute_line(uint32_t pixel_template, uint32_t *line, uint16_t from,
 static void init_lines(void)
 {
     compute_line(LVDS_HSTX_INACTIVE, g_inactive_line, 0, LVDS_HSTX_H_FRONT_TRANSFERS);
-    compute_line(LVDS_HSTX_INACTIVE, g_active_line[0], 0, LVDS_HSTX_H_FRONT_TRANSFERS);
-    compute_line(LVDS_HSTX_INACTIVE, g_active_line[1], 0, LVDS_HSTX_H_FRONT_TRANSFERS);
-    compute_line(LVDS_HSTX_INACTIVE, g_active_line[2], 0, LVDS_HSTX_H_FRONT_TRANSFERS);
+    for (uint8_t i = 0; i < LVDS_HSTX_ACTIVE_LINE_BUFFERS; i++) {
+        compute_line(LVDS_HSTX_INACTIVE, g_active_line[i], 0, LVDS_HSTX_H_FRONT_TRANSFERS);
+    }
     compute_line(LVDS_HSTX_INACTIVE_VS, g_inactive_line_vs, 0, LVDS_HSTX_H_FRONT_TRANSFERS);
 
     compute_line(LVDS_HSTX_INACTIVE_HS, g_inactive_line, LVDS_HSTX_H_FRONT_TRANSFERS, LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS);
-    compute_line(LVDS_HSTX_INACTIVE_HS, g_active_line[0], LVDS_HSTX_H_FRONT_TRANSFERS, LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS);
-    compute_line(LVDS_HSTX_INACTIVE_HS, g_active_line[1], LVDS_HSTX_H_FRONT_TRANSFERS, LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS);
-    compute_line(LVDS_HSTX_INACTIVE_HS, g_active_line[2], LVDS_HSTX_H_FRONT_TRANSFERS, LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS);
+    for (uint8_t i = 0; i < LVDS_HSTX_ACTIVE_LINE_BUFFERS; i++) {
+        compute_line(LVDS_HSTX_INACTIVE_HS, g_active_line[i], LVDS_HSTX_H_FRONT_TRANSFERS, LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS);
+    }
     compute_line(LVDS_HSTX_INACTIVE_HSVS, g_inactive_line_vs, LVDS_HSTX_H_FRONT_TRANSFERS, LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS);
 
     compute_line(LVDS_HSTX_INACTIVE, g_inactive_line, LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS, LVDS_HSTX_H_INACTIVE_TRANSFERS);
-    compute_line(LVDS_HSTX_INACTIVE, g_active_line[0], LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS, LVDS_HSTX_H_INACTIVE_TRANSFERS);
-    compute_line(LVDS_HSTX_INACTIVE, g_active_line[1], LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS, LVDS_HSTX_H_INACTIVE_TRANSFERS);
-    compute_line(LVDS_HSTX_INACTIVE, g_active_line[2], LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS, LVDS_HSTX_H_INACTIVE_TRANSFERS);
+    for (uint8_t i = 0; i < LVDS_HSTX_ACTIVE_LINE_BUFFERS; i++) {
+        compute_line(LVDS_HSTX_INACTIVE, g_active_line[i], LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS, LVDS_HSTX_H_INACTIVE_TRANSFERS);
+    }
     compute_line(LVDS_HSTX_INACTIVE_VS, g_inactive_line_vs, LVDS_HSTX_H_FRONT_TRANSFERS + LVDS_HSTX_H_SYNC_TRANSFERS, LVDS_HSTX_H_INACTIVE_TRANSFERS);
 
     compute_line(LVDS_HSTX_INACTIVE, g_inactive_line, LVDS_HSTX_H_INACTIVE_TRANSFERS, LVDS_HSTX_LINE_TRANSFERS);
     compute_line(LVDS_HSTX_INACTIVE_VS, g_inactive_line_vs, LVDS_HSTX_H_INACTIVE_TRANSFERS, LVDS_HSTX_LINE_TRANSFERS);
 }
 
-static void __no_inline_not_in_flash_func(compute_active_line)(uint16_t y, uint8_t buffer_index)
+static inline void __attribute__((always_inline)) compute_active_line(uint16_t y, uint8_t buffer_index)
 {
     uint32_t base = (uint32_t)y * (LVDS_HSTX_WIDTH / 2);
     uint16_t offset = 0;
-    uint32_t *line = g_active_line[buffer_index % 3u];
+    uint32_t *line = g_active_line[buffer_index % LVDS_HSTX_ACTIVE_LINE_BUFFERS];
     for (uint16_t i = LVDS_HSTX_H_INACTIVE_TRANSFERS; i < LVDS_HSTX_LINE_TRANSFERS; i += 7) {
         uint32_t eight_pixels = *(const uint32_t *)(g_framebuffer + base + 4u * offset++);
         line[i + 0] = g_colour_lut[0][eight_pixels & 0xffu];
@@ -253,81 +355,125 @@ static void __no_inline_not_in_flash_func(compute_active_line)(uint16_t y, uint8
     }
 }
 
-static uint g_v_scanline = 2;
 static void init_hstx(void);
 
-static void __no_inline_not_in_flash_func(prepare_next_dma_line)(uint ch_num)
+static uint32_t lvds_hstx_line_addr_for_v(uint32_t v, bool *active_video, uint16_t *active_y)
 {
-    dma_channel_hw_t *ch = &dma_hw->ch[ch_num];
-    static uint16_t capture_line;
+    if (active_video) {
+        *active_video = false;
+    }
+    if (active_y) {
+        *active_y = 0xffffu;
+    }
 
-    ch->transfer_count = LVDS_HSTX_LINE_TRANSFERS;
+    if (v >= LVDS_HSTX_V_TOTAL) {
+        return (uint32_t)(uintptr_t)g_inactive_line;
+    }
 
-    if ((g_v_scanline < LVDS_HSTX_V_FRONT_PORCH) ||
-        ((g_v_scanline >= LVDS_HSTX_V_FRONT_PORCH + LVDS_HSTX_V_SYNC_WIDTH) &&
-        (g_v_scanline < LVDS_HSTX_V_INACTIVE))) {
-        ch->read_addr = (uintptr_t)g_inactive_line;
-        if (g_v_scanline == (LVDS_HSTX_V_INACTIVE - 1)) {
-            ch->read_addr = (uintptr_t)g_active_line[0];
+    if ((v < LVDS_HSTX_V_FRONT_PORCH) ||
+        ((v >= LVDS_HSTX_V_FRONT_PORCH + LVDS_HSTX_V_SYNC_WIDTH) &&
+         (v < LVDS_HSTX_V_INACTIVE))) {
+        if (v == (LVDS_HSTX_V_INACTIVE - 1)) {
+            return (uint32_t)(uintptr_t)g_active_line[0];
         }
-    } else if ((g_v_scanline >= LVDS_HSTX_V_FRONT_PORCH) &&
-               (g_v_scanline < LVDS_HSTX_V_FRONT_PORCH + LVDS_HSTX_V_SYNC_WIDTH)) {
-        ch->read_addr = (uintptr_t)g_inactive_line_vs;
-    } else {
-        capture_line = (uint16_t)(g_v_scanline - LVDS_HSTX_V_INACTIVE);
-        ch->read_addr = (uintptr_t)g_active_line[capture_line % 3u];
-        if ((capture_line + 2u) < LVDS_HSTX_HEIGHT) {
-            uint16_t prepare_line = (uint16_t)(capture_line + 2u);
-            compute_active_line(prepare_line, (uint8_t)(prepare_line % 3u));
+        return (uint32_t)(uintptr_t)g_inactive_line;
+    }
+
+    if ((v >= LVDS_HSTX_V_FRONT_PORCH) &&
+        (v < LVDS_HSTX_V_FRONT_PORCH + LVDS_HSTX_V_SYNC_WIDTH)) {
+        return (uint32_t)(uintptr_t)g_inactive_line_vs;
+    }
+
+    uint16_t y = (uint16_t)(v - LVDS_HSTX_V_INACTIVE);
+    if (active_video) {
+        *active_video = true;
+    }
+    if (active_y) {
+        *active_y = y;
+    }
+    return (uint32_t)(uintptr_t)g_active_line[y % LVDS_HSTX_ACTIVE_LINE_BUFFERS];
+}
+
+static void lvds_hstx_build_descriptor_ring(void)
+{
+    for (uint32_t i = 0; i < LVDS_HSTX_DESCRIPTOR_RING_LINES; i++) {
+        if (i < LVDS_HSTX_V_TOTAL) {
+            g_scanout_line_addr_ring[i] = lvds_hstx_line_addr_for_v(i, NULL, NULL);
+        } else {
+            /*
+             * The DMA ring is intentionally larger than the panel frame so its
+             * read pointer can wrap safely.  These tail descriptors are guard
+             * space only; if core1 is late resetting the frame boundary, show a
+             * quiet blank line instead of repeating active video.
+             */
+            g_scanout_line_addr_ring[i] = (uint32_t)(uintptr_t)g_inactive_line;
         }
     }
-    g_v_scanline = (g_v_scanline + 1) % LVDS_HSTX_V_TOTAL;
+}
+
+static void __no_inline_not_in_flash_func(lvds_hstx_descriptor_refill)(void)
+{
+    uintptr_t base = (uintptr_t)g_scanout_line_addr_ring;
+    uintptr_t read = (uintptr_t)dma_hw->ch[LVDS_HSTX_DMACH_PONG].read_addr;
+    uint32_t index = (uint32_t)(((read - base) & ((LVDS_HSTX_DESCRIPTOR_RING_LINES * sizeof(uint32_t)) - 1u)) / sizeof(uint32_t));
+
+    if (index >= LVDS_HSTX_V_TOTAL) {
+        dma_hw->ch[LVDS_HSTX_DMACH_PONG].read_addr = (uint32_t)base;
+        g_descriptor_last_index = 0xffffffffu;
+        index = 0;
+    }
+
+    if (index == g_descriptor_last_index) {
+        tight_loop_contents();
+        return;
+    }
+
+    g_descriptor_last_index = index;
+
+    if (index < LVDS_HSTX_V_TOTAL) {
+        bool active_video;
+        uint16_t y;
+        (void)lvds_hstx_line_addr_for_v(index, &active_video, &y);
+        if (active_video && ((uint32_t)y + 3u) < LVDS_HSTX_HEIGHT) {
+            uint16_t prepare_line = (uint16_t)(y + 3u);
+            compute_active_line(prepare_line, (uint8_t)(prepare_line % LVDS_HSTX_ACTIVE_LINE_BUFFERS));
+        }
+    }
 }
 
 static void __no_inline_not_in_flash_func(poll_dma_scanout)(void)
 {
+    // Core1/HSTX realtime path: keep permanent buffers static/aligned and do
+    // not add large automatic locals here. Stack overflow can corrupt DMA
+    // descriptors/control state silently before the main core notices.
     const uint32_t ping_bit = 1u << LVDS_HSTX_DMACH_PING;
     const uint32_t pong_bit = 1u << LVDS_HSTX_DMACH_PONG;
+    const uint32_t scanout_bits = ping_bit | pong_bit;
 
     while (1) {
-        uint32_t done = dma_hw->intr & (ping_bit | pong_bit);
-        g_core1_loop_count++;
-
-        if (g_recover_request) {
-            g_recover_count++;
-            init_hstx();
-            g_recover_request = false;
-            g_recover_done = true;
-            continue;
-        }
-
-        if (!done) {
-            tight_loop_contents();
-            continue;
-        }
-        if (done & ping_bit) {
-            dma_hw->intr = ping_bit;
-            prepare_next_dma_line(LVDS_HSTX_DMACH_PING);
-            g_dma_done_count++;
-            g_core1_heartbeat++;
-        }
-
-        if (done & pong_bit) {
-            dma_hw->intr = pong_bit;
-            prepare_next_dma_line(LVDS_HSTX_DMACH_PONG);
-            g_dma_done_count++;
-            g_core1_heartbeat++;
-        }
+        dma_hw->intr = dma_hw->intr & scanout_bits;
+        lvds_hstx_descriptor_refill();
     }
 }
 
 static void init_hstx(void)
 {
+    const uint32_t ping_bit = 1u << LVDS_HSTX_DMACH_PING;
+    const uint32_t pong_bit = 1u << LVDS_HSTX_DMACH_PONG;
+    const uint32_t scanout_bits = ping_bit | pong_bit;
+
+    g_descriptor_last_index = 0xffffffffu;
+    for (uint8_t i = 0; i < LVDS_HSTX_ACTIVE_LINE_BUFFERS; i++) {
+        compute_active_line(i, i);
+    }
+    lvds_hstx_build_descriptor_ring();
+
     irq_set_enabled(DMA_IRQ_1, false);
     dma_channel_abort(LVDS_HSTX_DMACH_PING);
     dma_channel_abort(LVDS_HSTX_DMACH_PONG);
-    dma_hw->inte1 &= ~((1u << LVDS_HSTX_DMACH_PING) | (1u << LVDS_HSTX_DMACH_PONG));
-    dma_hw->ints1 = (1u << LVDS_HSTX_DMACH_PING) | (1u << LVDS_HSTX_DMACH_PONG);
+    dma_hw->inte1 &= ~scanout_bits;
+    dma_hw->ints1 = scanout_bits;
+    dma_hw->intr = scanout_bits;
 
     if (!dma_channel_is_claimed(LVDS_HSTX_DMACH_PING)) {
         dma_channel_claim(LVDS_HSTX_DMACH_PING);
@@ -366,15 +512,31 @@ static void init_hstx(void)
     dma_channel_config c = dma_channel_get_default_config(LVDS_HSTX_DMACH_PING);
     channel_config_set_chain_to(&c, LVDS_HSTX_DMACH_PONG);
     channel_config_set_dreq(&c, DREQ_HSTX);
-    dma_channel_configure(LVDS_HSTX_DMACH_PING, &c, &hstx_fifo_hw->fifo, g_inactive_line, LVDS_HSTX_LINE_TRANSFERS, false);
+    dma_channel_configure(LVDS_HSTX_DMACH_PING,
+                          &c,
+                          &hstx_fifo_hw->fifo,
+                          (const void *)(uintptr_t)g_scanout_line_addr_ring[0],
+                          LVDS_HSTX_LINE_TRANSFERS,
+                          false);
 
     c = dma_channel_get_default_config(LVDS_HSTX_DMACH_PONG);
     channel_config_set_chain_to(&c, LVDS_HSTX_DMACH_PING);
-    channel_config_set_dreq(&c, DREQ_HSTX);
-    dma_channel_configure(LVDS_HSTX_DMACH_PONG, &c, &hstx_fifo_hw->fifo, g_inactive_line, LVDS_HSTX_LINE_TRANSFERS, false);
+    /* Control DMA only rewrites the FIFO DMA read_addr. It must not consume
+       HSTX pacing slots; only the data channel is paced by DREQ_HSTX. */
+    channel_config_set_dreq(&c, DREQ_FORCE);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_ring(&c, false, 12);
+    dma_channel_configure(LVDS_HSTX_DMACH_PONG,
+                          &c,
+                          &dma_hw->ch[LVDS_HSTX_DMACH_PING].read_addr,
+                          &g_scanout_line_addr_ring[1],
+                          1,
+                          false);
 
-    dma_hw->ints1 = (1u << LVDS_HSTX_DMACH_PING) | (1u << LVDS_HSTX_DMACH_PONG);
-    dma_hw->inte1 &= ~((1u << LVDS_HSTX_DMACH_PING) | (1u << LVDS_HSTX_DMACH_PONG));
+    dma_hw->ints1 = scanout_bits;
+    dma_hw->intr = scanout_bits;
+    dma_hw->inte1 &= ~scanout_bits;
     bus_ctrl_hw->priority = BUSCTRL_BUS_PRIORITY_DMA_W_BITS | BUSCTRL_BUS_PRIORITY_DMA_R_BITS;
     dma_channel_start(LVDS_HSTX_DMACH_PING);
 }
@@ -424,220 +586,88 @@ static void put_pixel_raw(int x, int y, uint8_t color)
     g_dirty = true;
 }
 
+static bool hstx_ready_for_draw(void)
+{
+    return g_draw_buffer != NULL;
+}
+
+static bool hstx_coord_sane(int v)
+{
+    return v >= -LVDS_HSTX_COORD_GUARD && v <= LVDS_HSTX_COORD_GUARD;
+}
+
+static bool hstx_rect_sane(int x, int y, int w, int h)
+{
+    if (!hstx_ready_for_draw() || w <= 0 || h <= 0)
+        return false;
+    if (!hstx_coord_sane(x) || !hstx_coord_sane(y) ||
+        !hstx_coord_sane(w) || !hstx_coord_sane(h))
+        return false;
+    return x < LVDS_HSTX_WIDTH && y < LVDS_HSTX_HEIGHT &&
+           x + w > 0 && y + h > 0;
+}
+
 bool lvds_hstx_init(void)
 {
     palette_reset();
     memset(g_framebuffer, 0, sizeof(g_framebuffer));
     g_draw_buffer = g_framebuffer;
     g_backbuffer_active = false;
-    g_direct_scanout = true;
     g_dirty = false;
-    g_recover_request = false;
-    g_recover_done = false;
-    g_core1_heartbeat = 0;
-    g_core1_loop_count = 0;
-    g_dma_done_count = 0;
-    g_recover_count = 0;
+    g_present_chunk_active = false;
+    g_present_chunk_count = 0;
+    g_present_chunk_index = 0;
+    g_present_chunk_offset = 0;
 #if LEANCAM_USE_PSRAM_BACKBUFFER
     if (lvds_psram_available()) {
         g_draw_buffer = (uint8_t *)lvds_psram_ptr(0);
         memset(g_draw_buffer, 0, LVDS_HSTX_FB_SIZE);
         g_backbuffer_active = true;
-        g_direct_scanout = false;
     }
 #endif
     init_lines();
-    compute_active_line(0, 0);
-    compute_active_line(1, 1);
-    compute_active_line(2, 2);
+    for (uint8_t i = 0; i < LVDS_HSTX_ACTIVE_LINE_BUFFERS; i++) {
+        compute_active_line(i, i);
+    }
     configure_lvds_clocks();
     g_core1_ready = false;
-    multicore_launch_core1(core1_entry);
-    while (!g_core1_ready) {
-        tight_loop_contents();
-    }
-    g_display_started = true;
-    g_last_error = 0;
-    lvds_hstx_clear(0);
-    return true;
-}
-
-void lvds_hstx_debug_dump(const char *tag)
-{
-    uint32_t ping_ctrl = dma_hw->ch[LVDS_HSTX_DMACH_PING].ctrl_trig;
-    uint32_t pong_ctrl = dma_hw->ch[LVDS_HSTX_DMACH_PONG].ctrl_trig;
-    uint32_t ping_count = dma_hw->ch[LVDS_HSTX_DMACH_PING].transfer_count;
-    uint32_t pong_count = dma_hw->ch[LVDS_HSTX_DMACH_PONG].transfer_count;
-    uint32_t ping_read = dma_hw->ch[LVDS_HSTX_DMACH_PING].read_addr;
-    uint32_t pong_read = dma_hw->ch[LVDS_HSTX_DMACH_PONG].read_addr;
-
-    if (!tag) {
-        tag = "?";
-    }
-
-    grbl_stream_printf(__romstr__("[MSG:HSTX %s err=%d start=%u core1=%u hb=%lu dma=%lu rec=%lu v=%lu dirty=%u direct=%u bb=%u]\r\n"),
-                       tag,
-                       g_last_error,
-                       g_display_started ? 1u : 0u,
-                       g_core1_ready ? 1u : 0u,
-                       (unsigned long)g_core1_heartbeat,
-                       (unsigned long)g_dma_done_count,
-                       (unsigned long)g_recover_count,
-                       (unsigned long)g_v_scanline,
-                       g_dirty ? 1u : 0u,
-                       g_direct_scanout ? 1u : 0u,
-                       g_backbuffer_active ? 1u : 0u);
-    grbl_stream_printf(__romstr__("[MSG:HSTX core loop=%lu]\r\n"),
-                       (unsigned long)g_core1_loop_count);
-    grbl_stream_printf(__romstr__("[MSG:HSTX regs csr=%lu fifo=%lu intr=%lu ints1=%lu inte1=%lu bus=%lu]\r\n"),
-                       (unsigned long)hstx_ctrl_hw->csr,
-                       (unsigned long)hstx_fifo_hw->stat,
-                       (unsigned long)dma_hw->intr,
-                       (unsigned long)dma_hw->ints1,
-                       (unsigned long)dma_hw->inte1,
-                       (unsigned long)bus_ctrl_hw->priority);
-    grbl_stream_printf(__romstr__("[MSG:HSTX dma ping=%lu/%lu/%lu pong=%lu/%lu/%lu]\r\n"),
-                       (unsigned long)ping_ctrl,
-                       (unsigned long)ping_count,
-                       (unsigned long)ping_read,
-                       (unsigned long)pong_ctrl,
-                       (unsigned long)pong_count,
-                       (unsigned long)pong_read);
-}
-
-void lvds_hstx_debug_probe(const char *tag, uint32_t wait_us)
-{
-    uint32_t loop0 = g_core1_loop_count;
-    uint32_t hb0 = g_core1_heartbeat;
-    uint32_t dma0 = g_dma_done_count;
-    uint32_t intr0 = dma_hw->intr;
-    uint32_t v0 = g_v_scanline;
-    uint32_t loop1;
-    uint32_t hb1;
-    uint32_t dma1;
-
-    if (!tag) {
-        tag = "?";
-    }
-    if (wait_us) {
-        busy_wait_us(wait_us);
-    }
-    loop1 = g_core1_loop_count;
-    hb1 = g_core1_heartbeat;
-    dma1 = g_dma_done_count;
-    grbl_stream_printf(__romstr__("[MSG:HSTX probe %s us=%lu loop=%lu/%lu hb=%lu/%lu dma=%lu/%lu v=%lu/%lu intr=%lu/%lu]\r\n"),
-                       tag,
-                       (unsigned long)wait_us,
-                       (unsigned long)loop0,
-                       (unsigned long)loop1,
-                       (unsigned long)hb0,
-                       (unsigned long)hb1,
-                       (unsigned long)dma0,
-                       (unsigned long)dma1,
-                       (unsigned long)v0,
-                       (unsigned long)g_v_scanline,
-                       (unsigned long)intr0,
-                       (unsigned long)dma_hw->intr);
-}
-
-bool lvds_hstx_recover(void)
-{
-    uint32_t start;
-
-    if (!g_display_started) {
-        return false;
-    }
-
-    g_recover_done = false;
-    g_recover_request = true;
-    start = mcu_millis();
-    while (!g_recover_done) {
-        if ((uint32_t)(mcu_millis() - start) > 100u) {
-            g_recover_request = false;
-            break;
-        }
-        tight_loop_contents();
-    }
-
-    if (!g_recover_done) {
-        multicore_reset_core1();
-        g_core1_ready = false;
-        g_recover_request = false;
-        g_recover_done = false;
-        g_v_scanline = 2;
-        compute_active_line(0, 0);
-        compute_active_line(1, 1);
-        compute_active_line(2, 2);
-        multicore_launch_core1(core1_entry);
-        start = mcu_millis();
+    multicore_reset_core1();
+    lvds_hstx_launch_core1();
+#if LVDS_HSTX_CORE1_READY_TIMEOUT_MS > 0
+    {
+        uint32_t start_ms = mcu_millis();
         while (!g_core1_ready) {
-            if ((uint32_t)(mcu_millis() - start) > 250u) {
-                g_last_error = -21;
+            if ((uint32_t)(mcu_millis() - start_ms) >= (uint32_t)LVDS_HSTX_CORE1_READY_TIMEOUT_MS) {
                 return false;
             }
             tight_loop_contents();
         }
     }
-
-    g_display_started = true;
-    g_last_error = 0;
-    g_dirty = true;
-    return true;
-}
-
-int lvds_hstx_last_error(void)
-{
-    return g_last_error;
-}
-
-void *lvds_hstx_scanout_buffer(void)
-{
-    return g_framebuffer;
-}
-
-bool lvds_hstx_backbuffer_active(void)
-{
-    return g_backbuffer_active;
-}
-
-void lvds_hstx_direct_scanout(bool direct)
-{
-    if (!g_backbuffer_active) {
-        g_direct_scanout = true;
-        g_draw_buffer = g_framebuffer;
-        return;
-    }
-    if (g_direct_scanout == direct) {
-        return;
-    }
-    if (cnc_is_file_io_critical()) {
-        return;
-    }
-    g_direct_scanout = direct;
-    if (direct) {
-        memcpy(g_framebuffer, g_draw_buffer, LVDS_HSTX_FB_SIZE);
-        g_draw_buffer = g_framebuffer;
-        g_dirty = false;
-    } else {
-#if LEANCAM_USE_PSRAM_BACKBUFFER
-        memcpy((uint8_t *)lvds_psram_ptr(0), g_framebuffer, LVDS_HSTX_FB_SIZE);
-        g_draw_buffer = (uint8_t *)lvds_psram_ptr(0);
-        g_dirty = false;
 #else
-        g_direct_scanout = true;
-#endif
+    while (!g_core1_ready) {
+        tight_loop_contents();
     }
+#endif
+    g_display_started = true;
+    lvds_hstx_clear(0);
+    return true;
 }
 
 void lvds_hstx_clear(lvds_color_t color)
 {
     uint8_t c = (uint8_t)(color & 0x0f);
+    if (!hstx_ready_for_draw()) {
+        return;
+    }
     memset(g_draw_buffer, (int)((c << 4) | c), LVDS_HSTX_FB_SIZE);
     g_dirty = true;
 }
 
 void lvds_hstx_pixel(int x, int y, lvds_color_t color)
 {
+    if (!hstx_ready_for_draw()) {
+        return;
+    }
     put_pixel_raw(x, y, (uint8_t)color);
 }
 
@@ -648,6 +678,15 @@ void lvds_hstx_line(int x1, int y1, int x2, int y2, lvds_color_t color)
     int dy = -abs(y2 - y1);
     int sy = y1 < y2 ? 1 : -1;
     int err = dx + dy;
+    if (!hstx_ready_for_draw() ||
+        !hstx_coord_sane(x1) || !hstx_coord_sane(y1) ||
+        !hstx_coord_sane(x2) || !hstx_coord_sane(y2)) {
+        return;
+    }
+    if ((x1 < 0 && x2 < 0) || (x1 >= LVDS_HSTX_WIDTH && x2 >= LVDS_HSTX_WIDTH) ||
+        (y1 < 0 && y2 < 0) || (y1 >= LVDS_HSTX_HEIGHT && y2 >= LVDS_HSTX_HEIGHT)) {
+        return;
+    }
     while (1) {
         lvds_hstx_pixel(x1, y1, color);
         if (x1 == x2 && y1 == y2) {
@@ -668,6 +707,9 @@ void lvds_hstx_line(int x1, int y1, int x2, int y2, lvds_color_t color)
 void lvds_hstx_line_w(int x1, int y1, int x2, int y2, lvds_color_t color, int thick)
 {
     int r = thick > 1 ? thick / 2 : 0;
+    if (thick <= 0 || thick > 16) {
+        return;
+    }
     for (int oy = -r; oy <= r; oy++) {
         for (int ox = -r; ox <= r; ox++) {
             lvds_hstx_line(x1 + ox, y1 + oy, x2 + ox, y2 + oy, color);
@@ -677,6 +719,9 @@ void lvds_hstx_line_w(int x1, int y1, int x2, int y2, lvds_color_t color, int th
 
 void lvds_hstx_rect(int x, int y, int w, int h, lvds_color_t color)
 {
+    if (!hstx_rect_sane(x, y, w, h)) {
+        return;
+    }
     lvds_hstx_line(x, y, x + w - 1, y, color);
     lvds_hstx_line(x, y + h - 1, x + w - 1, y + h - 1, color);
     lvds_hstx_line(x, y, x, y + h - 1, color);
@@ -689,6 +734,9 @@ void lvds_hstx_fill_rect(int x, int y, int w, int h, lvds_color_t color)
     int y2 = y + h;
     uint8_t c = (uint8_t)(color & 0x0f);
     uint8_t packed = (uint8_t)((c << 4) | c);
+    if (!hstx_rect_sane(x, y, w, h)) {
+        return;
+    }
     if (x < 0) x = 0;
     if (y < 0) y = 0;
     if (x2 > LVDS_HSTX_WIDTH) x2 = LVDS_HSTX_WIDTH;
@@ -721,7 +769,9 @@ void lvds_hstx_fill_rect(int x, int y, int w, int h, lvds_color_t color)
 
 void lvds_hstx_ellipse(int x, int y, int rx, int ry, lvds_color_t color)
 {
-    if (rx <= 0 || ry <= 0) return;
+    if (!hstx_ready_for_draw() || rx <= 0 || ry <= 0 ||
+        rx > LVDS_HSTX_WIDTH || ry > LVDS_HSTX_HEIGHT ||
+        !hstx_coord_sane(x) || !hstx_coord_sane(y)) return;
     for (int a = 0; a < 360; a += 2) {
         float rad = (float)a * 0.01745329252f;
         lvds_hstx_pixel(x + (int)(rx * cosf(rad)), y + (int)(ry * sinf(rad)), color);
@@ -730,7 +780,9 @@ void lvds_hstx_ellipse(int x, int y, int rx, int ry, lvds_color_t color)
 
 void lvds_hstx_fill_ellipse(int x, int y, int rx, int ry, lvds_color_t color)
 {
-    if (rx <= 0 || ry <= 0) return;
+    if (!hstx_ready_for_draw() || rx <= 0 || ry <= 0 ||
+        rx > LVDS_HSTX_WIDTH || ry > LVDS_HSTX_HEIGHT ||
+        !hstx_coord_sane(x) || !hstx_coord_sane(y)) return;
     for (int yy = -ry; yy <= ry; yy++) {
         int span = (int)(rx * sqrtf(1.0f - ((float)(yy * yy) / (float)(ry * ry))));
         lvds_hstx_line(x - span, y + yy, x + span, y + yy, color);
@@ -779,8 +831,9 @@ static void draw_char_scaled(int x, int y, unsigned char ch, lvds_color_t fg, lv
 void lvds_hstx_text(int x, int y, const char *text, lvds_color_t fg, lvds_color_t bg, int font_id)
 {
     int step = font_char_w(font_id) * font_scale(font_id);
-    if (!text) return;
-    while (*text) {
+    int guard = 0;
+    if (!hstx_ready_for_draw() || !text || !hstx_coord_sane(x) || !hstx_coord_sane(y)) return;
+    while (*text && guard++ < LVDS_HSTX_TEXT_GUARD) {
         draw_char_scaled(x, y, (unsigned char)*text++, fg, bg, font_id);
         x += step;
     }
@@ -797,11 +850,70 @@ void lvds_hstx_present(void)
     if (cnc_is_file_io_critical()) {
         return;
     }
-    if (g_backbuffer_active && !g_direct_scanout) {
+    if (g_backbuffer_active) {
         memcpy(g_framebuffer, g_draw_buffer, LVDS_HSTX_FB_SIZE);
         g_dirty = false;
     }
     (void)g_display_started;
+}
+
+void lvds_hstx_present_chunked_request(uint16_t chunks)
+{
+    if (cnc_is_file_io_critical()) {
+        return;
+    }
+    if (!g_backbuffer_active || !g_dirty || g_present_chunk_active) {
+        return;
+    }
+    if (chunks < 1u) {
+        chunks = 1u;
+    }
+    if (chunks > LVDS_HSTX_PRESENT_MAX_CHUNKS) {
+        chunks = LVDS_HSTX_PRESENT_MAX_CHUNKS;
+    }
+
+    g_present_chunk_active = true;
+    g_present_chunk_count = chunks;
+    g_present_chunk_index = 0;
+    g_present_chunk_offset = 0;
+}
+
+bool lvds_hstx_present_chunked_step(void)
+{
+    uint32_t chunk_bytes;
+    uint32_t remaining;
+    uint32_t chunks_left;
+
+    if (!g_present_chunk_active) {
+        return false;
+    }
+    if (cnc_is_file_io_critical()) {
+        return true;
+    }
+
+    remaining = LVDS_HSTX_FB_SIZE - g_present_chunk_offset;
+    chunks_left = (uint32_t)g_present_chunk_count - (uint32_t)g_present_chunk_index;
+    if (chunks_left <= 1u) {
+        chunk_bytes = remaining;
+    } else {
+        chunk_bytes = (remaining + chunks_left - 1u) / chunks_left;
+    }
+
+    memcpy(g_framebuffer + g_present_chunk_offset, g_draw_buffer + g_present_chunk_offset, chunk_bytes);
+
+    g_present_chunk_offset += chunk_bytes;
+    g_present_chunk_index++;
+    if (g_present_chunk_offset >= LVDS_HSTX_FB_SIZE || g_present_chunk_index >= g_present_chunk_count) {
+        g_present_chunk_active = false;
+        g_dirty = false;
+        return false;
+    }
+    return true;
+}
+
+bool lvds_hstx_present_chunked_busy(void)
+{
+    return g_present_chunk_active;
 }
 
 lvds_color_t lvds_hstx_rgb565(uint16_t rgb565)

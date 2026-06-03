@@ -1,6 +1,11 @@
+/* LeanCam module contract:
+ * Purpose: run/preflight/simulation state around generated NC output.
+ * Called by: leancam_bridge when the user previews or runs the selected range.
+ * Calls into: leancam_gcode emitters and stream/file adapters.
+ * Owns: run arm/sim arm state, not editor storage or renderer pixels.
+ */
 #include "leancam_run.h"
-#include "leancam_text.h"
-#include "leancam_validate.h"
+#include "leancam_code.h"
 
 #include <stdio.h>
 
@@ -71,9 +76,9 @@ static int lc_run_discard_line(const char *line, void *user)
 static bool lc_run_is_context_line(const char *line)
 {
     return line &&
-           (lc_text_command_is(line, "SETUP") ||
-            lc_text_command_is(line, "TOOLCALL") ||
-            lc_text_command_is(line, "TOOL") ||
+           (lc_code_command_is(line, "SETUP") ||
+            lc_code_command_is(line, "TOOLCALL") ||
+            lc_code_command_is(line, "TOOL") ||
             line[0] == '(');
 }
 
@@ -87,7 +92,7 @@ static const char *lc_run_setup_for_line(const program_t *prog, int before_or_at
         before_or_at = prog->count - 1;
 
     for (i = before_or_at; i >= 0; --i)
-        if (lc_text_command_is(prog->lines[i], "SETUP"))
+        if (lc_code_command_is(prog->lines[i], "SETUP"))
             return prog->lines[i];
 
     return NULL;
@@ -208,7 +213,7 @@ lc_gcode_result_t lc_run_emit_selected_range(const program_t *prog,
             continue;
 
         setup = lc_run_setup_for_line(prog, i);
-        tool = lc_validate_effective_tool_for_cycle(prog, i, line);
+        tool = lc_code_effective_tool_for_cycle(prog, i, line);
 
         if (!lc_run_emit_banner(i + 1, tool, send, send_user))
         {
@@ -236,3 +241,6 @@ lc_gcode_result_t lc_run_emit_selected_range(const program_t *prog,
         *made_out = made;
     return LC_GCODE_OK;
 }
+
+
+

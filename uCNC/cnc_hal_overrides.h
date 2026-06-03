@@ -15,23 +15,22 @@ extern "C"
     WiFi, full generic SD/filesystem setup, and real machine-runtime extras.
 */
 
+//this needs to proper ucnc config like thing not leancam only
+
 #ifdef UCNC_LEANCAM_LVDS_TARGET
 #undef DISABLE_G7_G8
 #define ENABLE_SD_CARD_V2
-#define ENABLE_LEANCAM_SD_DEBUG
 #define ENABLE_UCNC_FILE_SYSTEM
 #define LEANCAM_BUILD_FEATURE_BANNER
 #define ENABLE_PERSISTENT_SETTINGS
 #undef RAM_ONLY_SETTINGS
 #define SD_CARD_NO_SYSTEM_MENU
-#define LEANCAM_USE_HSTX_PLL 0
-#define LEANCAM_USE_PSRAM_FB 0
-#define LEANCAM_USE_PSRAM_BACKBUFFER 1
-#define LEANCAM_USE_PSRAM_LIVE_SIM 0
 #define ENABLE_LVDS_RENDERER
+
 #define RP2350_DISABLE_ARDUINO_CORE1_LOOP
-#define LEANCAM_RP2350_DIRECT_STREAM
-#define LEANCAM_RP2350_SOFT_CAM_KEYBOARD
+
+#define LEANCAM_USE_PSRAM_BACKBUFFER 1
+#define LEANCAM_NC_VIEW_CACHE_PROGRAM 1
 #endif
 
 #define S_CURVE_ACCELERATION_LEVEL 0
@@ -107,10 +106,10 @@ extern "C"
 #define G33_DEBUG
 #define G33_DEBUG_EVERY_N 5
 
-#define ENC0_INDEX_VIRTUAL_FIRE_HOOK 1
-#define ENC0_VIRTUAL_INDEXES_PER_REV 5
-#define ENC0_VIRTUAL_MAX_CATCHUP_SLOTS 8
-#define ENC0_INDEX_AUTO_ORIGIN 0
+#define ENC0_VIRTUAL_INDEX 1
+#define ENC0_VIRTUAL_INDEX_CPR (ENC0_CPR / 5)
+#define ENC0_VIRTUAL_INDEX_OFFSET 0
+#define ENC0_VIRTUAL_INDEX_HYSTERESIS 1
 #endif
 
 #ifndef LVDS_HSTX_CONFIG_H
@@ -137,7 +136,7 @@ extern "C"
 #endif
 
 /* Single RP2350 LeanCam target: encoder/G33 + SD + LVDS renderer. */
-#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); LOAD_MODULE(lvds_renderer); })
+#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); LOAD_MODULE(leanCam); })
 
 #ifdef __cplusplus
 }

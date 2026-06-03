@@ -1,3 +1,9 @@
+/* LeanCam module contract:
+ * Purpose: small keypad menu model and menu item dispatch metadata.
+ * Called by: leancam_bridge when the active screen/menu changes or a key selects an action.
+ * Calls into: callback functions supplied by the bridge.
+ * Owns: active menu definition/selection state, not application policy.
+ */
 #include "leancam_menu.h"
 #include "leancam_schema.h"
 
@@ -428,6 +434,8 @@ static bool lc_menu_handle_nc(void *user, const lc_menu_actions_t *a, ui_key_t k
         keych = 'C';
     } else if (key == UI_KEY_FINISH) {
         keych = '#';
+    } else if (lc_menu_is_digit(key)) {
+        keych = lc_menu_digit_char(key);
     } else {
         return false;
     }
@@ -453,6 +461,22 @@ static bool lc_menu_handle_nc(void *user, const lc_menu_actions_t *a, ui_key_t k
 
         case LC_SCHEMA_ACT_NC_VIEW:
             if (a->set_message) a->set_message(user, "LC: nc view only");
+            return true;
+
+        case LC_SCHEMA_ACT_NC_SINGLE:
+            if (a->nc_select_single) a->nc_select_single(user);
+            return true;
+
+        case LC_SCHEMA_ACT_NC_FROM:
+            if (a->nc_select_from) a->nc_select_from(user);
+            return true;
+
+        case LC_SCHEMA_ACT_NC_FULL:
+            if (a->nc_select_full) a->nc_select_full(user);
+            return true;
+
+        case LC_SCHEMA_ACT_NC_RUN:
+            if (a->nc_run_selected_mode) a->nc_run_selected_mode(user);
             return true;
 
         default:
@@ -597,3 +621,5 @@ void leancam_menu_copy_footer(char *out,
             break;
     }
 }
+
+

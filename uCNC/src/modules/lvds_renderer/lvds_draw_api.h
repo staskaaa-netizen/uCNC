@@ -1,7 +1,7 @@
 #ifndef LVDS_DRAW_API_H
 #define LVDS_DRAW_API_H
 
-#include "lvds_hw_renderer.h"
+#include "lvds_hstx.h"
 
 #ifdef __cplusplus
 extern "C" {

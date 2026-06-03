@@ -48,25 +48,23 @@ boundary.
 
 ```c
 #define G33_ENCODER ENC0
-#define ENC0_INDEX_VIRTUAL_FIRE_HOOK 1
-#define ENC0_VIRTUAL_INDEXES_PER_REV 5
-#define ENC0_INDEX_AUTO_ORIGIN 1
+#define ENC0_VIRTUAL_INDEX 1
+#define ENC0_VIRTUAL_INDEX_CPR 600
+#define ENC0_VIRTUAL_INDEX_OFFSET 0
 ```
 
-`ENC0_VIRTUAL_INDEXES_PER_REV` sets how many synthetic index updates are fired
-per spindle revolution. `1` gives one update per revolution. Higher values, such
-as `5`, update G33's RPM/feed correction more often, which can make the synced
-planner move track spindle speed changes more smoothly.
+`ENC0_VIRTUAL_INDEX_CPR` sets the encoder-count interval between synthetic
+index updates. If the encoder resolution is 3000 counts/rev and the virtual
+index CPR is 600, G33 sees 5 index updates per spindle revolution.
 
-When `ENC0_INDEX_AUTO_ORIGIN` is enabled, no physical G33 index pin is required:
-the current PCNT count becomes the modulo origin. A physical encoder Z/index pin
-may still be used by the encoder module as an optional phase/tooth reference, but
-G33 itself only needs the `enc0_index` hook.
+No physical G33 index pin is required in virtual-index mode. A physical encoder
+Z/index pin may still be used by the encoder module as an optional phase
+reference, and physical index references take priority unless virtual-only mode
+is configured. G33 itself only consumes the common encoder index hook.
 
-`G33_INDEXES_PER_REV` defaults to `ENC0_VIRTUAL_INDEXES_PER_REV` when G33 uses
-`ENC0`; define it explicitly only if another encoder backend provides virtual
-index hooks at a different rate. For multiple updates per revolution,
-`G33_CORRECTION_GAIN` defaults to `0.25f` so each small correction is damped.
+When ENC0 virtual indexing is enabled, G33 derives its updates-per-revolution
+value from `ENC0_VIRTUAL_INDEX_CPR` and the runtime encoder resolution.
+`G33_INDEXES_PER_REV` remains available for non-ENC0 or external index sources.
 
 RP2350 builds using `rp2350_pio_encoder` should normally use
 `G33_FEEDBACK_LOOP_USE_HW_COUNTER`. In that mode the PIO encoder count is the

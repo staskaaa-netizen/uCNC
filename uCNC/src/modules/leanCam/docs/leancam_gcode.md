@@ -258,7 +258,8 @@ A small host-side test harness exercises the supported cycles plus common bad in
 gcc -std=c99 -Wall -Wextra -IuCNC/src/modules/leanCam `
   uCNC/src/modules/leanCam/tests/leancam_gcode_host_test.c `
   uCNC/src/modules/leanCam/leancam_gcode.c `
-  uCNC/src/modules/leanCam/leancam_text.c `
+  uCNC/src/modules/leanCam/leancam_code.c `
+  -lm `
   -o $env:TEMP\leancam_gcode_host_test.exe
 & $env:TEMP\leancam_gcode_host_test.exe
 ```

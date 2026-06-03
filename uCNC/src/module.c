@@ -46,7 +46,7 @@ static FORCEINLINE void load_modules(void)
 #ifdef LOAD_MODULES_OVERRIDE
 	LOAD_MODULES_OVERRIDE();
 #elif defined(ENABLE_LVDS_RENDERER)
-	LOAD_MODULE(lvds_renderer);
+	LOAD_MODULE(leanCam);
 #endif
 }
 

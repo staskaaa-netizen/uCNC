@@ -1,6 +1,11 @@
+/* LeanCam module contract:
+ * Purpose: field-level text editing for one active program row.
+ * Called by: leancam_bridge when a row is opened for editing or keypad text input arrives.
+ * Calls into: text/schema helpers for field parsing; it should not perform file I/O, rendering, or execution.
+ * Owns: active edit cursor/field state only.
+ */
 #include "leancam_editor.h"
-#include "leancam_expr.h"
-#include "leancam_text.h"
+#include "leancam_code.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -382,7 +387,7 @@ void lc_editor_normalize_source_edit(char *line, uint32_t line_len, const char *
     char value[24];
     float v;
 
-    if (!line || !field_name || !lc_text_command_is(line, "G1"))
+    if (!line || !field_name || !lc_code_command_is(line, "G1"))
         return;
 
     if (strcmp(field_name, "C") == 0 &&
@@ -419,7 +424,7 @@ void lc_editor_apply_accepted_field(leancam_ui_t *ui, const char *field_name, co
 
     if (strcmp(field_name, "C") == 0)
         (void)lc_editor_line_set_field_text(ui->draft_line, sizeof(ui->draft_line), "R", "0");
-    else if (strcmp(field_name, "R") == 0 && lc_text_command_is(ui->draft_line, "G1"))
+    else if (strcmp(field_name, "R") == 0 && lc_code_command_is(ui->draft_line, "G1"))
         (void)lc_editor_line_set_field_text(ui->draft_line, sizeof(ui->draft_line), "C", "0");
 }
 
@@ -649,7 +654,7 @@ bool lc_editor_resolve_draft_line_for_commit(leancam_ui_t *ui,
             raw[n] = 0;
 
             if (raw[0] &&
-                !leancam_expr_resolve_field_value(raw,
+                !lc_code_resolve_field_value(raw,
                                                   setup_line,
                                                   tool_line,
                                                   preview_line,
@@ -740,7 +745,7 @@ bool lc_editor_accept_active_field(leancam_ui_t *ui,
         memcpy(raw, open + ((*open == '{') ? 1 : 0), n);
         raw[n] = 0;
 
-        if (!leancam_expr_resolve_field_value(raw, setup_line, tool_line, ui->draft_line, accepted, sizeof(accepted)) ||
+        if (!lc_code_resolve_field_value(raw, setup_line, tool_line, ui->draft_line, accepted, sizeof(accepted)) ||
             !accepted[0])
         {
             size_t raw_len = strlen(raw);
@@ -772,3 +777,6 @@ bool lc_editor_accept_active_field(leancam_ui_t *ui,
     lc_editor_advance_field(ui->draft_line);
     return true;
 }
+
+
+

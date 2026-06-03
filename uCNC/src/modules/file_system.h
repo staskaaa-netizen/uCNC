@@ -90,9 +90,7 @@ extern "C"
 		}
 	}
 
-	//expose ui_snapshot lines
-
-	/* ui_snapshot.h OR file_system.h (pick one) */
+	/* TAP_GCODE text rows live here; LeanCam snapshot rows are separate. */
 #ifdef TAP_GCODE
 typedef struct
 {

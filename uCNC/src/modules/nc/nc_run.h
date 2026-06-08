@@ -2,7 +2,6 @@
 #define NC_RUN_H
 
 #include "nc.h"
-#include "nc_emit.h"
 
 #include <stdbool.h>
 #include <stddef.h>

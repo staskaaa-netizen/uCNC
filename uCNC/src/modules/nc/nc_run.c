@@ -2,13 +2,13 @@
 
 #include "../../interface/grbl_stream.h"
 
+#include <ctype.h>
 #include <stdio.h>
 
 static bool g_nc_run_active;
 static bool g_nc_run_hold;
 static bool g_nc_run_done;
 static size_t g_nc_run_line;
-static nc_emit_stream_t g_nc_run_emit;
 static char g_nc_run_stream_line[NC_MAX_LINE_LEN + 2];
 static size_t g_nc_run_stream_pos;
 static size_t g_nc_run_stream_len;
@@ -52,7 +52,16 @@ static bool nc_run_line_sendable(const char *line)
     while (*line == ' ' || *line == '\t') {
         line++;
     }
-    return *line && *line != '(';
+    if (!*line || *line == '(') {
+        return false;
+    }
+    if (toupper((unsigned char)line[0]) == 'G' &&
+        line[1] == '9' && line[2] == '7' &&
+        line[3] >= '0' && line[3] <= '3' &&
+        (line[4] == '\0' || line[4] == ' ' || line[4] == '\t')) {
+        return false;
+    }
+    return true;
 }
 
 void nc_run_init(void)
@@ -70,7 +79,6 @@ bool nc_run_arm(const nc_document_t *doc, size_t line)
     }
 
     g_nc_run_line = line;
-    nc_emit_stream_begin(&g_nc_run_emit, doc, line);
     g_nc_run_active = true;
     g_nc_run_hold = false;
     g_nc_run_done = false;
@@ -83,7 +91,6 @@ void nc_run_reset(void)
     g_nc_run_hold = false;
     g_nc_run_done = false;
     g_nc_run_line = 0;
-    nc_emit_stream_begin(&g_nc_run_emit, NULL, 0);
 }
 
 void nc_run_stop(void)
@@ -91,7 +98,6 @@ void nc_run_stop(void)
     g_nc_run_active = false;
     g_nc_run_hold = false;
     g_nc_run_done = false;
-    nc_emit_stream_begin(&g_nc_run_emit, NULL, 0);
 }
 
 bool nc_run_toggle_hold(void)
@@ -129,7 +135,6 @@ void nc_run_set_line(const nc_document_t *doc, size_t line)
         line = doc->line_count - 1;
     }
     g_nc_run_line = line;
-    nc_emit_stream_begin(&g_nc_run_emit, doc, line);
 }
 
 void nc_run_send_line(const char *line)
@@ -217,11 +222,12 @@ nc_run_step_result_t nc_run_step(const nc_document_t *doc,
                                  size_t out_sz,
                                  size_t *emitted_line)
 {
-    nc_emit_result_t emit_result;
+    const char *line;
 
-    if (!doc || doc->line_count == 0) {
+    if (!out || out_sz == 0 || !doc || doc->line_count == 0) {
         return NC_RUN_STEP_NEEDS_PROGRAM;
     }
+    out[0] = '\0';
     if (g_nc_run_hold) {
         return NC_RUN_STEP_HOLD;
     }
@@ -229,22 +235,23 @@ nc_run_step_result_t nc_run_step(const nc_document_t *doc,
         (void)nc_run_arm(doc, doc->cursor_line);
     }
 
-    if (emitted_line) {
-        *emitted_line = nc_emit_stream_line(&g_nc_run_emit);
+    if (g_nc_run_line >= doc->line_count) {
+        g_nc_run_done = true;
+        g_nc_run_active = false;
+        return NC_RUN_STEP_COMPLETE;
     }
-    emit_result = nc_emit_stream_next(&g_nc_run_emit, out, out_sz, emitted_line);
-    g_nc_run_line = nc_emit_stream_line(&g_nc_run_emit);
 
-    if (emit_result == NC_EMIT_LINE) {
-        return NC_RUN_STEP_EMITTED;
+    if (emitted_line) {
+        *emitted_line = g_nc_run_line;
     }
-    if (g_nc_run_line < doc->line_count) {
+    line = doc->lines[g_nc_run_line].text;
+    g_nc_run_line++;
+    if (!nc_run_line_sendable(line)) {
         return NC_RUN_STEP_SKIPPED;
     }
 
-    g_nc_run_done = true;
-    g_nc_run_active = false;
-    return NC_RUN_STEP_COMPLETE;
+    snprintf(out, out_sz, "%s", line);
+    return NC_RUN_STEP_EMITTED;
 }
 
 nc_run_step_result_t nc_run_step_sendable(const nc_document_t *doc,

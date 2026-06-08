@@ -33,8 +33,29 @@ The first support boundary now exists here:
 This first pass owns common G7x result/cycle enums, modal context helpers,
 boring source-row parsing/classification, contour element vocabulary, fixed
 contour storage limits, and the small cycle profile table that names each
-cycle's pass axis, cut axis, monotonic contour axis, and rough DOC word. The
-active roughing generator still lives inside LeanCam:
+cycle's pass axis, cut axis, monotonic contour axis, and rough DOC word.
+
+The module also exposes a stepped stream generator used by NC SIM/preview.
+That stream API is still intentionally useful as an offline/preview bridge.
+
+Parser integration has started as a safe shell:
+
+- `G71` / `G72` are recognized as parser extension headers.
+- `U` / `W` rough-depth header words are accepted for those headers.
+- while a G7x region is active, source contour `G0`/`G1`/`G2`/`G3` rows are
+  suppressed so they do not accidentally execute as normal motion.
+- `G80` ends the active parser-side region.
+
+Current parser-shell limitations:
+
+- it does not yet collect parsed contour elements into `g7x_stream_t`.
+- it does not yet feed generated rough/finish moves back through the live
+  parser stream.
+- NC SIM/preview therefore still uses the stepped stream API.
+- until the live parser stream feed exists, RUN must treat this as a safe
+  parser owner/suppressor, not as finished machine roughing.
+
+LeanCam still has older local generator code in:
 
 - `src/modules/leanCam/leancam_gcode.c`
 - `src/modules/leanCam/leancam_gcode.h`

@@ -7,30 +7,22 @@ extern "C"
 
 #include "cnc_hal_reset.h"
 
-/*
-    RP2350 LeanCam LVDS first-stage HAL profile.
-
-    This keeps uCNC small and avoids modules/pins that belong to the old
-    ESP32/MKS Tinybee setup: G33, ESP32 PCNT encoder, 74HC595,
-    WiFi, full generic SD/filesystem setup, and real machine-runtime extras.
-*/
-
-//this needs to proper ucnc config like thing not leancam only
-
-#ifdef UCNC_LEANCAM_LVDS_TARGET
+/* Module/runtime configuration for this HAL profile. Keep these in overrides,
+   not in PlatformIO target flags or core helper headers. */
+#ifndef UCNC_MINIMAL_RP2350
 #undef DISABLE_G7_G8
+
 #define ENABLE_SD_CARD_V2
 #define ENABLE_UCNC_FILE_SYSTEM
-#define LEANCAM_BUILD_FEATURE_BANNER
 #define ENABLE_PERSISTENT_SETTINGS
 #undef RAM_ONLY_SETTINGS
 #define SD_CARD_NO_SYSTEM_MENU
-#define ENABLE_LVDS_RENDERER
 
-#define RP2350_DISABLE_ARDUINO_CORE1_LOOP
-
+#define LEANCAM_BUILD_FEATURE_BANNER
 #define LEANCAM_USE_PSRAM_BACKBUFFER 1
 #define LEANCAM_NC_VIEW_CACHE_PROGRAM 1
+
+#define RP2350_DISABLE_ARDUINO_CORE1_LOOP
 #endif
 
 #define S_CURVE_ACCELERATION_LEVEL 0
@@ -72,11 +64,14 @@ extern "C"
 // Encoder + G33 modules
 // ------------------------------------------------------------
 
+#ifndef UCNC_MINIMAL_RP2350
 // Enable this from the HAL config, not from platformio.ini build flags.
 #define ENABLE_RP2350_PIO_ENCODER
 
 #ifdef ENABLE_RP2350_PIO_ENCODER
 #define LEANCAM_FEATURE_BANNER
+#define LEANCAM_DEBUG_BRIDGE 1
+#define CAM_KB_DEBUG 1
 
 #define ENCODERS 1
 #define ENC0_TYPE ENC_TYPE_CUSTOM
@@ -135,8 +130,9 @@ extern "C"
 
 #endif
 
-/* Single RP2350 LeanCam target: encoder/G33 + SD + LVDS renderer. */
-#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); LOAD_MODULE(leanCam); })
+/* Single RP2350 NC target: encoder/G33 + SD + LVDS renderer. */
+#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(g71_g72); LOAD_MODULE(sd_card_v2); LOAD_MODULE(nc); })
+#endif
 
 #ifdef __cplusplus
 }

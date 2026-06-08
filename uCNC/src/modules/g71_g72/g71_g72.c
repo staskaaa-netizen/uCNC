@@ -1,14 +1,38 @@
 /* G71/G72 generator support.
- * This module intentionally does not call the live RS274 parser. LeanCam needs
- * offline preview/preflight/run generation, so G7x keeps a tiny source-row
- * reader and only reuses uCNC's public modal constants.
+ * The stream API remains the SIM/preview bridge. Parser integration below is
+ * currently a safe shell: it recognizes G71/G72 regions and suppresses contour
+ * source rows so they do not execute as normal motion. It does not yet feed
+ * generated rough/finish moves back through the live parser.
  */
 #include "g71_g72.h"
+
+#include "../../module.h"
+#ifdef ENABLE_PARSER_MODULES
+#include "../../cnc.h"
+#endif
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef ENABLE_PARSER_MODULES
+#define G7X_EXTENDED_CODE EXTENDED_MCODE(710)
+
+static bool g7x_parser_region_active;
+static g7x_cycle_t g7x_parser_cycle;
+static g7x_cycle_t g7x_parser_pending_cycle;
+
+bool g7x_parse(void *args);
+bool g7x_exec_modifier(void *args);
+bool g7x_exec(void *args);
+bool g7x_reset(void *args);
+
+CREATE_EVENT_LISTENER(gcode_parse, g7x_parse);
+CREATE_EVENT_LISTENER(gcode_exec_modifier, g7x_exec_modifier);
+CREATE_EVENT_LISTENER(gcode_exec, g7x_exec);
+CREATE_EVENT_LISTENER(parser_reset, g7x_reset);
+#endif
 
 void g7x_modal_default(g7x_modal_t *modal)
 {
@@ -675,4 +699,99 @@ const char *g7x_result_text(g7x_result_t result)
         case G7X_WRITE_FAILED: return "write failed";
         default: return "unknown";
     }
+}
+
+#ifdef ENABLE_PARSER_MODULES
+bool g7x_parse(void *args)
+{
+    gcode_parse_args_t *ptr = (gcode_parse_args_t *)args;
+
+    if (!ptr || !ptr->error || !ptr->cmd) {
+        return EVENT_CONTINUE;
+    }
+
+    if (ptr->word == 'G' && (ptr->code == 71 || ptr->code == 72)) {
+        if (ptr->cmd->group_extended != 0 || ptr->cmd->groups != 0) {
+            *(ptr->error) = STATUS_GCODE_MODAL_GROUP_VIOLATION;
+            return EVENT_HANDLED;
+        }
+        ptr->cmd->group_extended = G7X_EXTENDED_CODE;
+        g7x_parser_pending_cycle = ptr->code == 72 ? G7X_CYCLE_G72 : G7X_CYCLE_G71;
+        *(ptr->error) = STATUS_OK;
+        return EVENT_HANDLED;
+    }
+
+    if (ptr->cmd->group_extended == G7X_EXTENDED_CODE &&
+        (ptr->word == 'U' || ptr->word == 'W')) {
+        *(ptr->error) = STATUS_OK;
+        return EVENT_HANDLED;
+    }
+
+    return EVENT_CONTINUE;
+}
+
+bool g7x_exec_modifier(void *args)
+{
+    gcode_exec_args_t *ptr = (gcode_exec_args_t *)args;
+
+    if (!ptr || !ptr->cmd || !ptr->new_state || !ptr->words) {
+        return EVENT_CONTINUE;
+    }
+
+    if (g7x_parser_region_active &&
+        CHECKFLAG(ptr->cmd->groups, GCODE_GROUP_MOTION)) {
+        if (ptr->new_state->groups.motion == G80) {
+            g7x_parser_region_active = false;
+            g7x_parser_cycle = G7X_CYCLE_NONE;
+        } else if (ptr->new_state->groups.motion == G0 ||
+                   ptr->new_state->groups.motion == G1 ||
+                   ptr->new_state->groups.motion == G2 ||
+                   ptr->new_state->groups.motion == G3) {
+            ptr->cmd->words = 0;
+            memset(ptr->words, 0, sizeof(*ptr->words));
+            ptr->new_state->groups.motion = G80;
+            ptr->new_state->groups.motion_mantissa = 0;
+        }
+    }
+
+    return EVENT_CONTINUE;
+}
+
+bool g7x_exec(void *args)
+{
+    gcode_exec_args_t *ptr = (gcode_exec_args_t *)args;
+
+    if (!ptr || !ptr->cmd || !ptr->error ||
+        ptr->cmd->group_extended != G7X_EXTENDED_CODE) {
+        return EVENT_CONTINUE;
+    }
+
+    g7x_parser_region_active = true;
+    g7x_parser_cycle = g7x_parser_pending_cycle == G7X_CYCLE_NONE ?
+                       G7X_CYCLE_G71 :
+                       g7x_parser_pending_cycle;
+    g7x_parser_pending_cycle = G7X_CYCLE_NONE;
+    proto_print("[MSG:G7X parser shell active]\r\n");
+    *(ptr->error) = STATUS_OK;
+    return EVENT_HANDLED;
+}
+
+bool g7x_reset(void *args)
+{
+    (void)args;
+    g7x_parser_region_active = false;
+    g7x_parser_cycle = G7X_CYCLE_NONE;
+    g7x_parser_pending_cycle = G7X_CYCLE_NONE;
+    return EVENT_CONTINUE;
+}
+#endif
+
+DECL_MODULE(g71_g72)
+{
+#ifdef ENABLE_PARSER_MODULES
+    ADD_EVENT_LISTENER(gcode_parse, g7x_parse);
+    ADD_EVENT_LISTENER(gcode_exec_modifier, g7x_exec_modifier);
+    ADD_EVENT_LISTENER(gcode_exec, g7x_exec);
+    ADD_EVENT_LISTENER(parser_reset, g7x_reset);
+#endif
 }

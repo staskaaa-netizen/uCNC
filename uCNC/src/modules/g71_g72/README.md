@@ -30,9 +30,11 @@ The first support boundary now exists here:
 - `src/modules/g71_g72/g71_g72.c`
 - `src/modules/g71_g72/g71_g72.h`
 
-This first pass owns only common G7x result/cycle enums, modal context helpers,
-and boring source-row parsing/classification. The active roughing generator
-still lives inside LeanCam:
+This first pass owns common G7x result/cycle enums, modal context helpers,
+boring source-row parsing/classification, contour element vocabulary, fixed
+contour storage limits, and the small cycle profile table that names each
+cycle's pass axis, cut axis, monotonic contour axis, and rough DOC word. The
+active roughing generator still lives inside LeanCam:
 
 - `src/modules/leanCam/leancam_gcode.c`
 - `src/modules/leanCam/leancam_gcode.h`
@@ -172,6 +174,11 @@ The LinuxCNC C++ reference normalizes both cycles by rotating/flipping the
 profile: `G72` calls the same internal roughing routine as `G71` with a
 90-degree rotation, and the path is then forced into one canonical direction.
 It also handles pockets and richer offset geometry.
+
+The current uCNC staging module borrows only the safe part of that idea: cycle
+metadata is explicit, so `G71` and `G72` are described by axes instead of by
+scattered string checks. The firmware generator still uses LeanCam's simpler
+monotonic contour model.
 
 LeanCam's current implementation is deliberately smaller:
 

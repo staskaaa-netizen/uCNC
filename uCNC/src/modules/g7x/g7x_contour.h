@@ -17,6 +17,10 @@ g7x_contour_cmd_t g7x_contour_cmd_from_line(const char *line);
 
 g7x_result_t g7x_stream_begin(g7x_stream_t *stream, const char *cycle_line);
 g7x_result_t g7x_stream_add_line(g7x_stream_t *stream, const char *line, bool *done);
+g7x_result_t g7x_thread_begin(g7x_thread_stream_t *stream,
+                              const char *line,
+                              float default_start_diameter,
+                              float default_clearance);
 
 #ifdef __cplusplus
 }

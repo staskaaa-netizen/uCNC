@@ -6,9 +6,11 @@
  */
 #include "g7x.h"
 
+#ifndef G7X_HOST_TEST
 #include "../../cnc.h"
 #include "../../module.h"
 #include "../g7_g8/parser_g7_g8.h"
+#endif
 
 #include <math.h>
 #include <stdarg.h>
@@ -16,7 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef ENABLE_PARSER_MODULES
+#if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
 #define G7X_EXTENDED_CODE EXTENDED_MCODE(710)
 #define G7X_PARSER_BURST_BLOCKS 1u
 
@@ -41,7 +43,7 @@ CREATE_EVENT_LISTENER(parser_reset, g7x_reset);
 CREATE_EVENT_LISTENER(cnc_dotasks, g7x_dotasks);
 #endif
 
-#ifdef ENABLE_PARSER_MODULES
+#if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
 static void g7x_parser_clear_state(void)
 {
     g7x_parser_region_active = false;
@@ -58,7 +60,7 @@ static void g7x_parser_clear_state(void)
 
 bool g7x_parser_busy(void)
 {
-#ifdef ENABLE_PARSER_MODULES
+#if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
     return g7x_parser_region_active || g7x_parser_runner_active;
 #else
     return false;
@@ -111,6 +113,13 @@ bool g7x_cycle_profile(g7x_cycle_t cycle, g7x_cycle_profile_t *profile)
             p.contour_monotonic_axis = G7X_AXIS_X;
             p.rough_doc_word = 'W';
             p.name = "G72";
+            break;
+        case G7X_CYCLE_G76:
+            p.pass_axis = G7X_AXIS_X;
+            p.cut_axis = G7X_AXIS_Z;
+            p.contour_monotonic_axis = G7X_AXIS_Z;
+            p.rough_doc_word = 'J';
+            p.name = "G76";
             break;
         default:
             return false;
@@ -261,7 +270,7 @@ static bool g7x_expand_corner(g7x_contour_element_t *prev,
     if (!g7x_corner_tangents(p0, p1, p2, amount, &t1, &t2, &center, &actual_amount, &ccw))
         return false;
 
-#ifdef ENABLE_PARSER_MODULES
+#if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
     {
         float display_cx = x_is_radius ? center.x * 2.0f : center.x;
         float display_t1x = x_is_radius ? t1.x * 2.0f : t1.x;
@@ -925,7 +934,239 @@ const char *g7x_result_text(g7x_result_t result)
     }
 }
 
-#ifdef ENABLE_PARSER_MODULES
+static float g7x_absf(float v)
+{
+    return v < 0.0f ? -v : v;
+}
+
+static float g7x_maxf(float a, float b)
+{
+    return a > b ? a : b;
+}
+
+static float g7x_minf(float a, float b)
+{
+    return a < b ? a : b;
+}
+
+static bool g7x_too_many_steps(float span, float step)
+{
+    span = g7x_absf(span);
+    step = g7x_absf(step);
+    return step > 0.0f && (span / step) > (float)G7X_MAX_THREAD_PASSES;
+}
+
+void g7x_thread_reset(g7x_thread_stream_t *stream)
+{
+    if (stream)
+        memset(stream, 0, sizeof(*stream));
+}
+
+g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,
+                                     float d_start,
+                                     float d_end,
+                                     float z1,
+                                     float z2,
+                                     float pitch,
+                                     float doc,
+                                     float clearance,
+                                     float lead,
+                                     float taper,
+                                     float compound_angle,
+                                     float degression,
+                                     int spring_passes,
+                                     int pass_count,
+                                     int strategy,
+                                     float peak_offset)
+{
+    float depth;
+
+    if (!stream)
+        return G7X_BAD_FIELD;
+
+    g7x_thread_reset(stream);
+
+    if (d_start <= 0.0f)
+        return G7X_BAD_FIELD;
+    if (d_end <= 0.0f)
+        return G7X_BAD_FIELD;
+    if (d_end == d_start)
+        return G7X_BAD_FIELD;
+    if (z1 == z2)
+        return G7X_BAD_FIELD;
+    if (pitch <= 0.0f)
+        return G7X_BAD_FIELD;
+    if (doc <= 0.0f)
+        return G7X_BAD_FIELD;
+    if (lead < 0.0f)
+        return G7X_BAD_FIELD;
+    if (degression < 1.0f)
+        return G7X_BAD_FIELD;
+    if (compound_angle < 0.0f || compound_angle >= 89.0f)
+        return G7X_BAD_FIELD;
+    if (spring_passes < 0 || spring_passes > G7X_MAX_THREAD_PASSES)
+        return G7X_BAD_FIELD;
+    if (pass_count < 0 || pass_count > G7X_MAX_THREAD_PASSES)
+        return G7X_BAD_FIELD;
+
+    depth = g7x_absf(d_start - d_end);
+    if (pass_count == 0 && g7x_too_many_steps(depth, doc))
+        return G7X_BAD_FIELD;
+    if (pass_count == 0)
+        pass_count = (int)ceilf(depth / doc);
+    if (pass_count <= 0)
+        pass_count = 1;
+
+    stream->d_start = d_start;
+    stream->d_end = d_end;
+    stream->depth = depth;
+    stream->doc = doc;
+    stream->pitch = pitch;
+    stream->z1 = z1;
+    stream->z2 = z2;
+    stream->taper = taper;
+    stream->z_span = z2 - z1;
+    stream->degression = degression;
+    stream->pass_count = pass_count;
+    stream->spring_left = spring_passes;
+    stream->strategy = strategy ? 1 : 0;
+    stream->pass = 0;
+    stream->last_depth = 0.0f;
+    stream->angle_tan = 0.0f;
+    stream->final_z_shift = 0.0f;
+
+    if (compound_angle > 0.001f) {
+        stream->angle_tan = tanf(compound_angle * 0.01745329252f);
+        if (!isfinite(stream->angle_tan) || stream->angle_tan <= 0.0001f)
+            return G7X_BAD_FIELD;
+        stream->final_z_shift = (depth * 0.5f) * stream->angle_tan;
+        if (stream->z_span < 0.0f)
+            stream->final_z_shift = -stream->final_z_shift;
+    }
+
+    stream->zsafe = z1 + ((stream->z_span < 0.0f) ? lead : -lead);
+    if (d_end < d_start)
+        stream->xsafe = g7x_maxf(d_start, d_start + taper) + g7x_absf(peak_offset != 0.0f ? peak_offset : clearance);
+    else
+        stream->xsafe = g7x_minf(d_start, d_start + taper) - g7x_absf(peak_offset != 0.0f ? peak_offset : clearance);
+    if (stream->xsafe < 0.0f)
+        stream->xsafe = 0.0f;
+
+    stream->stage = 0;
+    stream->active = true;
+    return G7X_OK;
+}
+
+static bool g7x_thread_prepare_next_pass(g7x_thread_stream_t *stream)
+{
+    float pass_depth;
+    float z_shift = 0.0f;
+
+    if (!stream)
+        return false;
+
+    if (stream->pass < stream->pass_count) {
+        float t;
+        stream->pass++;
+        t = (float)stream->pass / (float)stream->pass_count;
+        pass_depth = stream->depth *
+                     (stream->strategy ? powf(t, 1.0f / stream->degression) : t);
+        if (pass_depth > stream->depth)
+            pass_depth = stream->depth;
+        if (pass_depth <= stream->last_depth)
+            pass_depth = stream->depth;
+        stream->last_depth = pass_depth;
+        stream->pass_x1 = stream->d_start + ((stream->d_end < stream->d_start) ? -pass_depth : pass_depth);
+    } else if (stream->spring_left > 0) {
+        stream->spring_left--;
+        stream->pass_x1 = stream->d_end;
+    } else {
+        return false;
+    }
+
+    stream->pass_x2 = stream->pass_x1 + stream->taper;
+    stream->pass_z1 = stream->z1;
+    stream->pass_zsafe = stream->zsafe;
+    if (stream->angle_tan > 0.0f) {
+        float pass_depth_for_z = g7x_absf(stream->d_start - stream->pass_x1);
+        z_shift = (pass_depth_for_z * 0.5f) * stream->angle_tan;
+        if (stream->z_span < 0.0f)
+            z_shift = -z_shift;
+        stream->pass_z1 = stream->z1 + z_shift - stream->final_z_shift;
+        stream->pass_zsafe = stream->pass_z1 + ((stream->z_span < 0.0f) ? stream->pitch : -stream->pitch);
+    }
+    return true;
+}
+
+g7x_step_result_t g7x_thread_next(g7x_thread_stream_t *stream, char *out, size_t out_sz)
+{
+    if (!stream || !stream->active || !out || out_sz == 0)
+        return G7X_STEP_ERROR;
+
+    for (;;) {
+        switch (stream->stage++) {
+        case 0:
+            (void)snprintf(out, out_sz,
+                           "(G76 D %.3f X %.3f P %.3f DOC %.3f R %.3f N %d)",
+                           stream->d_start,
+                           stream->d_end,
+                           stream->pitch,
+                           stream->doc,
+                           stream->degression,
+                           stream->pass_count);
+            return G7X_STEP_LINE;
+        case 1:
+            (void)snprintf(out, out_sz, "(ELS RAMP: lead-in and lead-out are reserve space, not finished thread)");
+            return G7X_STEP_LINE;
+        case 2:
+            (void)snprintf(out, out_sz, "G0 X%.3f Z%.3f", stream->xsafe, stream->zsafe);
+            return G7X_STEP_LINE;
+        case 3:
+            if (!g7x_thread_prepare_next_pass(stream)) {
+                stream->stage = 10;
+                continue;
+            }
+            if (stream->pass <= stream->pass_count) {
+                (void)snprintf(out, out_sz, "(THREAD pass %d X%.3f Z%.3f)",
+                               stream->pass, stream->pass_x1, stream->pass_z1);
+            } else {
+                (void)snprintf(out, out_sz, "(THREAD spring X%.3f Z%.3f)",
+                               stream->pass_x1, stream->pass_z1);
+            }
+            return G7X_STEP_LINE;
+        case 4:
+            (void)snprintf(out, out_sz, "G0 X%.3f Z%.3f", stream->xsafe, stream->pass_zsafe);
+            return G7X_STEP_LINE;
+        case 5:
+            (void)snprintf(out, out_sz, "G0 X%.3f", stream->pass_x1);
+            return G7X_STEP_LINE;
+        case 6:
+            (void)snprintf(out, out_sz, "G0 Z%.3f", stream->pass_z1);
+            return G7X_STEP_LINE;
+        case 7:
+            (void)snprintf(out, out_sz, "G33 X%.3f Z%.3f K%.3f",
+                           stream->pass_x2, stream->z2, stream->pitch);
+            return G7X_STEP_LINE;
+        case 8:
+            (void)snprintf(out, out_sz, "G0 X%.3f", stream->xsafe);
+            return G7X_STEP_LINE;
+        case 9:
+            stream->stage = 3;
+            continue;
+        case 10:
+            (void)snprintf(out, out_sz, "G0 Z%.3f", stream->zsafe);
+            return G7X_STEP_LINE;
+        case 11:
+            stream->active = false;
+            return G7X_STEP_DONE;
+        default:
+            stream->active = false;
+            return G7X_STEP_DONE;
+        }
+    }
+}
+
+#if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
 static char g7x_parser_motion_letter(uint8_t motion)
 {
     switch (motion) {
@@ -1237,6 +1478,7 @@ bool g7x_reset(void *args)
 }
 #endif
 
+#ifndef G7X_HOST_TEST
 DECL_MODULE(g7x)
 {
 #ifdef ENABLE_PARSER_MODULES
@@ -1247,3 +1489,4 @@ DECL_MODULE(g7x)
     ADD_EVENT_LISTENER(cnc_dotasks, g7x_dotasks);
 #endif
 }
+#endif

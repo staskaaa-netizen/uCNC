@@ -63,7 +63,9 @@ bool g7x_get_field_text(const char *line, const char *key, char *out, size_t out
         if (!is_command_token &&
             (size_t)(e - b) > key_len &&
             strncmp(b, key, key_len) == 0 &&
-            b[key_len] != '_') {
+            b[key_len] != '_' &&
+            !(b[key_len] >= 'A' && b[key_len] <= 'Z') &&
+            !(b[key_len] >= 'a' && b[key_len] <= 'z')) {
             const char *v = b + key_len;
             const char *vend = e;
 
@@ -129,6 +131,8 @@ g7x_cycle_t g7x_cycle_from_line(const char *line)
         return G7X_CYCLE_G71;
     if (g7x_command_is(line, "G72"))
         return G7X_CYCLE_G72;
+    if (g7x_command_is(line, "G76"))
+        return G7X_CYCLE_G76;
     return G7X_CYCLE_NONE;
 }
 
@@ -236,4 +240,93 @@ g7x_result_t g7x_stream_add_line(g7x_stream_t *stream, const char *line, bool *d
     return g7x_stream_add_parsed(stream, cmd, x, has_x, z, has_z, r, has_r,
                                  i, has_i, k, has_k, corner_kind,
                                  corner_amount, done);
+}
+
+static bool g7x_field_float2(const char *line, const char *a, const char *b, float *out)
+{
+    return g7x_get_field_float(line, a, out) || g7x_get_field_float(line, b, out);
+}
+
+static bool g7x_field_float3(const char *line, const char *a, const char *b, const char *c, float *out)
+{
+    return g7x_get_field_float(line, a, out) ||
+           g7x_get_field_float(line, b, out) ||
+           g7x_get_field_float(line, c, out);
+}
+
+g7x_result_t g7x_thread_begin(g7x_thread_stream_t *stream,
+                              const char *line,
+                              float default_start_diameter,
+                              float default_clearance)
+{
+    float d_start = default_start_diameter;
+    float d_end = 0.0f;
+    float z1 = 0.0f;
+    float z2 = 0.0f;
+    float pitch = 0.0f;
+    float depth = 0.0f;
+    float doc = 0.2f;
+    float lead = 0.0f;
+    float taper = 0.0f;
+    float compound_angle = 0.0f;
+    float degression = 2.0f;
+    float spring_value = 0.0f;
+    float pass_value = 0.0f;
+    float strategy_value = 1.0f;
+    float peak_offset = 0.0f;
+    int spring_passes = 0;
+    int pass_count = 0;
+    int strategy = 1;
+    bool has_i;
+    bool has_x_end;
+
+    if (!stream || !line || !g7x_command_is(line, "G76"))
+        return G7X_BAD_FIELD;
+
+    if (!g7x_field_float2(line, "P", "PITCH", &pitch) &&
+        !g7x_field_float2(line, "K_PITCH", "PITCH_K", &pitch))
+        return G7X_BAD_FIELD;
+    (void)g7x_field_float2(line, "START_X", "X_START", &d_start);
+    if (!g7x_field_float2(line, "Z1", "Z_START", &z1))
+        z1 = 0.0f;
+    if (!g7x_field_float3(line, "Z2", "Z_END", "Z", &z2))
+        return G7X_BAD_FIELD;
+
+    has_i = g7x_field_float2(line, "I", "PEAK_OFFSET", &peak_offset);
+    (void)g7x_field_float3(line, "K", "THR_DEPTH", "DEPTH", &depth);
+    (void)g7x_field_float2(line, "K", "FULL_DEPTH", &depth);
+    has_x_end = g7x_field_float2(line, "X", "X_END", &d_end);
+    depth = fabsf(depth);
+    if (!has_x_end && depth > 0.0f)
+        d_end = d_start + ((has_i && peak_offset > 0.0f) ? depth : -depth);
+
+    (void)g7x_field_float3(line, "J", "DOC", "DEPTH_OF_CUT", &doc);
+    if (!g7x_field_float2(line, "LEAD", "LEAD_IN", &lead))
+        lead = pitch;
+    (void)g7x_field_float3(line, "D", "TAPER", "D_TAPER", &taper);
+    (void)g7x_field_float2(line, "Q", "ANGLE", &compound_angle);
+    (void)g7x_field_float2(line, "R", "DEGRESSION", &degression);
+    if (g7x_field_float2(line, "H", "SPRING", &spring_value) && spring_value > 0.0f)
+        spring_passes = (int)(spring_value + 0.5f);
+    if (g7x_field_float3(line, "N", "PASS", "PASSES", &pass_value) && pass_value > 0.0f)
+        pass_count = (int)(pass_value + 0.5f);
+    if (g7x_field_float3(line, "ST", "STRAT", "STRATEGY", &strategy_value))
+        strategy = strategy_value > 0.5f ? 1 : 0;
+
+    return g7x_thread_begin_parsed(stream,
+                                   d_start,
+                                   d_end,
+                                   z1,
+                                   z2,
+                                   pitch,
+                                   doc,
+                                   default_clearance,
+                                   lead,
+                                   taper,
+                                   compound_angle,
+                                   degression,
+                                   spring_passes,
+                                   pass_count,
+                                   strategy,
+                                   peak_offset);
 }

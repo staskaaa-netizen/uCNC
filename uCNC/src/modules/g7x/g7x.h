@@ -19,7 +19,8 @@ typedef enum {
 typedef enum {
     G7X_CYCLE_NONE = 0,
     G7X_CYCLE_G71,
-    G7X_CYCLE_G72
+    G7X_CYCLE_G72,
+    G7X_CYCLE_G76
 } g7x_cycle_t;
 
 typedef enum {
@@ -147,6 +148,38 @@ typedef struct {
     g7x_motion_block_t motion;
 } g7x_event_t;
 
+#ifndef G7X_MAX_THREAD_PASSES
+#define G7X_MAX_THREAD_PASSES 500
+#endif
+
+typedef struct {
+    bool active;
+    unsigned stage;
+    int pass;
+    int pass_count;
+    int spring_left;
+    int strategy;
+    float d_start;
+    float d_end;
+    float depth;
+    float doc;
+    float pitch;
+    float z1;
+    float z2;
+    float zsafe;
+    float xsafe;
+    float taper;
+    float z_span;
+    float angle_tan;
+    float final_z_shift;
+    float degression;
+    float last_depth;
+    float pass_x1;
+    float pass_x2;
+    float pass_z1;
+    float pass_zsafe;
+} g7x_thread_stream_t;
+
 enum {
     G7X_DISTANCE_ABSOLUTE = 0,
     G7X_DISTANCE_INCREMENTAL = 1,
@@ -185,6 +218,29 @@ g7x_step_result_t g7x_stream_next(g7x_stream_t *stream, char *out, size_t out_sz
 g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event);
 g7x_step_result_t g7x_stream_next_block(g7x_stream_t *stream, g7x_motion_block_t *block);
 bool g7x_parser_busy(void);
+
+void g7x_thread_reset(g7x_thread_stream_t *stream);
+g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,
+                                     float d_start,
+                                     float d_end,
+                                     float z1,
+                                     float z2,
+                                     float pitch,
+                                     float doc,
+                                     float clearance,
+                                     float lead,
+                                     float taper,
+                                     float compound_angle,
+                                     float degression,
+                                     int spring_passes,
+                                     int pass_count,
+                                     int strategy,
+                                     float peak_offset);
+g7x_result_t g7x_thread_begin(g7x_thread_stream_t *stream,
+                              const char *line,
+                              float default_start_diameter,
+                              float default_clearance);
+g7x_step_result_t g7x_thread_next(g7x_thread_stream_t *stream, char *out, size_t out_sz);
 
 const char *g7x_result_text(g7x_result_t result);
 

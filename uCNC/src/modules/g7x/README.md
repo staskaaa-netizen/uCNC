@@ -1,8 +1,9 @@
 # G71/G72 Notes
 
 This directory owns the standalone uCNC G7x generator/parser module for
-`G71/G72`. NC and LeanCam-style screens may consume it for preview, but the
-module must be able to run without any NC UI module loaded.
+`G71/G72` contour roughing and `G76` thread expansion. NC and LeanCam-style
+screens may consume it for preview, but the module must be able to run without
+any NC UI module loaded.
 
 The files copied from LinuxCNC are not firmware code for uCNC. They are useful
 for semantics, edge cases, and future tests.
@@ -21,8 +22,8 @@ The useful point from that page is the common lathe-cycle grouping:
 - `G72`: facing roughing cycle, analogous to G71 but cutting mainly along X.
 - `G73`: pattern repeating roughing cycle, with X/Z material amounts, pass
   count, contour range, and finish allowances.
-- `G75`, `G76`, `G83`, `G84`, `G87`, and `G88` are nearby lathe cycles, but
-  they should not be dragged into the first G71/G72 split.
+- `G75`, `G83`, `G84`, `G87`, and `G88` are nearby lathe cycles, but they
+  should not be dragged into the first contour roughing split.
 
 ## Current State
 
@@ -40,6 +41,8 @@ axis, cut axis, monotonic contour axis, and rough DOC word.
 
 The module also exposes a stepped stream generator. NC SIM/preview may use that
 API directly, but it is an optional consumer path, not the execution owner.
+G76 has a separate `g7x_thread_stream_t` that expands one parsed/source G76 row
+into safe moves, pass comments, `G33` thread blocks, and final retract moves.
 
 Parser integration is the modal-region owner:
 
@@ -76,8 +79,8 @@ LeanCam currently supports:
 - G71 stepped runtime output for demand-fed execution.
 - G72 stepped runtime output for the same conservative monotonic subset.
 - raw full emit paths for preflight/file generation.
-- G76 stepping in the same generator file, but G76 is not part of this module
-  boundary yet.
+- older G76 stepping in the same generator file, kept as a compatibility
+  reference until LeanCam is fully rewired to the G7x module.
 
 ## Why Split G7x
 
@@ -190,9 +193,9 @@ Do not implement `G70` or `G73` in the first extraction.
   standalone G70 finishing cycle would be a separate feature, not a prerequisite.
 - `G73` is pattern repeating roughing, not the same scanline roughing model as
   current G71/G72. Keep it as future scope.
-- `G75/G76/G83/G84/G87/G88` belong to a broader lathe-cycle family. G76 already
-  has separate LeanCam thread stepping logic; it should not be mixed into this
-  first contour-owned G7x extraction.
+- `G75/G83/G84/G87/G88` belong to a broader lathe-cycle family and remain
+  future scope. G76 is intentionally separate from the contour stream because it
+  expands to thread passes rather than contour rough/finish motion.
 
 Do not copy the full LinuxCNC G7x pocket engine into LeanCam.
 
@@ -266,6 +269,7 @@ For now the acceptance gate should stay conservative:
 
 - monotonic G71/G72 contours pass.
 - unsupported roughing fails clearly.
+- basic G76 OD and ID/taper thread expansion passes.
 - no finish-only fallback.
 - no full generated run buffer is required for selected run execution.
 

@@ -178,7 +178,7 @@ static int test_g76_basic(void)
     sink_t sink;
 
     if (g7x_thread_begin(&stream,
-                         "G76 START_X40 Z-20 P1.5 K4 J1 H1 R2 Q29.5",
+                         "G76 START_X40 X36 Z-20 P2 Q1 F1.5 H1 MIN_Q1",
                          0.0f,
                          2.0f) != G7X_OK) {
         printf("FAIL G76 begin\n");
@@ -186,9 +186,9 @@ static int test_g76_basic(void)
     }
     if (collect_g76(&stream, &sink))
         return 1;
-    if (!contains(&sink, "(G76 D 40.000 X 36.000 P 1.500 DOC 1.000 R 2.000 N 4)") ||
+    if (!contains(&sink, "(G76 FANUC D 40.000 X 36.000 F 1.500 P 2.000 Q 1.000 R 0.000") ||
         !has_exact(&sink, "G0 X42.000 Z1.500") ||
-        !contains(&sink, "(THREAD pass 4 X36.000") ||
+        !contains(&sink, "(THREAD pass 2 X36.000") ||
         !has_exact(&sink, "G33 X36.000 Z-20.000 K1.500") ||
         !contains(&sink, "(THREAD spring X36.000") ||
         !has_exact(&sink, "G0 Z1.500")) {
@@ -204,7 +204,7 @@ static int test_g76_taper_id(void)
     sink_t sink;
 
     if (g7x_thread_begin(&stream,
-                         "G76 START_X20 X24 Z10 Z1=0 P2 J2 D1 I3 N2 ST0",
+                         "G76 START_X20 X24 Z10 Z1=0 P2 Q2 F2 D1 MIN_Q2",
                          0.0f,
                          1.0f) != G7X_OK) {
         printf("FAIL G76 ID/taper begin\n");
@@ -221,6 +221,45 @@ static int test_g76_taper_id(void)
     return 0;
 }
 
+static int test_g76_letters(void)
+{
+    g7x_thread_stream_t stream;
+    sink_t sink;
+
+    if (g7x_thread_begin(&stream,
+                         "G76 START_X20 X18 Z-20 P1.0 Q0.3 MIN_Q0.05 FINISH_R0.02 F1.5 H2",
+                         0.0f,
+                         1.0f) != G7X_OK) {
+        printf("FAIL G76 semantic begin\n");
+        return 1;
+    }
+    if (collect_g76(&stream, &sink))
+        return 1;
+    if (!contains(&sink, "(G76 FANUC D 20.000 X 18.000 F 1.500 P 1.000 Q 0.050 R 0.020") ||
+        !has_exact(&sink, "G0 X21.000 Z1.500") ||
+        !contains(&sink, "(THREAD finish X18.000") ||
+        !contains(&sink, "(THREAD spring X18.000") ||
+        !has_exact(&sink, "G33 X18.000 Z-20.000 K1.500")) {
+        printf("FAIL G76 semantic output\n");
+        return 1;
+    }
+    return 0;
+}
+
+static int test_g76_semantic_invalid_pitch_depth(void)
+{
+    g7x_thread_stream_t stream;
+
+    if (g7x_thread_begin(&stream,
+                         "G76 START_X20 X18 Z-20 P0 Q0.3 F0",
+                         0.0f,
+                         1.0f) != G7X_BAD_FIELD) {
+        printf("FAIL G76 invalid pitch/depth accepted\n");
+        return 1;
+    }
+    return 0;
+}
+
 int main(void)
 {
     int fails = 0;
@@ -231,6 +270,8 @@ int main(void)
     fails += test_bad_contour_rejected();
     fails += test_g76_basic();
     fails += test_g76_taper_id();
+    fails += test_g76_letters();
+    fails += test_g76_semantic_invalid_pitch_depth();
 
     if (fails) {
         printf("FAILURES %d\n", fails);

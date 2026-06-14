@@ -264,69 +264,52 @@ g7x_result_t g7x_thread_begin(g7x_thread_stream_t *stream,
     float z1 = 0.0f;
     float z2 = 0.0f;
     float pitch = 0.0f;
-    float depth = 0.0f;
-    float doc = 0.2f;
-    float lead = 0.0f;
+    float thread_height = 0.0f;
+    float first_cut = 0.0f;
+    float min_cut = 0.0f;
+    float finish_allowance = 0.0f;
+    float pq_scale = 1.0f;
     float taper = 0.0f;
-    float compound_angle = 0.0f;
-    float degression = 2.0f;
     float spring_value = 0.0f;
-    float pass_value = 0.0f;
-    float strategy_value = 1.0f;
-    float peak_offset = 0.0f;
     int spring_passes = 0;
-    int pass_count = 0;
-    int strategy = 1;
-    bool has_i;
-    bool has_x_end;
 
     if (!stream || !line || !g7x_command_is(line, "G76"))
         return G7X_BAD_FIELD;
 
-    if (!g7x_field_float2(line, "P", "PITCH", &pitch) &&
-        !g7x_field_float2(line, "K_PITCH", "PITCH_K", &pitch))
+    if (!g7x_get_field_float(line, "F", &pitch) ||
+        !g7x_get_field_float(line, "X", &d_end) ||
+        !g7x_get_field_float(line, "Z", &z2) ||
+        !g7x_get_field_float(line, "P", &thread_height) ||
+        !g7x_get_field_float(line, "Q", &first_cut))
         return G7X_BAD_FIELD;
+
     (void)g7x_field_float2(line, "START_X", "X_START", &d_start);
     if (!g7x_field_float2(line, "Z1", "Z_START", &z1))
         z1 = 0.0f;
-    if (!g7x_field_float3(line, "Z2", "Z_END", "Z", &z2))
-        return G7X_BAD_FIELD;
-
-    has_i = g7x_field_float2(line, "I", "PEAK_OFFSET", &peak_offset);
-    (void)g7x_field_float3(line, "K", "THR_DEPTH", "DEPTH", &depth);
-    (void)g7x_field_float2(line, "K", "FULL_DEPTH", &depth);
-    has_x_end = g7x_field_float2(line, "X", "X_END", &d_end);
-    depth = fabsf(depth);
-    if (!has_x_end && depth > 0.0f)
-        d_end = d_start + ((has_i && peak_offset > 0.0f) ? depth : -depth);
-
-    (void)g7x_field_float3(line, "J", "DOC", "DEPTH_OF_CUT", &doc);
-    if (!g7x_field_float2(line, "LEAD", "LEAD_IN", &lead))
-        lead = pitch;
+    (void)g7x_get_field_float(line, "SCALE", &pq_scale);
+    (void)g7x_field_float2(line, "MIN_Q", "QMIN", &min_cut);
+    (void)g7x_field_float2(line, "FINISH_R", "FINISH_ALLOW", &finish_allowance);
     (void)g7x_field_float3(line, "D", "TAPER", "D_TAPER", &taper);
-    (void)g7x_field_float2(line, "Q", "ANGLE", &compound_angle);
-    (void)g7x_field_float2(line, "R", "DEGRESSION", &degression);
     if (g7x_field_float2(line, "H", "SPRING", &spring_value) && spring_value > 0.0f)
         spring_passes = (int)(spring_value + 0.5f);
-    if (g7x_field_float3(line, "N", "PASS", "PASSES", &pass_value) && pass_value > 0.0f)
-        pass_count = (int)(pass_value + 0.5f);
-    if (g7x_field_float3(line, "ST", "STRAT", "STRATEGY", &strategy_value))
-        strategy = strategy_value > 0.5f ? 1 : 0;
+    if (pq_scale <= 0.0f)
+        return G7X_BAD_FIELD;
+    if (min_cut <= 0.0f)
+        min_cut = first_cut;
 
-    return g7x_thread_begin_parsed(stream,
-                                   d_start,
-                                   d_end,
-                                   z1,
-                                   z2,
-                                   pitch,
-                                   doc,
-                                   default_clearance,
-                                   lead,
-                                   taper,
-                                   compound_angle,
-                                   degression,
-                                   spring_passes,
-                                   pass_count,
-                                   strategy,
-                                   peak_offset);
+    return g7x_thread_begin_semantic(stream,
+                                     d_start,
+                                     d_end,
+                                     z1,
+                                     z2,
+                                     pitch,
+                                     thread_height * pq_scale,
+                                     first_cut * pq_scale,
+                                     min_cut * pq_scale,
+                                     finish_allowance,
+                                     default_clearance,
+                                     taper,
+                                     spring_passes,
+                                     0,
+                                     0);
 }

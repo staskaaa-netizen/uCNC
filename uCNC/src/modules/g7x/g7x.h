@@ -159,10 +159,16 @@ typedef struct {
     int pass_count;
     int spring_left;
     int strategy;
+    int finish_left;
+    int tool_angle;
+    int chamfer;
     float d_start;
     float d_end;
     float depth;
+    float rough_depth;
     float doc;
+    float min_doc;
+    float finish_allow;
     float pitch;
     float z1;
     float z2;
@@ -236,6 +242,21 @@ g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,
                                      int pass_count,
                                      int strategy,
                                      float peak_offset);
+g7x_result_t g7x_thread_begin_semantic(g7x_thread_stream_t *stream,
+                                       float d_start,
+                                       float d_end,
+                                       float z1,
+                                       float z2,
+                                       float pitch,
+                                       float thread_height,
+                                       float first_cut,
+                                       float min_cut,
+                                       float finish_allowance,
+                                       float clearance,
+                                       float taper,
+                                       int spring_passes,
+                                       int chamfer,
+                                       int tool_angle);
 g7x_result_t g7x_thread_begin(g7x_thread_stream_t *stream,
                               const char *line,
                               float default_start_diameter,

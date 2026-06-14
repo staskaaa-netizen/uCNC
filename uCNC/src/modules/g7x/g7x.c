@@ -980,6 +980,7 @@ g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,
                                      float peak_offset)
 {
     float depth;
+    float rough_depth;
 
     if (!stream)
         return G7X_BAD_FIELD;
@@ -1010,17 +1011,21 @@ g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,
         return G7X_BAD_FIELD;
 
     depth = g7x_absf(d_start - d_end);
-    if (pass_count == 0 && g7x_too_many_steps(depth, doc))
+    rough_depth = depth;
+    if (pass_count == 0 && g7x_too_many_steps(rough_depth, doc))
         return G7X_BAD_FIELD;
     if (pass_count == 0)
-        pass_count = (int)ceilf(depth / doc);
+        pass_count = (int)ceilf(rough_depth / doc);
     if (pass_count <= 0)
         pass_count = 1;
 
     stream->d_start = d_start;
     stream->d_end = d_end;
     stream->depth = depth;
+    stream->rough_depth = rough_depth;
     stream->doc = doc;
+    stream->min_doc = 0.0f;
+    stream->finish_allow = 0.0f;
     stream->pitch = pitch;
     stream->z1 = z1;
     stream->z2 = z2;
@@ -1029,6 +1034,9 @@ g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,
     stream->degression = degression;
     stream->pass_count = pass_count;
     stream->spring_left = spring_passes;
+    stream->finish_left = 0;
+    stream->tool_angle = 0;
+    stream->chamfer = 0;
     stream->strategy = strategy ? 1 : 0;
     stream->pass = 0;
     stream->last_depth = 0.0f;
@@ -1057,6 +1065,88 @@ g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,
     return G7X_OK;
 }
 
+g7x_result_t g7x_thread_begin_semantic(g7x_thread_stream_t *stream,
+                                       float d_start,
+                                       float d_end,
+                                       float z1,
+                                       float z2,
+                                       float pitch,
+                                       float thread_height,
+                                       float first_cut,
+                                       float min_cut,
+                                       float finish_allowance,
+                                       float clearance,
+                                       float taper,
+                                       int spring_passes,
+                                       int chamfer,
+                                       int tool_angle)
+{
+    float diameter_depth;
+    float rough_depth;
+    float rough_end;
+    int pass_count;
+    g7x_result_t result;
+
+    if (thread_height <= 0.0f || first_cut <= 0.0f || min_cut <= 0.0f)
+        return G7X_BAD_FIELD;
+    if (finish_allowance < 0.0f)
+        return G7X_BAD_FIELD;
+
+    diameter_depth = g7x_absf(d_start - d_end);
+    if (diameter_depth <= 0.0f)
+        diameter_depth = thread_height * 2.0f;
+    rough_depth = diameter_depth - (finish_allowance * 2.0f);
+    if (rough_depth <= 0.0f)
+        return G7X_BAD_FIELD;
+    if (g7x_too_many_steps(rough_depth, min_cut))
+        return G7X_BAD_FIELD;
+
+    pass_count = 1;
+    {
+        float cut = first_cut;
+        float depth = 0.0f;
+        while (depth + 0.0001f < rough_depth && pass_count < G7X_MAX_THREAD_PASSES) {
+            depth += cut;
+            if (depth >= rough_depth)
+                break;
+            cut *= 0.75f;
+            if (cut < min_cut)
+                cut = min_cut;
+            pass_count++;
+        }
+    }
+
+    rough_end = d_start + ((d_end < d_start) ? -rough_depth : rough_depth);
+    result = g7x_thread_begin_parsed(stream,
+                                     d_start,
+                                     rough_end,
+                                     z1,
+                                     z2,
+                                     pitch,
+                                     first_cut,
+                                     clearance,
+                                     pitch,
+                                     taper,
+                                     0.0f,
+                                     2.0f,
+                                     spring_passes,
+                                     pass_count,
+                                     0,
+                                     0.0f);
+    if (result != G7X_OK)
+        return result;
+
+    stream->d_end = d_end;
+    stream->depth = diameter_depth;
+    stream->rough_depth = rough_depth;
+    stream->min_doc = min_cut;
+    stream->finish_allow = finish_allowance;
+    stream->finish_left = finish_allowance > 0.0f ? 1 : 0;
+    stream->tool_angle = tool_angle;
+    stream->chamfer = chamfer;
+    return G7X_OK;
+}
+
 static bool g7x_thread_prepare_next_pass(g7x_thread_stream_t *stream)
 {
     float pass_depth;
@@ -1069,14 +1159,19 @@ static bool g7x_thread_prepare_next_pass(g7x_thread_stream_t *stream)
         float t;
         stream->pass++;
         t = (float)stream->pass / (float)stream->pass_count;
-        pass_depth = stream->depth *
+        pass_depth = stream->rough_depth *
                      (stream->strategy ? powf(t, 1.0f / stream->degression) : t);
-        if (pass_depth > stream->depth)
-            pass_depth = stream->depth;
+        if (stream->min_doc > 0.0f && pass_depth - stream->last_depth < stream->min_doc)
+            pass_depth = stream->last_depth + stream->min_doc;
+        if (pass_depth > stream->rough_depth)
+            pass_depth = stream->rough_depth;
         if (pass_depth <= stream->last_depth)
-            pass_depth = stream->depth;
+            pass_depth = stream->rough_depth;
         stream->last_depth = pass_depth;
         stream->pass_x1 = stream->d_start + ((stream->d_end < stream->d_start) ? -pass_depth : pass_depth);
+    } else if (stream->finish_left > 0) {
+        stream->finish_left--;
+        stream->pass_x1 = stream->d_end;
     } else if (stream->spring_left > 0) {
         stream->spring_left--;
         stream->pass_x1 = stream->d_end;
@@ -1106,14 +1201,27 @@ g7x_step_result_t g7x_thread_next(g7x_thread_stream_t *stream, char *out, size_t
     for (;;) {
         switch (stream->stage++) {
         case 0:
-            (void)snprintf(out, out_sz,
-                           "(G76 D %.3f X %.3f P %.3f DOC %.3f R %.3f N %d)",
-                           stream->d_start,
-                           stream->d_end,
-                           stream->pitch,
-                           stream->doc,
-                           stream->degression,
-                           stream->pass_count);
+            if (stream->min_doc > 0.0f || stream->finish_allow > 0.0f || stream->tool_angle) {
+                (void)snprintf(out, out_sz,
+                               "(G76 FANUC D %.3f X %.3f F %.3f P %.3f Q %.3f R %.3f A %d N %d)",
+                               stream->d_start,
+                               stream->d_end,
+                               stream->pitch,
+                               stream->depth * 0.5f,
+                               stream->min_doc,
+                               stream->finish_allow,
+                               stream->tool_angle,
+                               stream->pass_count);
+            } else {
+                (void)snprintf(out, out_sz,
+                               "(G76 D %.3f X %.3f P %.3f DOC %.3f R %.3f N %d)",
+                               stream->d_start,
+                               stream->d_end,
+                               stream->pitch,
+                               stream->doc,
+                               stream->degression,
+                               stream->pass_count);
+            }
             return G7X_STEP_LINE;
         case 1:
             (void)snprintf(out, out_sz, "(ELS RAMP: lead-in and lead-out are reserve space, not finished thread)");
@@ -1129,6 +1237,12 @@ g7x_step_result_t g7x_thread_next(g7x_thread_stream_t *stream, char *out, size_t
             if (stream->pass <= stream->pass_count) {
                 (void)snprintf(out, out_sz, "(THREAD pass %d X%.3f Z%.3f)",
                                stream->pass, stream->pass_x1, stream->pass_z1);
+            } else if (stream->finish_left == 0 && stream->spring_left >= 0 &&
+                       g7x_absf(stream->pass_x1 - stream->d_end) < 0.0001f &&
+                       stream->last_depth < stream->depth) {
+                stream->last_depth = stream->depth;
+                (void)snprintf(out, out_sz, "(THREAD finish X%.3f Z%.3f)",
+                               stream->pass_x1, stream->pass_z1);
             } else {
                 (void)snprintf(out, out_sz, "(THREAD spring X%.3f Z%.3f)",
                                stream->pass_x1, stream->pass_z1);

@@ -135,6 +135,8 @@ supported fallback paths:
 - HSTX live health poll and auto-recover
 - line-repeat watchdog and fault injection
 - canary/overlap/torture diagnostics in release builds
+- scanline slack/timing log instrumentation in release builds
+- chunked framebuffer present
 - Scratch X/Y placement tricks for HSTX live state
 
 Experimental PSRAM scanout was rejected because it was slow and caused sync
@@ -143,6 +145,10 @@ framebuffer measured roughly 7.3 ms for 240,000 bytes and produced display
 garbage even with HSTX DMA priority and paced present DMA. Keep
 `lvds_hstx_present()` on the CPU copy path unless the scanout architecture
 changes.
+
+Chunked framebuffer present was also removed. It was a pacing experiment for
+earlier unstable memory/scanout layouts; the current strict-memory backend uses
+one normal `lvds_hstx_present()` copy.
 
 Old failure logs showed cases where uCNC and motion continued while display
 scanout froze. That class was a stalled HSTX DMA/control path, not a full

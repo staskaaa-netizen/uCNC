@@ -321,6 +321,8 @@ extern "C"
 	void parser_get_probe(int32_t *position);
 	void parser_update_probe_pos(void);
 	uint8_t parser_get_probe_result(void);
+	uint8_t parser_exec_generated_block(parser_state_t *new_state, parser_words_t *words, parser_cmd_explicit_t *cmd);
+	void parser_set_state_from_module(const parser_state_t *state);
 	void parser_parameters_load(void);
 	void parser_parameters_reset(void);
 	void parser_parameters_save(void);

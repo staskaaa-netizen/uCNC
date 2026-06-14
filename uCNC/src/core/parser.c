@@ -67,6 +67,7 @@ FORCEINLINE static uint8_t parser_letter_word(uint8_t c, float value, uint8_t ma
 static uint8_t parser_grbl_exec_code(uint8_t code);
 static uint8_t parser_fetch_command(parser_state_t *new_state, parser_words_t *words, parser_cmd_explicit_t *cmd);
 static uint8_t parser_validate_command(parser_state_t *new_state, parser_words_t *words, parser_cmd_explicit_t *cmd);
+static uint8_t parser_exec_command(parser_state_t *new_state, parser_words_t *words, parser_cmd_explicit_t *cmd);
 static uint8_t parser_grbl_command(void);
 FORCEINLINE static uint8_t parser_gcode_command(bool is_jogging);
 
@@ -1321,6 +1322,19 @@ static uint8_t parser_validate_command(parser_state_t *new_state, parser_words_t
 	return STATUS_OK;
 }
 
+uint8_t parser_exec_generated_block(parser_state_t *new_state, parser_words_t *words, parser_cmd_explicit_t *cmd)
+{
+	return parser_exec_command(new_state, words, cmd);
+}
+
+void parser_set_state_from_module(const parser_state_t *state)
+{
+	if (state)
+	{
+		memcpy(&parser_state, state, sizeof(parser_state_t));
+	}
+}
+
 /**
  *
  *
@@ -1352,6 +1366,10 @@ static uint8_t parser_exec_command(parser_state_t *new_state, parser_words_t *wo
 #ifdef ENABLE_PARSER_MODULES
 	gcode_exec_args_t args = {&error, new_state, words, cmd, target, &block_data};
 	EVENT_INVOKE(gcode_exec_modifier, &args);
+	if (error != STATUS_OK)
+	{
+		return error;
+	}
 #endif
 
 	// stoping from previous command M2 or M30 command

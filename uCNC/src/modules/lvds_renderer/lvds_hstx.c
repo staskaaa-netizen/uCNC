@@ -64,10 +64,9 @@
 #define LVDS_HSTX_COORD_GUARD 4096
 #define LVDS_HSTX_TEXT_GUARD 256
 
-#define LVDS_HSTX_DMACH_PING 10
-#define LVDS_HSTX_DMACH_PONG 11
+#define LVDS_HSTX_DMACH_DATA 10
+#define LVDS_HSTX_DMACH_CTRL 11
 #define LVDS_HSTX_SYS_CLOCK_KHZ LVDS_SYS_CLOCK_KHZ
-#define LVDS_HSTX_PRESENT_MAX_CHUNKS 1024u
 #define LVDS_HSTX_ACTIVE_LINE_BUFFERS 4u
 
 #ifndef LVDS_HSTX_CORE1_READY_TIMEOUT_MS
@@ -135,10 +134,6 @@ typedef struct {
     volatile bool display_started;
     bool backbuffer_active;
     bool dirty;
-    bool present_chunk_active;
-    uint16_t present_chunk_count;
-    uint16_t present_chunk_index;
-    uint32_t present_chunk_offset;
 } lvds_hstx_ctrl_state_t;
 
 typedef struct {
@@ -179,10 +174,6 @@ static lvds_hstx_palette_state_t g_hstx_palette LVDS_HSTX_SECTION_PALETTE;
 #define g_display_started (g_hstx_ctrl.display_started)
 #define g_backbuffer_active (g_hstx_ctrl.backbuffer_active)
 #define g_dirty (g_hstx_ctrl.dirty)
-#define g_present_chunk_active (g_hstx_ctrl.present_chunk_active)
-#define g_present_chunk_count (g_hstx_ctrl.present_chunk_count)
-#define g_present_chunk_index (g_hstx_ctrl.present_chunk_index)
-#define g_present_chunk_offset (g_hstx_ctrl.present_chunk_offset)
 #define g_core1_ready (g_hstx_core1.ready)
 #define g_descriptor_last_index (g_hstx_core1.descriptor_last_index)
 
@@ -414,11 +405,11 @@ static void lvds_hstx_build_descriptor_ring(void)
 static void __no_inline_not_in_flash_func(lvds_hstx_descriptor_refill)(void)
 {
     uintptr_t base = (uintptr_t)g_scanout_line_addr_ring;
-    uintptr_t read = (uintptr_t)dma_hw->ch[LVDS_HSTX_DMACH_PONG].read_addr;
+    uintptr_t read = (uintptr_t)dma_hw->ch[LVDS_HSTX_DMACH_CTRL].read_addr;
     uint32_t index = (uint32_t)(((read - base) & ((LVDS_HSTX_DESCRIPTOR_RING_LINES * sizeof(uint32_t)) - 1u)) / sizeof(uint32_t));
 
     if (index >= LVDS_HSTX_V_TOTAL) {
-        dma_hw->ch[LVDS_HSTX_DMACH_PONG].read_addr = (uint32_t)base;
+        dma_hw->ch[LVDS_HSTX_DMACH_CTRL].read_addr = (uint32_t)base;
         g_descriptor_last_index = 0xffffffffu;
         index = 0;
     }
@@ -446,9 +437,9 @@ static void __no_inline_not_in_flash_func(poll_dma_scanout)(void)
     // Core1/HSTX realtime path: keep permanent buffers static/aligned and do
     // not add large automatic locals here. Stack overflow can corrupt DMA
     // descriptors/control state silently before the main core notices.
-    const uint32_t ping_bit = 1u << LVDS_HSTX_DMACH_PING;
-    const uint32_t pong_bit = 1u << LVDS_HSTX_DMACH_PONG;
-    const uint32_t scanout_bits = ping_bit | pong_bit;
+    const uint32_t data_bit = 1u << LVDS_HSTX_DMACH_DATA;
+    const uint32_t ctrl_bit = 1u << LVDS_HSTX_DMACH_CTRL;
+    const uint32_t scanout_bits = data_bit | ctrl_bit;
 
     while (1) {
         dma_hw->intr = dma_hw->intr & scanout_bits;
@@ -458,9 +449,9 @@ static void __no_inline_not_in_flash_func(poll_dma_scanout)(void)
 
 static void init_hstx(void)
 {
-    const uint32_t ping_bit = 1u << LVDS_HSTX_DMACH_PING;
-    const uint32_t pong_bit = 1u << LVDS_HSTX_DMACH_PONG;
-    const uint32_t scanout_bits = ping_bit | pong_bit;
+    const uint32_t data_bit = 1u << LVDS_HSTX_DMACH_DATA;
+    const uint32_t ctrl_bit = 1u << LVDS_HSTX_DMACH_CTRL;
+    const uint32_t scanout_bits = data_bit | ctrl_bit;
 
     g_descriptor_last_index = 0xffffffffu;
     for (uint8_t i = 0; i < LVDS_HSTX_ACTIVE_LINE_BUFFERS; i++) {
@@ -469,17 +460,17 @@ static void init_hstx(void)
     lvds_hstx_build_descriptor_ring();
 
     irq_set_enabled(DMA_IRQ_1, false);
-    dma_channel_abort(LVDS_HSTX_DMACH_PING);
-    dma_channel_abort(LVDS_HSTX_DMACH_PONG);
+    dma_channel_abort(LVDS_HSTX_DMACH_DATA);
+    dma_channel_abort(LVDS_HSTX_DMACH_CTRL);
     dma_hw->inte1 &= ~scanout_bits;
     dma_hw->ints1 = scanout_bits;
     dma_hw->intr = scanout_bits;
 
-    if (!dma_channel_is_claimed(LVDS_HSTX_DMACH_PING)) {
-        dma_channel_claim(LVDS_HSTX_DMACH_PING);
+    if (!dma_channel_is_claimed(LVDS_HSTX_DMACH_DATA)) {
+        dma_channel_claim(LVDS_HSTX_DMACH_DATA);
     }
-    if (!dma_channel_is_claimed(LVDS_HSTX_DMACH_PONG)) {
-        dma_channel_claim(LVDS_HSTX_DMACH_PONG);
+    if (!dma_channel_is_claimed(LVDS_HSTX_DMACH_CTRL)) {
+        dma_channel_claim(LVDS_HSTX_DMACH_CTRL);
     }
 
     hstx_ctrl_hw->csr = 0;
@@ -509,27 +500,27 @@ static void init_hstx(void)
         gpio_set_function(hstx_pins[i], 0);
     }
 
-    dma_channel_config c = dma_channel_get_default_config(LVDS_HSTX_DMACH_PING);
-    channel_config_set_chain_to(&c, LVDS_HSTX_DMACH_PONG);
+    dma_channel_config c = dma_channel_get_default_config(LVDS_HSTX_DMACH_DATA);
+    channel_config_set_chain_to(&c, LVDS_HSTX_DMACH_CTRL);
     channel_config_set_dreq(&c, DREQ_HSTX);
-    dma_channel_configure(LVDS_HSTX_DMACH_PING,
+    dma_channel_configure(LVDS_HSTX_DMACH_DATA,
                           &c,
                           &hstx_fifo_hw->fifo,
                           (const void *)(uintptr_t)g_scanout_line_addr_ring[0],
                           LVDS_HSTX_LINE_TRANSFERS,
                           false);
 
-    c = dma_channel_get_default_config(LVDS_HSTX_DMACH_PONG);
-    channel_config_set_chain_to(&c, LVDS_HSTX_DMACH_PING);
+    c = dma_channel_get_default_config(LVDS_HSTX_DMACH_CTRL);
+    channel_config_set_chain_to(&c, LVDS_HSTX_DMACH_DATA);
     /* Control DMA only rewrites the FIFO DMA read_addr. It must not consume
        HSTX pacing slots; only the data channel is paced by DREQ_HSTX. */
     channel_config_set_dreq(&c, DREQ_FORCE);
     channel_config_set_read_increment(&c, true);
     channel_config_set_write_increment(&c, false);
     channel_config_set_ring(&c, false, 12);
-    dma_channel_configure(LVDS_HSTX_DMACH_PONG,
+    dma_channel_configure(LVDS_HSTX_DMACH_CTRL,
                           &c,
-                          &dma_hw->ch[LVDS_HSTX_DMACH_PING].read_addr,
+                          &dma_hw->ch[LVDS_HSTX_DMACH_DATA].read_addr,
                           &g_scanout_line_addr_ring[1],
                           1,
                           false);
@@ -538,7 +529,7 @@ static void init_hstx(void)
     dma_hw->intr = scanout_bits;
     dma_hw->inte1 &= ~scanout_bits;
     bus_ctrl_hw->priority = BUSCTRL_BUS_PRIORITY_DMA_W_BITS | BUSCTRL_BUS_PRIORITY_DMA_R_BITS;
-    dma_channel_start(LVDS_HSTX_DMACH_PING);
+    dma_channel_start(LVDS_HSTX_DMACH_DATA);
 }
 
 static void __no_inline_not_in_flash_func(core1_entry)(void)
@@ -614,10 +605,6 @@ bool lvds_hstx_init(void)
     g_draw_buffer = g_framebuffer;
     g_backbuffer_active = false;
     g_dirty = false;
-    g_present_chunk_active = false;
-    g_present_chunk_count = 0;
-    g_present_chunk_index = 0;
-    g_present_chunk_offset = 0;
 #if LEANCAM_USE_PSRAM_BACKBUFFER
     if (lvds_psram_available()) {
         g_draw_buffer = (uint8_t *)lvds_psram_ptr(0);
@@ -850,70 +837,11 @@ void lvds_hstx_present(void)
     if (cnc_is_file_io_critical()) {
         return;
     }
-    if (g_backbuffer_active) {
+    if (g_backbuffer_active && g_dirty) {
         memcpy(g_framebuffer, g_draw_buffer, LVDS_HSTX_FB_SIZE);
         g_dirty = false;
     }
     (void)g_display_started;
-}
-
-void lvds_hstx_present_chunked_request(uint16_t chunks)
-{
-    if (cnc_is_file_io_critical()) {
-        return;
-    }
-    if (!g_backbuffer_active || !g_dirty || g_present_chunk_active) {
-        return;
-    }
-    if (chunks < 1u) {
-        chunks = 1u;
-    }
-    if (chunks > LVDS_HSTX_PRESENT_MAX_CHUNKS) {
-        chunks = LVDS_HSTX_PRESENT_MAX_CHUNKS;
-    }
-
-    g_present_chunk_active = true;
-    g_present_chunk_count = chunks;
-    g_present_chunk_index = 0;
-    g_present_chunk_offset = 0;
-}
-
-bool lvds_hstx_present_chunked_step(void)
-{
-    uint32_t chunk_bytes;
-    uint32_t remaining;
-    uint32_t chunks_left;
-
-    if (!g_present_chunk_active) {
-        return false;
-    }
-    if (cnc_is_file_io_critical()) {
-        return true;
-    }
-
-    remaining = LVDS_HSTX_FB_SIZE - g_present_chunk_offset;
-    chunks_left = (uint32_t)g_present_chunk_count - (uint32_t)g_present_chunk_index;
-    if (chunks_left <= 1u) {
-        chunk_bytes = remaining;
-    } else {
-        chunk_bytes = (remaining + chunks_left - 1u) / chunks_left;
-    }
-
-    memcpy(g_framebuffer + g_present_chunk_offset, g_draw_buffer + g_present_chunk_offset, chunk_bytes);
-
-    g_present_chunk_offset += chunk_bytes;
-    g_present_chunk_index++;
-    if (g_present_chunk_offset >= LVDS_HSTX_FB_SIZE || g_present_chunk_index >= g_present_chunk_count) {
-        g_present_chunk_active = false;
-        g_dirty = false;
-        return false;
-    }
-    return true;
-}
-
-bool lvds_hstx_present_chunked_busy(void)
-{
-    return g_present_chunk_active;
 }
 
 lvds_color_t lvds_hstx_rgb565(uint16_t rgb565)

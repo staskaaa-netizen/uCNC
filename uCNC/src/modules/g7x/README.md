@@ -1,7 +1,8 @@
 # G71/G72 Notes
 
-This directory is currently a reference and staging area for LinuxCNC G71/G72
-examples and for a possible standalone uCNC G7x generator module.
+This directory owns the standalone uCNC G7x generator/parser module for
+`G71/G72`. NC and LeanCam-style screens may consume it for preview, but the
+module must be able to run without any NC UI module loaded.
 
 The files copied from LinuxCNC are not firmware code for uCNC. They are useful
 for semantics, edge cases, and future tests.
@@ -27,33 +28,40 @@ The useful point from that page is the common lathe-cycle grouping:
 
 The first support boundary now exists here:
 
-- `src/modules/g71_g72/g71_g72.c`
-- `src/modules/g71_g72/g71_g72.h`
+- `src/modules/g7x/g7x.c`
+- `src/modules/g7x/g7x.h`
+- `src/modules/g7x/g7x_contour.c`
+- `src/modules/g7x/g7x_contour.h`
 
-This first pass owns common G7x result/cycle enums, modal context helpers,
-boring source-row parsing/classification, contour element vocabulary, fixed
-contour storage limits, and the small cycle profile table that names each
-cycle's pass axis, cut axis, monotonic contour axis, and rough DOC word.
+This module owns common G7x result/cycle enums, modal context helpers, boring
+source-row parsing/classification, contour element vocabulary, fixed contour
+storage limits, and the small cycle profile table that names each cycle's pass
+axis, cut axis, monotonic contour axis, and rough DOC word.
 
-The module also exposes a stepped stream generator used by NC SIM/preview.
-That stream API is still intentionally useful as an offline/preview bridge.
+The module also exposes a stepped stream generator. NC SIM/preview may use that
+API directly, but it is an optional consumer path, not the execution owner.
 
-Parser integration has started as a safe shell:
+Parser integration is the modal-region owner:
 
 - `G71` / `G72` are recognized as parser extension headers.
 - `U` / `W` rough-depth header words are accepted for those headers.
-- while a G7x region is active, source contour `G0`/`G1`/`G2`/`G3` rows are
-  suppressed so they do not accidentally execute as normal motion.
-- `G80` ends the active parser-side region.
+- the header initializes a parser-side `g7x_stream_t`.
+- while a G7x region is active, parsed contour `G0`/`G1`/`G2`/`G3` rows are
+  stored into that stream and suppressed so they do not accidentally execute as
+  normal motion.
+- parsed line `R` round and `C` chamfer metadata are preserved for the contour
+  where uCNC exposes those words to the module.
+- `G80` ends and prepares the active parser-side region.
+- after `G80`, generated rough/finish rows execute as parsed motion blocks via
+  the parser generated-block helper, following the same broad model as canned
+  cycles.
 
-Current parser-shell limitations:
+Current parser integration limitations:
 
-- it does not yet collect parsed contour elements into `g7x_stream_t`.
-- it does not yet feed generated rough/finish moves back through the live
-  parser stream.
-- NC SIM/preview therefore still uses the stepped stream API.
-- until the live parser stream feed exists, RUN must treat this as a safe
-  parser owner/suppressor, not as finished machine roughing.
+- parser-side bad-contour/status reporting is still coarse.
+- generated block failure paths need more machine-side testing.
+- NC SIM/preview still uses the stepped stream API directly. That is allowed as
+  preview glue, but NC must not grow a second G71/G72 generator.
 
 LeanCam still has older local generator code in:
 
@@ -84,44 +92,46 @@ G71/G72 has become real domain logic, not UI glue:
 - stepped runtime state
 
 Keeping that inside `leancam_gcode.c` makes the LeanCam generator too broad.
-The better long-term shape is a boring C helper module that LeanCam calls.
+The better long-term shape is this boring C helper/parser module, with any UI
+layer acting only as a caller or preview consumer.
 
-## Proposed First Split
+## Native Parser Direction
 
-Grow the existing small support module into a generator-only module:
+Grow the existing small support module into a parser-owned modal cycle:
 
 ```text
-src/modules/g71_g72/g71_g72.c
-src/modules/g71_g72/g71_g72.h
+src/modules/g7x/g7x.c
+src/modules/g7x/g7x.h
+src/modules/g7x/g7x_contour.c
+src/modules/g7x/g7x_contour.h
 ```
 
 Keep it plain C:
 
-- no file IO
+- no file IO in the geometry/generator core
 - no UI
 - no snapshots
 - no LVDS
 - no keypad/menu state
 - no dynamic allocation
-- caller-provided output callback
 - fixed contour limits
-- explicit stepper state object supplied by the caller
+- one parser-side active region collector
+- explicit stepper state object supplied by parser RUN or NC preview
 
-LeanCam would remain responsible for:
+NC remains responsible for:
 
-- finding the source range in the visible program
-- reading source rows
-- resolving setup/tool defaults
-- deciding whether this is preview, preflight, file generation, or run stream
-- feeding generated lines into `grbl_stream_readonly()`
+- showing/editing source files
+- streaming the selected source file to uCNC
+- drawing preview from the shared G7x generator while parser stream injection is
+  still being finished
 
 The G7x module would own:
 
-- parsing `G71/G72` cycle words
-- collecting contour rows until `G80`
+- accepting `G71/G72` cycle headers from parser hooks
+- collecting parsed contour rows until `G80`
 - validating the contour
 - expanding R/C helper geometry where supported
-- emitting rough/finish lines
+- feeding generated rough/finish blocks through parser execution
 - stepping one generated line at a time
 
 ## uCNC RS274 Reuse
@@ -138,11 +148,13 @@ Useful public pieces:
 - word/group defines such as `GCODE_WORD_X`, `GCODE_GROUP_UNITS`, and
   `GCODE_GROUP_DISTANCE` for shared naming and future validation.
 
-Do not call or clone the live parser's private token/validation functions for
-this module. They are stream-stateful, many are `static`, and LeanCam needs
-offline source parsing for preview, preflight, file generation, and demand-fed
-run streaming. G7x therefore keeps a tiny row reader for source rows and emits
-ordinary `G0/G1/G2/G3` lines back through uCNC's normal parser/planner path.
+Do not clone the live parser's private token/validation functions for parser
+RUN. Parser RUN should capture already-parsed words from uCNC hooks and emit
+ordinary generated `G0/G1/G2/G3` blocks through uCNC's normal parser/planner
+path.
+
+The source-row reader stays only as a temporary offline/preview adapter and as
+a small host-test helper. It must not grow into a second runtime parser.
 
 The closest upstream uCNC model is the canned-cycle block executor:
 
@@ -155,28 +167,21 @@ That code expands modal canned cycles by copying `parser_state_t`,
 calling `parser_exec_command()` for each generated move. It also owns sticky
 cycle state such as retract and target depth.
 
-That is a good future pattern for a true parser-level G7x implementation, but
-it is intentionally not the first LeanCam split. G71/G72 currently needs a
-multi-line contour between `G71/G72` and `G80`, plus preview/preflight/file
-generation without executing motion. The present module should therefore stay
-as a generator that emits normal lines. A later parser-level G7x can reuse the
-canned-cycle style once uCNC has a clear contour storage contract.
+That remains useful as a reference for generated execution, but G71/G72 needs a
+multi-line contour between `G71/G72` and `G80`. The live implementation should
+therefore behave like a small modal region plus generated parser blocks, not
+like a single G33-style motion command.
 
-## Not Yet
-
-Do not turn this into a uCNC parser extension yet.
-
-The current machine-safe path is:
+The intended machine path is:
 
 ```text
-LeanCam source rows
-  -> G7x generator emits ordinary G0/G1/G2/G3 lines
+NC source file
+  -> uCNC parser sees G71/G72 and opens G7x region
+  -> parsed contour rows are captured and suppressed
+  -> G80 closes the region
+  -> G7x generated blocks execute ordinary G0/G1/G2/G3 motion
   -> uCNC parser/planner/motion own execution
 ```
-
-A parser-level `G71/G72` module can be considered later, but it would need a
-real contour storage and multi-line ownership contract inside uCNC. That is a
-bigger change than this cleanup needs.
 
 Do not implement `G70` or `G73` in the first extraction.
 

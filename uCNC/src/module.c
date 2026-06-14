@@ -45,6 +45,9 @@ static FORCEINLINE void load_modules(void)
 #endif
 #ifdef LOAD_MODULES_OVERRIDE
 	LOAD_MODULES_OVERRIDE();
+#elif defined(ENABLE_NC_MODULE)
+	LOAD_MODULE(g7x);
+	LOAD_MODULE(nc);
 #elif defined(ENABLE_LVDS_RENDERER)
 	LOAD_MODULE(leanCam);
 #endif

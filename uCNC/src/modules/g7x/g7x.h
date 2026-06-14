@@ -1,5 +1,5 @@
-#ifndef G71_G72_H
-#define G71_G72_H
+#ifndef G7X_H
+#define G7X_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -77,6 +77,7 @@ typedef struct {
     int has_center;
     g7x_corner_kind_t outgoing_kind;
     float outgoing_amount;
+    size_t source_line;
 } g7x_contour_element_t;
 
 typedef struct {
@@ -112,8 +113,39 @@ typedef struct {
     float max_z;
     float feed;
     float doc;
+    size_t pending_source_line;
+    size_t last_source_line;
     g7x_contour_region_t region;
 } g7x_stream_t;
+
+typedef struct {
+    uint8_t motion;
+    bool has_x;
+    bool has_z;
+    bool has_r;
+    bool has_i;
+    bool has_k;
+    bool has_f;
+    size_t source_line;
+    float x;
+    float z;
+    float r;
+    float i;
+    float k;
+    float f;
+} g7x_motion_block_t;
+
+typedef enum {
+    G7X_EVENT_NONE = 0,
+    G7X_EVENT_COMMENT,
+    G7X_EVENT_MOTION
+} g7x_event_type_t;
+
+typedef struct {
+    g7x_event_type_t type;
+    char comment[48];
+    g7x_motion_block_t motion;
+} g7x_event_t;
 
 enum {
     G7X_DISTANCE_ABSOLUTE = 0,
@@ -124,20 +156,35 @@ enum {
 
 void g7x_modal_default(g7x_modal_t *modal);
 void g7x_modal_from_ucnc_modes(g7x_modal_t *modal, const uint8_t *modalgroups);
-bool g7x_modal_apply_line(g7x_modal_t *modal, const char *line);
-
-bool g7x_command_is(const char *line, const char *cmd);
-bool g7x_get_field_text(const char *line, const char *key, char *out, size_t out_sz);
-bool g7x_get_field_float(const char *line, const char *key, float *out);
-
-g7x_cycle_t g7x_cycle_from_line(const char *line);
-g7x_contour_cmd_t g7x_contour_cmd_from_line(const char *line);
 bool g7x_cycle_profile(g7x_cycle_t cycle, g7x_cycle_profile_t *profile);
 
 void g7x_stream_reset(g7x_stream_t *stream);
-g7x_result_t g7x_stream_begin(g7x_stream_t *stream, const char *cycle_line);
-g7x_result_t g7x_stream_add_line(g7x_stream_t *stream, const char *line, bool *done);
+g7x_result_t g7x_stream_begin_parsed(g7x_stream_t *stream,
+                                     g7x_cycle_t cycle,
+                                     float retract,
+                                     float x_allow,
+                                     float z_allow,
+                                     float feed,
+                                     float doc);
+g7x_result_t g7x_stream_add_parsed(g7x_stream_t *stream,
+                                   g7x_contour_cmd_t cmd,
+                                   float x,
+                                   bool has_x,
+                                   float z,
+                                   bool has_z,
+                                   float r,
+                                   bool has_r,
+                                   float i,
+                                   bool has_i,
+                                   float k,
+                                   bool has_k,
+                                   g7x_corner_kind_t corner_kind,
+                                   float corner_amount,
+                                   bool *done);
 g7x_step_result_t g7x_stream_next(g7x_stream_t *stream, char *out, size_t out_sz);
+g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event);
+g7x_step_result_t g7x_stream_next_block(g7x_stream_t *stream, g7x_motion_block_t *block);
+bool g7x_parser_busy(void);
 
 const char *g7x_result_text(g7x_result_t result);
 

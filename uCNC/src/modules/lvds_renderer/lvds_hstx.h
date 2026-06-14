@@ -42,9 +42,6 @@ void lvds_hstx_fill_ellipse(int x, int y, int rx, int ry, lvds_color_t color);
 void lvds_hstx_text(int x, int y, const char *text, lvds_color_t fg, lvds_color_t bg, int font);
 int lvds_hstx_text_width(const char *text, int font);
 void lvds_hstx_present(void);
-void lvds_hstx_present_chunked_request(uint16_t chunks);
-bool lvds_hstx_present_chunked_step(void);
-bool lvds_hstx_present_chunked_busy(void);
 
 lvds_color_t lvds_hstx_rgb565(uint16_t rgb565);
 lvds_color_t lvds_hstx_rgb(uint8_t r, uint8_t g, uint8_t b);

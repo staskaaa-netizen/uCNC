@@ -45,6 +45,8 @@ static FORCEINLINE void load_modules(void)
 #endif
 #ifdef LOAD_MODULES_OVERRIDE
 	LOAD_MODULES_OVERRIDE();
+#elif defined(ENABLE_G7X_MODULE)
+	LOAD_MODULE(g7x);
 #elif defined(ENABLE_NC_MODULE)
 	LOAD_MODULE(g7x);
 	LOAD_MODULE(nc);

@@ -313,9 +313,7 @@ bool g33_exec(void *args)
 		// This prevents second-run stale dt/rpm samples like TOOL RPM 1.5.
 		// reset virtual index too
 
-		#if defined(ENC0_INDEX_VIRTUAL_FIRE_HOOK) && (ENC0_INDEX_VIRTUAL_FIRE_HOOK != 0)
-		enc0_virtual_index_unarm();
-		#endif
+		encoder_virtual_index_clear(G33_ENCODER);
 
 		ATOMIC_CODEBLOCK
 		{

@@ -6,6 +6,8 @@
  */
 #include "leancam_gcode.h"
 #include "leancam_code.h"
+#include "leancam_dictionary.h"
+#include "../g7x/g7x_contour.h"
 
 #include <stdarg.h>
 #include <float.h>
@@ -33,10 +35,6 @@
 #define LC_GCODE_MAX_ABS_VALUE 1000000.0f
 #endif
 
-#ifndef LC_GCODE_MAX_CONTOUR_ELEMENTS
-#define LC_GCODE_MAX_CONTOUR_ELEMENTS 48
-#endif
-
 typedef struct
 {
     float rough_feed;
@@ -49,50 +47,15 @@ typedef struct
 static const lc_gcode_line_options_t lc_default_line_options = { 1, 1 };
 static const lc_gcode_line_options_t lc_program_line_options = { 0, 0 };
 
-typedef enum
-{
-    LC_CORNER_NONE = 0,
-    LC_CORNER_RND,
-    LC_CORNER_CHMF
-} lc_corner_kind_t;
-
-typedef enum
-{
-    LC_CONTOUR_LINE = 0,
-    LC_CONTOUR_ARC
-} lc_contour_kind_t;
-
-typedef struct
-{
-    lc_contour_kind_t kind;
-    float d;
-    float z;
-    float r;
-    int cw;
-    int gcode_cw;
-    float i;
-    float k;
-    int has_center;
-    lc_corner_kind_t outgoing_kind;
-    float outgoing_amount;
-} lc_contour_element_t;
-
-typedef enum
-{
-    LC_RAW_NONE = 0,
-    LC_RAW_G71,
-    LC_RAW_G72
-} lc_raw_cycle_t;
-
 typedef struct
 {
     int active;
-    lc_raw_cycle_t cycle;
+    g7x_cycle_t cycle;
     lc_cut_ctx_t cut;
     float retract;
     float x_allow;
     float z_allow;
-    lc_contour_element_t elements[LC_GCODE_MAX_CONTOUR_ELEMENTS];
+    g7x_contour_element_t elements[G7X_MAX_CONTOUR_ELEMENTS];
     unsigned count;
 } lc_raw_region_t;
 
@@ -215,8 +178,28 @@ static int lc_command_is(const char *line, const char *cmd)
 
     if (!line || !cmd)
         return 0;
+
     while (*line == ' ' || *line == '\t')
         line++;
+
+    if (*line == 'N')
+    {
+        const char *p = line + 1;
+        int saw_digit = 0;
+
+        while (*p >= '0' && *p <= '9')
+        {
+            saw_digit = 1;
+            p++;
+        }
+        if (saw_digit && (*p == ' ' || *p == '\t'))
+        {
+            while (*p == ' ' || *p == '\t')
+                p++;
+            line = p;
+        }
+    }
+
     n = strlen(cmd);
     return strncmp(line, cmd, n) == 0 &&
            (line[n] == 0 || line[n] == ' ' || line[n] == '\t');
@@ -551,17 +534,17 @@ static void lc_override_ctx_from_line(const char *line, lc_cut_ctx_t *ctx)
     if (!line || !ctx)
         return;
 
-    (void)lc_field_float3(line, "F", "R_FEED", "ROUGH_FEED", &ctx->rough_feed);
+    (void)lc_field_float3(line, LC_DICT_WORD_F, "R_FEED", "ROUGH_FEED", &ctx->rough_feed);
     (void)lc_field_float2(line, "F_R", "DOC_FEED_R", &ctx->rough_feed);
     (void)lc_field_float(line, "FEED", &ctx->rough_feed);
-    (void)lc_field_float2(line, "FIN_FEED", "FINISH_FEED", &ctx->finish_feed);
+    (void)lc_field_float3(line, LC_DICT_WORD_FF, "FIN_FEED", "FINISH_FEED", &ctx->finish_feed);
     (void)lc_field_float2(line, "F_F", "FINISH_FEED_F", &ctx->finish_feed);
-    (void)lc_field_float3(line, "DOC", "R_DOC", "ROUGH_DOC", &ctx->rough_doc);
+    (void)lc_field_float3(line, LC_DICT_WORD_DOC, "R_DOC", "ROUGH_DOC", &ctx->rough_doc);
     (void)lc_field_float2(line, "DOC_R", "ROUGH_DEPTH", &ctx->rough_doc);
     (void)lc_field_float(line, "ROUGH_DEPTH_OF_CUT", &ctx->rough_doc);
-    (void)lc_field_float2(line, "FIN_DOC", "FINISH_DEPTH_OF_CUT", &ctx->finish_doc);
+    (void)lc_field_float3(line, LC_DICT_WORD_FDOC, "FIN_DOC", "FINISH_DEPTH_OF_CUT", &ctx->finish_doc);
     (void)lc_field_float2(line, "DOC_F", "FINISH_DEPTH", &ctx->finish_doc);
-    if (lc_field_float3(line, "S", "RPM", "SPINDLE_RPM", &rpm) && rpm > 0.0f)
+    if (lc_field_float3(line, LC_DICT_WORD_S, "RPM", "SPINDLE_RPM", &rpm) && rpm > 0.0f)
         ctx->spindle_rpm = (int)rpm;
 
     lc_sanitize_cut_ctx(ctx);
@@ -573,11 +556,92 @@ static lc_gcode_result_t lc_setup_clearance(const char *cycle,
                                             char *err,
                                             unsigned err_len)
 {
-    if (!setup || !lc_field_float(setup, "CLR", out))
-        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: missing/bad SETUP.CLR", cycle);
+    if (!out)
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: bad clearance", cycle);
+    *out = 1.0f;
+    if (!setup || !setup[0])
+        return LC_GCODE_OK;
+    if (!lc_field_float(setup, "CLR", out))
+        return LC_GCODE_OK;
     if (*out < 0.0f)
-        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: SETUP.CLR must be >= 0", cycle);
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: clearance must be >= 0", cycle);
     return LC_GCODE_OK;
+}
+
+static lc_gcode_result_t lc_validate_setup_nc(const char *line, char *err, unsigned err_len)
+{
+    const char *p = line;
+    float x;
+    float u;
+    float z;
+    float w;
+    float i = 0.0f;
+    float e = 0.0f;
+    float c;
+    float mode_value;
+    int mode;
+
+    while (p && (*p == ' ' || *p == '\t'))
+        p++;
+
+    if (p && strncmp(p, "SETUP", 5) == 0 &&
+        (p[5] == 0 || p[5] == ' ' || p[5] == '\t'))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "SETUP is obsolete; use G970/G971/G972/G973");
+
+    if (lc_command_is(line, "G970"))
+    {
+        if (!lc_field_float(line, "X", &x) ||
+            !lc_field_float(line, "U", &u) ||
+            !lc_field_float(line, "Z", &z) ||
+            !lc_field_float(line, "W", &w))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G970: need X U Z W");
+        if (x >= u)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G970: X must be < U");
+        if (z >= w)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G970: Z must be < W");
+        return LC_GCODE_OK;
+    }
+
+    if (lc_command_is(line, "G971"))
+    {
+        if (!lc_field_float(line, "X", &x) ||
+            !lc_field_float(line, "Z", &z))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G971: need X Z");
+        (void)lc_field_float(line, "I", &i);
+        (void)lc_field_float(line, "E", &e);
+        if (x <= 0.0f)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G971: X must be > 0");
+        if (z <= 0.0f)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G971: Z must be > 0");
+        if (i < 0.0f)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G971: I must be >= 0");
+        if (i >= x)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G971: I must be < X");
+        if (e < 0.0f)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G971: E must be >= 0");
+        return LC_GCODE_OK;
+    }
+
+    if (lc_command_is(line, "G972"))
+    {
+        if (!lc_field_float(line, "C", &c))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G972: need C");
+        if (c < 0.0f)
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G972: C must be >= 0");
+        return LC_GCODE_OK;
+    }
+
+    if (lc_command_is(line, "G973"))
+    {
+        if (!lc_field_float(line, "P", &mode_value))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G973: need P");
+        mode = (int)mode_value;
+        if ((float)mode != mode_value || !(mode == 0 || mode == 1 || mode == 3 || mode == 7))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G973: P must be 0, 1, 3, or 7");
+        return LC_GCODE_OK;
+    }
+
+    return LC_GCODE_UNSUPPORTED;
 }
 
 static void lc_read_cut_ctx(const char *tool, lc_cut_ctx_t *ctx)
@@ -597,7 +661,6 @@ static void lc_read_cut_ctx(const char *tool, lc_cut_ctx_t *ctx)
 
 static int lc_emit_modal_header(lc_gcode_send_fn send, void *user)
 {
-    if (!lc_emit(send, user, "G21")) return 0;
     if (!lc_emit(send, user, "G90")) return 0;
     if (!lc_emit(send, user, "G18"))  return 0;
     if (!lc_emit(send, user, "G7"))  return 0;
@@ -813,9 +876,6 @@ static lc_gcode_result_t lc_run_thread(const char *line,
     int has_i;
     int has_x_end;
 
-    if (!setup)
-        return lc_fail(LC_GCODE_NO_SETUP, err, err_len, "%s: no SETUP", cycle);
-
     /* LeanCam expands G76 into explicit G33 passes. LinuxCNC-style words are
      * accepted where they map cleanly: P=pitch, J=first cut/DOC, K=full thread
      * depth, R=degression, Q=compound angle, H=spring passes. Older LeanCam
@@ -828,7 +888,7 @@ static lc_gcode_result_t lc_run_thread(const char *line,
 
     if (!lc_field_float2(line, "START_X", "X_START", &d_start) &&
         !lc_field_float2(setup, "OD", "OUTER_DIAMETER", &d_start))
-        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: need START_X or SETUP.OD", cycle);
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: need START_X or X_START", cycle);
     has_x_end = lc_field_text2(line, "X", "X_END", field_text, sizeof(field_text));
     if (has_x_end && !lc_parse_float_text(field_text, &d_end))
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: bad X", cycle);
@@ -1110,8 +1170,8 @@ static lc_gcode_result_t lc_emit_raw_finish_chain(const lc_raw_region_t *region,
 
     for (i = start_index; i < region->count; ++i)
     {
-        const lc_contour_element_t *el = &region->elements[i];
-        if (el->kind == LC_CONTOUR_ARC)
+        const g7x_contour_element_t *el = &region->elements[i];
+        if (el->kind == G7X_SEGMENT_ARC)
         {
             if (el->has_center)
             {
@@ -1136,20 +1196,20 @@ static lc_gcode_result_t lc_emit_raw_finish_chain(const lc_raw_region_t *region,
     return LC_GCODE_OK;
 }
 
-static bool lc_raw_add_effective_element(lc_raw_region_t *out, const lc_contour_element_t *src)
+static bool lc_raw_add_effective_element(lc_raw_region_t *out, const g7x_contour_element_t *src)
 {
-    if (!out || !src || out->count >= LC_GCODE_MAX_CONTOUR_ELEMENTS)
+    if (!out || !src || out->count >= G7X_MAX_CONTOUR_ELEMENTS)
         return false;
     out->elements[out->count++] = *src;
     return true;
 }
 
 static bool lc_raw_effective_forward_on_segment(const lc_raw_region_t *out,
-                                                const lc_contour_element_t *seg0,
-                                                const lc_contour_element_t *seg1,
-                                                const lc_contour_element_t *next)
+                                                const g7x_contour_element_t *seg0,
+                                                const g7x_contour_element_t *seg1,
+                                                const g7x_contour_element_t *next)
 {
-    const lc_contour_element_t *last;
+    const g7x_contour_element_t *last;
     float sx;
     float sz;
     float dx;
@@ -1170,11 +1230,11 @@ static bool lc_raw_effective_forward_on_segment(const lc_raw_region_t *out,
     return ((dx * sx) + (dz * sz)) >= -0.0001f;
 }
 
-static bool lc_raw_expand_corner(const lc_contour_element_t *prev,
-                                 const lc_contour_element_t *corner,
-                                 const lc_contour_element_t *next,
-                                 lc_contour_element_t *line_to_tangent,
-                                 lc_contour_element_t *corner_move)
+static bool lc_raw_expand_corner(const g7x_contour_element_t *prev,
+                                 const g7x_contour_element_t *corner,
+                                 const g7x_contour_element_t *next,
+                                 g7x_contour_element_t *line_to_tangent,
+                                 g7x_contour_element_t *corner_move)
 {
     const float eps = 0.0001f;
     float x1 = corner->d;
@@ -1199,10 +1259,10 @@ static bool lc_raw_expand_corner(const lc_contour_element_t *prev,
     lc_corner_arc_t arc;
 
     if (!prev || !corner || !next || !line_to_tangent || !corner_move ||
-        corner->outgoing_kind == LC_CORNER_NONE || corner->outgoing_amount <= 0.0f ||
+        corner->outgoing_kind == G7X_CORNER_NONE || corner->outgoing_amount <= 0.0f ||
         l1 <= eps || l2 <= eps)
         return false;
-    if (prev->kind != LC_CONTOUR_LINE || corner->kind != LC_CONTOUR_LINE || next->kind != LC_CONTOUR_LINE)
+    if (prev->kind != G7X_SEGMENT_LINE || corner->kind != G7X_SEGMENT_LINE || next->kind != G7X_SEGMENT_LINE)
         return false;
 
     a_z = v1z / l1;
@@ -1215,7 +1275,7 @@ static bool lc_raw_expand_corner(const lc_contour_element_t *prev,
     if (angle <= 0.0001f || lc_absf(3.14159265f - angle) <= 0.0001f)
         return false;
 
-    if (corner->outgoing_kind == LC_CORNER_RND)
+    if (corner->outgoing_kind == G7X_CORNER_RND)
     {
         trim1 = corner->outgoing_amount / tanf(angle * 0.5f);
         trim2 = trim1;
@@ -1236,13 +1296,13 @@ static bool lc_raw_expand_corner(const lc_contour_element_t *prev,
     *line_to_tangent = *corner;
     line_to_tangent->d = t1x;
     line_to_tangent->z = t1z;
-    line_to_tangent->outgoing_kind = LC_CORNER_NONE;
+    line_to_tangent->outgoing_kind = G7X_CORNER_NONE;
     line_to_tangent->outgoing_amount = 0.0f;
 
     memset(corner_move, 0, sizeof(*corner_move));
     corner_move->d = t2x;
     corner_move->z = t2z;
-    if (corner->outgoing_kind == LC_CORNER_RND)
+    if (corner->outgoing_kind == G7X_CORNER_RND)
     {
         lc_v2_t p0 = { prev->d, prev->z };
         lc_v2_t p1 = { corner->d, corner->z };
@@ -1254,7 +1314,7 @@ static bool lc_raw_expand_corner(const lc_contour_element_t *prev,
         line_to_tangent->z = arc.t1.z;
         corner_move->d = arc.t2.x;
         corner_move->z = arc.t2.z;
-        corner_move->kind = LC_CONTOUR_ARC;
+        corner_move->kind = G7X_SEGMENT_ARC;
         corner_move->r = arc.r;
         corner_move->cw = arc.cw;
         corner_move->gcode_cw = !arc.cw;
@@ -1264,7 +1324,7 @@ static bool lc_raw_expand_corner(const lc_contour_element_t *prev,
     }
     else
     {
-        corner_move->kind = LC_CONTOUR_LINE;
+        corner_move->kind = G7X_SEGMENT_LINE;
     }
 
     return true;
@@ -1290,11 +1350,11 @@ static bool lc_raw_build_effective_region(const lc_raw_region_t *src, lc_raw_reg
 
     for (i = 1; i < src->count; ++i)
     {
-        const lc_contour_element_t *el = &src->elements[i];
-        if (el->outgoing_kind != LC_CORNER_NONE && el->outgoing_amount > 0.0f && i + 1u < src->count)
+        const g7x_contour_element_t *el = &src->elements[i];
+        if (el->outgoing_kind != G7X_CORNER_NONE && el->outgoing_amount > 0.0f && i + 1u < src->count)
         {
-            lc_contour_element_t line_to_tangent;
-            lc_contour_element_t corner_move;
+            g7x_contour_element_t line_to_tangent;
+            g7x_contour_element_t corner_move;
             if (!lc_raw_expand_corner(&src->elements[i - 1u],
                                       el,
                                       &src->elements[i + 1u],
@@ -1327,12 +1387,12 @@ static bool lc_raw_rough_supported(const lc_raw_region_t *region)
     if (!region || region->count < 2)
         return false;
 
-    allow_arcs = region->cycle == LC_RAW_G71;
+    allow_arcs = region->cycle == G7X_CYCLE_G71 || region->cycle == G7X_CYCLE_G72;
     for (i = 0; i < region->count; ++i)
     {
-        const lc_contour_element_t *el = &region->elements[i];
-        if ((el->kind != LC_CONTOUR_LINE && (!allow_arcs || el->kind != LC_CONTOUR_ARC)) ||
-            el->outgoing_kind != LC_CORNER_NONE ||
+        const g7x_contour_element_t *el = &region->elements[i];
+        if ((el->kind != G7X_SEGMENT_LINE && (!allow_arcs || el->kind != G7X_SEGMENT_ARC)) ||
+            el->outgoing_kind != G7X_CORNER_NONE ||
             el->outgoing_amount > 0.0f)
             return false;
     }
@@ -1349,10 +1409,10 @@ static const char *lc_raw_rough_unsupported_reason(const lc_raw_region_t *region
 
     for (i = 0; i < region->count; ++i)
     {
-        const lc_contour_element_t *el = &region->elements[i];
-        if (el->kind != LC_CONTOUR_LINE)
-            return region->cycle == LC_RAW_G71 ? "G71: unsupported arc roughing contour" : "G72: arc roughing unsupported";
-        if (el->outgoing_kind != LC_CORNER_NONE || el->outgoing_amount > 0.0f)
+        const g7x_contour_element_t *el = &region->elements[i];
+        if (el->kind != G7X_SEGMENT_LINE)
+            return "G7x: unsupported arc roughing contour";
+        if (el->outgoing_kind != G7X_CORNER_NONE || el->outgoing_amount > 0.0f)
             return "G7x: C/R roughing unsupported";
     }
 
@@ -1391,6 +1451,39 @@ static bool lc_raw_axis_monotonic(const lc_raw_region_t *region, int use_z, int 
     return true;
 }
 
+static bool lc_raw_axis_first_dir(const lc_raw_region_t *region, int use_z, int *dir_out)
+{
+    unsigned i;
+
+    if (dir_out)
+        *dir_out = 0;
+    if (!region || region->count < 2)
+        return false;
+
+    for (i = 1; i < region->count; ++i)
+    {
+        float a = use_z ? region->elements[i - 1].z : region->elements[i - 1].d;
+        float b = use_z ? region->elements[i].z : region->elements[i].d;
+        float delta = b - a;
+
+        if (lc_absf(delta) <= 0.0001f)
+            continue;
+
+        if (dir_out)
+            *dir_out = delta > 0.0f ? 1 : -1;
+        return true;
+    }
+
+    return false;
+}
+
+static bool lc_raw_arc_x_at_z(float x0,
+                              float z0,
+                              const g7x_contour_element_t *el,
+                              float z,
+                              int x_dir,
+                              float *x_out);
+
 static bool lc_raw_x_boundary_at_z(const lc_raw_region_t *region, float z, int x_dir, float *x_out)
 {
     unsigned i;
@@ -1407,8 +1500,17 @@ static bool lc_raw_x_boundary_at_z(const lc_raw_region_t *region, float z, int x
         float x1 = region->elements[i].d;
         float z1 = region->elements[i].z;
         float dz = z1 - z0;
+        float x;
 
-        if (lc_absf(dz) <= 0.0001f)
+        if (region->elements[i].kind == G7X_SEGMENT_ARC)
+        {
+            if (!lc_raw_arc_x_at_z(x0, z0, &region->elements[i], z, x_dir, &x))
+                continue;
+            if (!found || (x_dir < 0 ? x < best : x > best))
+                best = x;
+            found = true;
+        }
+        else if (lc_absf(dz) <= 0.0001f)
         {
             if (lc_absf(z - z0) <= 0.0001f)
             {
@@ -1438,6 +1540,12 @@ static bool lc_raw_x_boundary_at_z(const lc_raw_region_t *region, float z, int x
         return false;
     *x_out = best;
     return true;
+}
+
+static bool lc_raw_seg_crosses_z(float z0, float z1, float z)
+{
+    return z >= lc_minf(z0, z1) - 0.0001f &&
+           z <= lc_maxf(z0, z1) + 0.0001f;
 }
 
 static bool lc_raw_pass_before_finish(float pass, float finish, int dir)
@@ -1615,7 +1723,7 @@ static bool lc_raw_arc_z_candidate(float x,
 
 static bool lc_raw_arc_z_at_x(float x0,
                               float z0,
-                              const lc_contour_element_t *el,
+                              const g7x_contour_element_t *el,
                               float x,
                               int z_dir,
                               float *z_out)
@@ -1657,6 +1765,72 @@ static bool lc_raw_arc_z_at_x(float x0,
     return true;
 }
 
+static bool lc_raw_arc_x_candidate(float x,
+                                   float z,
+                                   float x0,
+                                   float z0,
+                                   float x1,
+                                   float z1,
+                                   int cw,
+                                   float cx,
+                                   float cz,
+                                   int x_dir,
+                                   bool *found,
+                                   float *best_x)
+{
+    if (!found || !best_x)
+        return false;
+    if (!lc_raw_arc_point_on_sweep(x0, z0, x1, z1, cx, cz, cw, x, z))
+        return false;
+
+    if (!*found || (x_dir < 0 ? x < *best_x : x > *best_x))
+        *best_x = x;
+    *found = true;
+    return true;
+}
+
+static bool lc_raw_arc_x_at_z(float x0,
+                              float z0,
+                              const g7x_contour_element_t *el,
+                              float z,
+                              int x_dir,
+                              float *x_out)
+{
+    float cx;
+    float cz;
+    float x0r;
+    float x1r;
+    float rel_z;
+    float dx2;
+    float dx;
+    bool found = false;
+    float best_x = 0.0f;
+
+    if (!el || !x_out || !lc_raw_seg_crosses_z(z0, el->z, z))
+        return false;
+
+    x0r = x0 * 0.5f;
+    x1r = el->d * 0.5f;
+    if (!lc_raw_arc_center(x0r, z0, x1r, el->z, el->r, el->cw, &cx, &cz))
+        return false;
+
+    rel_z = z - cz;
+    dx2 = (el->r * el->r) - (rel_z * rel_z);
+    if (dx2 < -0.0001f)
+        return false;
+    if (dx2 < 0.0f)
+        dx2 = 0.0f;
+
+    dx = sqrtf(dx2);
+    (void)lc_raw_arc_x_candidate(cx + dx, z, x0r, z0, x1r, el->z, el->cw, cx, cz, x_dir, &found, &best_x);
+    (void)lc_raw_arc_x_candidate(cx - dx, z, x0r, z0, x1r, el->z, el->cw, cx, cz, x_dir, &found, &best_x);
+    if (!found)
+        return false;
+
+    *x_out = best_x * 2.0f;
+    return true;
+}
+
 static bool lc_raw_z_limit_at_x(const lc_raw_region_t *region,
                                 unsigned finish_count,
                                 float x,
@@ -1674,10 +1848,10 @@ static bool lc_raw_z_limit_at_x(const lc_raw_region_t *region,
     {
         float z;
 
-        const lc_contour_element_t *prev = &region->elements[i - 1];
-        const lc_contour_element_t *el = &region->elements[i];
+        const g7x_contour_element_t *prev = &region->elements[i - 1];
+        const g7x_contour_element_t *el = &region->elements[i];
 
-        if (el->kind == LC_CONTOUR_ARC)
+        if (el->kind == G7X_SEGMENT_ARC)
         {
             if (!lc_raw_arc_z_at_x(prev->d, prev->z, el, x, z_dir, &z))
                 continue;
@@ -1752,11 +1926,11 @@ static unsigned lc_raw_finish_count_without_close(const lc_raw_region_t *region)
         return 0;
     if (region->count >= 3)
     {
-        const lc_contour_element_t *last = &region->elements[region->count - 1u];
-        const lc_contour_element_t *prev = &region->elements[region->count - 2u];
-        const lc_contour_element_t *first = &region->elements[0];
+        const g7x_contour_element_t *last = &region->elements[region->count - 1u];
+        const g7x_contour_element_t *prev = &region->elements[region->count - 2u];
+        const g7x_contour_element_t *first = &region->elements[0];
 
-        if (last->kind == LC_CONTOUR_LINE &&
+        if (last->kind == G7X_SEGMENT_LINE &&
             lc_absf(last->z - prev->z) <= 0.0001f &&
             last->d >= first->d - 0.0001f)
             return region->count - 1u;
@@ -1908,13 +2082,13 @@ static lc_gcode_result_t lc_flush_raw_region(const char *setup,
     max_z = lc_raw_max_z(run_region);
     xsafe = max_x + clearance;
     zsafe = max_z + clearance;
-    if (run_region->cycle == LC_RAW_G72 &&
+    if (run_region->cycle == G7X_CYCLE_G72 &&
         lc_raw_axis_monotonic(run_region, 0, &rough_dir) &&
         rough_dir > 0)
         xsafe = lc_raw_min_x(run_region) - clearance;
 
     if (!lc_emit(send, user, "(LC %s region elements %u)",
-                 g_raw_region.cycle == LC_RAW_G72 ? "G72" : "G71",
+                 g_raw_region.cycle == G7X_CYCLE_G72 ? "G72" : "G71",
                  run_region->count))
         return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G7x: write failed");
     if (!lc_emit_cycle_preamble(send, user, &run_region->cut, options))
@@ -1928,12 +2102,12 @@ static lc_gcode_result_t lc_flush_raw_region(const char *setup,
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s", reason ? reason : "G7x: unsupported roughing contour");
     }
 
-    if (run_region->cycle == LC_RAW_G72)
+    if (run_region->cycle == G7X_CYCLE_G72)
     {
         int pass_dir = start_z > ((min_z + max_z) * 0.5f) ? -1 : 1;
         float finish_z = pass_dir < 0 ? min_z + run_region->z_allow : max_z - run_region->z_allow;
-        if (!lc_raw_axis_monotonic(run_region, 0, &rough_dir))
-            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72 contour is non-monotonic in X");
+        if (!lc_raw_axis_first_dir(run_region, 0, &rough_dir))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72 contour has no X roughing direction");
         if (rough_dir > 0)
             xsafe = lc_raw_min_x(run_region) - clearance;
         if (lc_too_many_steps(finish_z - start_z, run_region->cut.rough_doc))
@@ -1950,7 +2124,7 @@ static lc_gcode_result_t lc_flush_raw_region(const char *setup,
                 return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72: unsupported roughing intersection");
             rough_x = x_hit - ((float)rough_dir * run_region->x_allow);
             if (!lc_emit(send, user, "(G72 rough Z%.3f)", pass)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
-            if (!lc_emit(send, user, "G0 Z%.3f", pass)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
+            if (!lc_emit(send, user, "G0 X%.3f Z%.3f", xsafe, pass)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
             if (!lc_emit(send, user, "G1 X%.3f F%.3f", rough_x, run_region->cut.rough_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
             if (!lc_emit(send, user, "G0 X%.3f", xsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
             pass += (float)pass_dir * run_region->cut.rough_doc;
@@ -1966,7 +2140,7 @@ static lc_gcode_result_t lc_flush_raw_region(const char *setup,
             {
                 rough_x = x_hit - ((float)rough_dir * run_region->x_allow);
                 if (!lc_emit(send, user, "(G72 rough Z%.3f)", pass)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
-                if (!lc_emit(send, user, "G0 Z%.3f", pass)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
+                if (!lc_emit(send, user, "G0 X%.3f Z%.3f", xsafe, pass)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
                 if (!lc_emit(send, user, "G1 X%.3f F%.3f", rough_x, run_region->cut.rough_feed)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
                 if (!lc_emit(send, user, "G0 X%.3f", xsafe)) return lc_fail(LC_GCODE_STREAM_REJECT, err, err_len, "G72: write failed");
             }
@@ -2005,24 +2179,28 @@ static lc_gcode_result_t lc_start_raw_region(const char *line,
                                              unsigned err_len)
 {
     lc_gcode_result_t r;
+    g7x_cycle_t cycle;
+    g7x_cycle_profile_t profile;
+    char rough_doc_key[2];
 
     r = lc_flush_raw_region(setup, options, send, user, err, err_len);
     if (r != LC_GCODE_OK)
         return r;
 
+    cycle = g7x_cycle_from_line(line);
+    if (!g7x_cycle_profile(cycle, &profile))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G7x: unknown cycle");
+
     memset(&g_raw_region, 0, sizeof(g_raw_region));
     g_raw_region.active = 1;
-    g_raw_region.cycle = lc_command_is(line, "G72") ? LC_RAW_G72 : LC_RAW_G71;
+    g_raw_region.cycle = cycle == G7X_CYCLE_G72 ? G7X_CYCLE_G72 : G7X_CYCLE_G71;
     lc_read_cut_ctx(tool, &g_raw_region.cut);
-    if (g_raw_region.cycle == LC_RAW_G72)
-    {
-        if (!lc_field_float(line, "W", &g_raw_region.cut.rough_doc))
-            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72: missing/bad W");
-    }
-    else if (!lc_field_float(line, "U", &g_raw_region.cut.rough_doc))
-    {
-        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G71: missing/bad U");
-    }
+
+    rough_doc_key[0] = profile.rough_doc_word;
+    rough_doc_key[1] = 0;
+    if (!lc_field_float(line, rough_doc_key, &g_raw_region.cut.rough_doc))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s: missing/bad %c", profile.name, profile.rough_doc_word);
+
     if (!lc_field_float(line, "R", &g_raw_region.retract))
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G7x: missing/bad R");
     (void)lc_field_float(line, "X", &g_raw_region.x_allow);
@@ -2037,27 +2215,29 @@ static lc_gcode_result_t lc_add_raw_contour_element(const char *line,
                                                     char *err,
                                                     unsigned err_len)
 {
-    lc_contour_element_t *el;
+    g7x_contour_element_t *el;
+    g7x_contour_cmd_t contour_cmd;
     float c = 0.0f;
     float rr = 0.0f;
 
     if (!g_raw_region.active)
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G1/G2/G3: no active G71/G72");
-    if (g_raw_region.count >= LC_GCODE_MAX_CONTOUR_ELEMENTS)
+    if (g_raw_region.count >= G7X_MAX_CONTOUR_ELEMENTS)
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G7x: too many contour elements");
 
     el = &g_raw_region.elements[g_raw_region.count];
     memset(el, 0, sizeof(*el));
-    el->kind = lc_command_is(line, "G1") ? LC_CONTOUR_LINE : LC_CONTOUR_ARC;
+    contour_cmd = g7x_contour_cmd_from_line(line);
+    el->kind = contour_cmd == G7X_CONTOUR_LINE ? G7X_SEGMENT_LINE : G7X_SEGMENT_ARC;
     if (!lc_field_float(line, "X", &el->d))
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G7x contour: missing/bad X");
     if (!lc_field_float(line, "Z", &el->z))
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G7x contour: missing/bad Z");
-    if (el->kind == LC_CONTOUR_ARC)
+    if (el->kind == G7X_SEGMENT_ARC)
     {
         if (!lc_field_float(line, "R", &el->r) || el->r <= 0.0f)
             return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G2/G3: missing/bad R");
-        el->cw = lc_command_is(line, "G2");
+        el->cw = contour_cmd == G7X_CONTOUR_ARC_CW;
         el->gcode_cw = el->cw;
     }
     else
@@ -2068,12 +2248,12 @@ static lc_gcode_result_t lc_add_raw_contour_element(const char *line,
             return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G1: C and R exclusive");
         if (c > 0.0f)
         {
-            el->outgoing_kind = LC_CORNER_CHMF;
+            el->outgoing_kind = G7X_CORNER_CHMF;
             el->outgoing_amount = c;
         }
         else if (rr > 0.0f)
         {
-            el->outgoing_kind = LC_CORNER_RND;
+            el->outgoing_kind = G7X_CORNER_RND;
             el->outgoing_amount = rr;
         }
     }
@@ -2091,6 +2271,8 @@ lc_gcode_result_t leancam_gcode_run_line_with_options(const char *line,
                                                       char *err,
                                                       unsigned err_len)
 {
+    g7x_contour_cmd_t contour_cmd;
+
     if (err && err_len > 0)
         err[0] = 0;
 
@@ -2105,15 +2287,25 @@ lc_gcode_result_t leancam_gcode_run_line_with_options(const char *line,
         return LC_GCODE_OK;
     }
 
-    if (lc_command_is(line, "G71") || lc_command_is(line, "G72"))
+    {
+        lc_gcode_result_t setup_r = lc_validate_setup_nc(line, err, err_len);
+        if (setup_r != LC_GCODE_UNSUPPORTED)
+            return setup_r;
+    }
+
+    if (g7x_cycle_from_line(line) != G7X_CYCLE_NONE)
         return lc_start_raw_region(line, setup_line, tool_line, options, send, user, err, err_len);
-    if (lc_command_is(line, "G1") || lc_command_is(line, "G2") || lc_command_is(line, "G3"))
+
+    contour_cmd = g7x_contour_cmd_from_line(line);
+    if (contour_cmd == G7X_CONTOUR_LINE ||
+        contour_cmd == G7X_CONTOUR_ARC_CW ||
+        contour_cmd == G7X_CONTOUR_ARC_CCW)
     {
         if (g_raw_region.active)
             return lc_add_raw_contour_element(line, err, err_len);
         return lc_emit_standalone_motion(line, tool_line, options, send, user, err, err_len);
     }
-    if (lc_command_is(line, "G80"))
+    if (contour_cmd == G7X_CONTOUR_END)
         return lc_flush_raw_region(setup_line, options, send, user, err, err_len);
 
     if (lc_command_is(line, "PROCESSCALL"))
@@ -2210,18 +2402,10 @@ static lc_gcode_stepper_state_t *lc_step_state(lc_gcode_stepper_t *stepper)
     return stepper ? (lc_gcode_stepper_state_t *)stepper->bytes : NULL;
 }
 
-static const char *lc_step_setup_for_line(const program_t *prog, int before_or_at)
-{
-    for (int i = before_or_at; prog && i >= 0; --i)
-        if (lc_command_is(prog->lines[i], "SETUP"))
-            return prog->lines[i];
-    return NULL;
-}
-
 static const char *lc_step_tool_for_line(const program_t *prog, int before_or_at)
 {
     for (int i = before_or_at; prog && i >= 0; --i)
-        if (lc_command_is(prog->lines[i], "TOOLCALL") || lc_command_is(prog->lines[i], "TOOL"))
+        if (lc_code_tool_line_is(prog->lines[i]))
             return prog->lines[i];
     return NULL;
 }
@@ -2229,9 +2413,11 @@ static const char *lc_step_tool_for_line(const program_t *prog, int before_or_at
 static bool lc_step_is_context_line(const char *line)
 {
     return line &&
-           (lc_command_is(line, "SETUP") ||
-            lc_command_is(line, "TOOLCALL") ||
-            lc_command_is(line, "TOOL") ||
+           (lc_code_tool_line_is(line) ||
+            lc_command_is(line, "G970") ||
+            lc_command_is(line, "G971") ||
+            lc_command_is(line, "G972") ||
+            lc_command_is(line, "G973") ||
             line[0] == '(');
 }
 
@@ -2279,7 +2465,7 @@ static lc_gcode_result_t lc_step_prepare_direct(lc_gcode_stepper_state_t *s,
     (void)leancam_gcode_save_state(&snap);
     memset(&g_raw_region, 0, sizeof(g_raw_region));
     r = leancam_gcode_run_program_line_ex(line,
-                                          lc_step_setup_for_line(&s->prog, s->src),
+                                          NULL,
                                           lc_step_tool_for_line(&s->prog, s->src),
                                           lc_step_capture_line,
                                           &cap,
@@ -2306,7 +2492,7 @@ static lc_gcode_result_t lc_step_prepare_g71(lc_gcode_stepper_state_t *s,
     (void)leancam_gcode_save_state(&snap);
     memset(&g_raw_region, 0, sizeof(g_raw_region));
     r = lc_start_raw_region(s->prog.lines[s->src],
-                            lc_step_setup_for_line(&s->prog, s->src),
+                            NULL,
                             lc_step_tool_for_line(&s->prog, s->src),
                             &lc_program_line_options,
                             lc_step_capture_line,
@@ -2351,7 +2537,7 @@ static lc_gcode_result_t lc_step_prepare_g71(lc_gcode_stepper_state_t *s,
         const char *reason = lc_raw_rough_unsupported_reason(&s->effective);
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "%s", reason ? reason : "G7x: unsupported roughing contour");
     }
-    (void)lc_setup_clearance("G7x", lc_step_setup_for_line(&s->prog, s->src), &s->clearance, err, err_len);
+    (void)lc_setup_clearance("G7x", NULL, &s->clearance, err, err_len);
 
     s->start_x = s->effective.elements[0].d;
     s->start_z = s->effective.elements[0].z;
@@ -2365,10 +2551,10 @@ static lc_gcode_result_t lc_step_prepare_g71(lc_gcode_stepper_state_t *s,
     if (finish_count < 2)
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G7x: empty finish contour");
 
-    if (s->effective.cycle == LC_RAW_G72)
+    if (s->effective.cycle == G7X_CYCLE_G72)
     {
-        if (!lc_raw_axis_monotonic(&s->effective, 0, &s->rough_dir))
-            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72 contour is non-monotonic in X");
+        if (!lc_raw_axis_first_dir(&s->effective, 0, &s->rough_dir))
+            return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G72 contour has no X roughing direction");
         if (s->rough_dir > 0)
             s->xsafe = s->min_x - s->clearance;
         s->pass_dir = s->start_z > ((s->min_z + s->max_z) * 0.5f) ? -1 : 1;
@@ -2413,7 +2599,6 @@ static lc_gcode_result_t lc_step_prepare_g76(lc_gcode_stepper_state_t *s,
                                              char *err,
                                              unsigned err_len)
 {
-    const char *setup = lc_step_setup_for_line(&s->prog, s->src);
     const char *tool = lc_step_tool_for_line(&s->prog, s->src);
     lc_cut_ctx_t ctx;
     float tc = 0.0f;
@@ -2441,10 +2626,7 @@ static lc_gcode_result_t lc_step_prepare_g76(lc_gcode_stepper_state_t *s,
 
     if (!line)
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: missing line");
-    if (!setup)
-        return lc_fail(LC_GCODE_NO_SETUP, err, err_len, "G76: no SETUP");
-
-    r = lc_setup_clearance("G76", setup, &tc, err, err_len);
+    r = lc_setup_clearance("G76", NULL, &tc, err, err_len);
     if (r != LC_GCODE_OK)
         return r;
 
@@ -2454,9 +2636,8 @@ static lc_gcode_result_t lc_step_prepare_g76(lc_gcode_stepper_state_t *s,
     if (!lc_field_float2(line, "P", "PITCH", &pitch) &&
         !lc_field_float2(line, "K_PITCH", "PITCH_K", &pitch))
         return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: missing/bad P");
-    if (!lc_field_float2(line, "START_X", "X_START", &d_start) &&
-        !lc_field_float2(setup, "OD", "OUTER_DIAMETER", &d_start))
-        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: need START_X or SETUP.OD");
+    if (!lc_field_float2(line, "START_X", "X_START", &d_start))
+        return lc_fail(LC_GCODE_BAD_FIELD, err, err_len, "G76: need START_X or X_START");
     if (!lc_field_float2(line, "Z1", "Z_START", &z1))
         z1 = 0.0f;
     if (!lc_field_float3(line, "Z2", "Z_END", "Z", &z2))
@@ -2744,7 +2925,7 @@ static bool lc_step_next_g72_rough(lc_gcode_stepper_state_t *s, char *out, unsig
     switch (s->g71_stage++)
     {
         case 0: return lc_step_put(out, out_len, "(G72 rough Z%.3f)", s->pass);
-        case 1: return lc_step_put(out, out_len, "G0 Z%.3f", s->pass);
+        case 1: return lc_step_put(out, out_len, "G0 X%.3f Z%.3f", s->xsafe, s->pass);
         case 2: return lc_step_put(out, out_len, "G1 X%.3f F%.3f", rough_x, s->effective.cut.rough_feed);
         default:
             s->g71_stage = 0;
@@ -2795,7 +2976,7 @@ lc_gcode_step_result_t leancam_gcode_stepper_next(lc_gcode_stepper_t *stepper,
                                                   unsigned err_len,
                                                   int *err_line_out)
 {
-    static const char *headers[] = { "(LeanCam runtime stepped)", "G21", "G90", "G18", "G7" };
+    static const char *headers[] = { "(LeanCam runtime stepped)", "G90", "G18", "G7" };
     static const char *footers[] = { "M5", "M30" };
     lc_gcode_stepper_state_t *s = lc_step_state(stepper);
 
@@ -2834,7 +3015,11 @@ lc_gcode_step_result_t leancam_gcode_stepper_next(lc_gcode_stepper_t *stepper,
             if (s->finish_stage == 0)
             {
                 s->finish_stage = 1;
-                lc_step_put(out, out_len, "(LC G71 region elements %u)", s->effective.count);
+                lc_step_put(out,
+                            out_len,
+                            "(LC %s region elements %u)",
+                            s->effective.cycle == G7X_CYCLE_G72 ? "G72" : "G71",
+                            s->effective.count);
                 return LC_GCODE_STEP_LINE;
             }
             if (s->finish_stage == 1)
@@ -2852,7 +3037,7 @@ lc_gcode_step_result_t leancam_gcode_stepper_next(lc_gcode_stepper_t *stepper,
             }
             if (!s->rough_done)
             {
-                bool emitted = s->effective.cycle == LC_RAW_G72 ?
+                bool emitted = s->effective.cycle == G7X_CYCLE_G72 ?
                                lc_step_next_g72_rough(s, out, out_len) :
                                lc_step_next_g71_rough(s, out, out_len);
                 if (emitted)
@@ -2872,8 +3057,8 @@ lc_gcode_step_result_t leancam_gcode_stepper_next(lc_gcode_stepper_t *stepper,
             }
             if (s->finish_i < s->effective.count)
             {
-                const lc_contour_element_t *el = &s->effective.elements[s->finish_i++];
-                if (el->kind == LC_CONTOUR_ARC)
+                const g7x_contour_element_t *el = &s->effective.elements[s->finish_i++];
+                if (el->kind == G7X_SEGMENT_ARC)
                 {
                     if (el->has_center)
                         lc_step_put(out, out_len, "%s X%.3f Z%.3f I%.3f K%.3f", el->gcode_cw ? "G2" : "G3", el->d, el->z, el->i, el->k);

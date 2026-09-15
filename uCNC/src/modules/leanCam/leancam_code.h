@@ -13,6 +13,7 @@ extern "C" {
 #endif
 
 bool lc_code_command_is(const char *line, const char *cmd);
+bool lc_code_tool_line_is(const char *line);
 bool lc_code_get_field_text(const char *line, const char *key, char *out, size_t out_sz);
 bool lc_code_get_field_float(const char *line, const char *key, float *out);
 
@@ -21,13 +22,11 @@ void lc_code_build_draft_display(char *dst,
                                  const char *draft,
                                  const char *input,
                                  uint8_t active_index,
-                                 const char *setup_line,
                                  const char *tool_line,
                                  const char *this_line,
                                  uint8_t *hi_start,
                                  uint8_t *hi_end);
 int lc_code_resolve_field_value(const char *raw,
-                                const char *setup_line,
                                 const char *tool_line,
                                 const char *this_line,
                                 char *out,
@@ -40,11 +39,6 @@ int lc_code_region_display_indent(const program_t *prog, int index, const char *
 bool lc_code_region_find(const program_t *prog, int index, int *start_out, int *end_out);
 
 const char *lc_code_effective_tool_for_cycle(const program_t *prog, int before_or_at, const char *cycle);
-bool lc_code_validate_tool_call(const program_t *prog,
-                                int before_or_at,
-                                const char *line,
-                                char *err,
-                                size_t err_sz);
 
 #ifdef __cplusplus
 }

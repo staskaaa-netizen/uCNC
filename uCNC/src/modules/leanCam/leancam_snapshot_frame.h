@@ -82,6 +82,7 @@ typedef struct
     uint8_t leancam_preview_region_selected[UI_LC_PREVIEW_REGION_MAX];
     uint8_t leancam_preview_region_count;
     bool leancam_fullscreen_sim;
+    bool leancam_live_split_view;
     bool leancam_sim_preview_active;
     uint16_t leancam_sim_preview_seq;
     uint16_t leancam_sim_preview_index;

@@ -16,6 +16,20 @@ static bool g_nc_files_ready;
 static bool g_nc_files_active;
 static char g_nc_files_cwd[NC_PATH_MAX];
 
+static const char *const g_nc_sample_g71[] = {
+    "G970 X-5 U60 Z-60 W5",
+    "G971 X50 Z50 I0 E0",
+    "G972 C12",
+    "G973 P7",
+    "G71 U2 R1 X0.5 Z0.5 F120",
+    "\tG1 X50 Z0",
+    "\tG1 X35 Z-10 C1.5",
+    "\tG1 X30 Z-20 R2",
+    "\tG2 X42 Z-26 R4",
+    "\tG1 X50 Z-26",
+    "G80"
+};
+
 static const char *nc_files_basename(const char *path)
 {
     const char *p;
@@ -284,6 +298,51 @@ bool nc_files_create_named(const char *name, const char *ext, char *out_path, in
     }
     (void)nc_files_refresh(g_nc_files_cwd);
     return true;
+}
+
+static bool nc_files_write_sample(const char *path, const char *const *lines, int count)
+{
+    fs_file_info_t info;
+    fs_file_t *fp;
+    int i;
+
+    if (fs_finfo(path, &info)) {
+        return false;
+    }
+
+    fp = fs_open(path, "w");
+    if (!fp) {
+        return false;
+    }
+
+    for (i = 0; i < count; i++) {
+        size_t len = strlen(lines[i]);
+        if ((len && fs_write(fp, (const uint8_t *)lines[i], len) != len) ||
+            fs_write(fp, (const uint8_t *)"\n", 1) != 1) {
+            fs_close(fp);
+            return false;
+        }
+    }
+
+    fs_close(fp);
+    return true;
+}
+
+int nc_files_seed_samples(void)
+{
+    int made = 0;
+
+    (void)fs_mkdir("/D/nc");
+    (void)fs_mkdir(NC_FILES_DIR);
+    if (nc_files_write_sample(NC_FILES_DIR "/g71_sample.nc",
+                              g_nc_sample_g71,
+                              (int)(sizeof(g_nc_sample_g71) / sizeof(g_nc_sample_g71[0])))) {
+        made++;
+    }
+    if (made) {
+        (void)nc_files_refresh(NC_FILES_DIR);
+    }
+    return made;
 }
 
 bool nc_files_ready(void)

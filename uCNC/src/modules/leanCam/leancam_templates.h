@@ -8,6 +8,7 @@
 #endif
 
 #include "leancam_menu.h"
+#include "leancam_dictionary.h"
 #include "../../cnc_hal_config_helper.h"
 
 #ifndef LC_VISIBLE_PROGRAM_LINES
@@ -33,18 +34,23 @@
 /* Template syntax:
  *   {}                  required user input
  *   {(literal)}         default literal shown as value in friendly UI
- *   {(SETUP.FIELD)}     default from setup line
  *   {(THIS.FIELD)}      default from this same cycle line
+ *
+ * G20/G21 are uCNC unit-mode words only. LeanCam setup/graphics uses the
+ * private G970-G973 range and must not reuse G20/G21 for metadata.
  */
 
-static const char *g_leancam_setup_template =
-    "SETUP L{} OD{} ID{(0)} CLAMP{(0)} EXTRA{(0)} CLR{(1)}";
-
 static const char *g_leancam_tool_template LC_TEMPLATE_UNUSED =
-    "TOOL T{(1)} R{(0.8)} ORIENT{(3)} R_FEED{(120)} FIN_FEED{(60)} DOC{(2.0)} FIN_DOC{(0.5)} RPM{(800)} XOFF{(0)} ZOFF{(0)}";
-
-static const char *g_leancam_tool_call_template LC_TEMPLATE_UNUSED =
-    "TOOLCALL T{(1)} R_FEED{(TOOL.R_FEED)} FIN_FEED{(TOOL.FIN_FEED)} DOC{(TOOL.DOC)} FIN_DOC{(TOOL.FIN_DOC)} RPM{(TOOL.RPM)}";
+    LC_DICT_WORD_T "{(1)} "
+    LC_DICT_WORD_R "{(0.8)} "
+    LC_DICT_WORD_O "{(3)} "
+    LC_DICT_WORD_F "{(120)} "
+    LC_DICT_WORD_FF "{(60)} "
+    LC_DICT_WORD_DOC "{(2.0)} "
+    LC_DICT_WORD_FDOC "{(0.5)} "
+    LC_DICT_WORD_S "{(800)} "
+    LC_DICT_WORD_XO "{(0)} "
+    LC_DICT_WORD_ZO "{(0)}";
 
 static const char *g_leancam_process_call_template LC_TEMPLATE_UNUSED =
     "PROCESSCALL N{}";
@@ -56,8 +62,8 @@ static const char *g_leancam_process_call_template LC_TEMPLATE_UNUSED =
  *   G2/G3 are explicit arcs, not tangent corner shortcuts.
  */
 static const char *g_leancam_gcode_templates[] = {
-"G71 U{} R{} X{} Z{} F{}",
-"G72 W{} R{} X{} Z{} F{}",
+LC_DICT_COMMAND_G71 " U{} " LC_DICT_WORD_R "{} X{} Z{} " LC_DICT_WORD_F "{}",
+LC_DICT_COMMAND_G72 " W{} " LC_DICT_WORD_R "{} X{} Z{} " LC_DICT_WORD_F "{}",
 "G1 X{} Z{} C{(0)} R{(0)}",
 "G2 X{} Z{} R{}",
 "G3 X{} Z{} R{}",
@@ -65,14 +71,18 @@ static const char *g_leancam_gcode_templates[] = {
 "G74 Z{} K{} F{}",
 "G84 Z{} PITCH{} RPM{}",
 "G33 X{} Z{} K{}",
-"G76 Z{} P{} K{} J{} H{(1)} Q{(29.5)} R{(2)}"
+LC_DICT_COMMAND_G76 " Z{} P{} K{} J{} H{(1)} Q{(29.5)} " LC_DICT_WORD_R "{(2)}",
+LC_DICT_COMMAND_G970 " X{(-5)} U{(60)} Z{(-60)} W{(5)}",
+LC_DICT_COMMAND_G971 " X{(50)} Z{(50)} I{(0)} E{(0)}",
+LC_DICT_COMMAND_G972 " C{(12)}",
+LC_DICT_COMMAND_G973 " P{(7)}"
 };
 
 static const char *g_leancam_preset_templates[] = {
-"OD T{(TOOLCALL.T)} O{(TOOL.ORIENT)} U{(TOOLCALL.DOC)} R{(SETUP.CLR)} X{(TOOLCALL.FIN_DOC)} Z{(TOOLCALL.FIN_DOC)} F_R{(TOOLCALL.R_FEED)} F_F{(TOOLCALL.FIN_FEED)} RPM{(TOOLCALL.RPM)}",
-"ID T{(TOOLCALL.T)} O{(TOOL.ORIENT)} U{(TOOLCALL.DOC)} R{(SETUP.CLR)} X{(TOOLCALL.FIN_DOC)} Z{(TOOLCALL.FIN_DOC)} F_R{(TOOLCALL.R_FEED)} F_F{(TOOLCALL.FIN_FEED)} RPM{(TOOLCALL.RPM)}",
-"FACE T{(TOOLCALL.T)} O{(TOOL.ORIENT)} W{(TOOLCALL.DOC)} R{(SETUP.CLR)} X{(TOOLCALL.FIN_DOC)} Z{(TOOLCALL.FIN_DOC)} F_R{(TOOLCALL.R_FEED)} F_F{(TOOLCALL.FIN_FEED)} RPM{(TOOLCALL.RPM)}",
-"RECESS T{(TOOLCALL.T)} O{(TOOL.ORIENT)} U{(TOOLCALL.DOC)} R{(SETUP.CLR)} X{(TOOLCALL.FIN_DOC)} Z{(TOOLCALL.FIN_DOC)} F_R{(TOOLCALL.R_FEED)} F_F{(TOOLCALL.FIN_FEED)} RPM{(TOOLCALL.RPM)}"
+"OD T{(TOOL." LC_DICT_WORD_T ")} O{(TOOL." LC_DICT_WORD_O ")} U{(TOOL." LC_DICT_WORD_DOC ")} R{(1)} X{(TOOL." LC_DICT_WORD_FDOC ")} Z{(TOOL." LC_DICT_WORD_FDOC ")} F_R{(TOOL." LC_DICT_WORD_F ")} F_F{(TOOL." LC_DICT_WORD_FF ")} RPM{(TOOL." LC_DICT_WORD_S ")}",
+"ID T{(TOOL." LC_DICT_WORD_T ")} O{(TOOL." LC_DICT_WORD_O ")} U{(TOOL." LC_DICT_WORD_DOC ")} R{(1)} X{(TOOL." LC_DICT_WORD_FDOC ")} Z{(TOOL." LC_DICT_WORD_FDOC ")} F_R{(TOOL." LC_DICT_WORD_F ")} F_F{(TOOL." LC_DICT_WORD_FF ")} RPM{(TOOL." LC_DICT_WORD_S ")}",
+"FACE T{(TOOL." LC_DICT_WORD_T ")} O{(TOOL." LC_DICT_WORD_O ")} W{(TOOL." LC_DICT_WORD_DOC ")} R{(1)} X{(TOOL." LC_DICT_WORD_FDOC ")} Z{(TOOL." LC_DICT_WORD_FDOC ")} F_R{(TOOL." LC_DICT_WORD_F ")} F_F{(TOOL." LC_DICT_WORD_FF ")} RPM{(TOOL." LC_DICT_WORD_S ")}",
+"RECESS T{(TOOL." LC_DICT_WORD_T ")} O{(TOOL." LC_DICT_WORD_O ")} U{(TOOL." LC_DICT_WORD_DOC ")} R{(1)} X{(TOOL." LC_DICT_WORD_FDOC ")} Z{(TOOL." LC_DICT_WORD_FDOC ")} F_R{(TOOL." LC_DICT_WORD_F ")} F_F{(TOOL." LC_DICT_WORD_FF ")} RPM{(TOOL." LC_DICT_WORD_S ")}"
 };
 
 
@@ -88,7 +98,11 @@ enum
     LC_GCODE_TMPL_G74,
     LC_GCODE_TMPL_G84,
     LC_GCODE_TMPL_G33,
-    LC_GCODE_TMPL_G76
+    LC_GCODE_TMPL_G76,
+    LC_GCODE_TMPL_G970,
+    LC_GCODE_TMPL_G971,
+    LC_GCODE_TMPL_G972,
+    LC_GCODE_TMPL_G973
 };
 
 enum
@@ -112,11 +126,6 @@ typedef struct
     const char *text;
 } lc_template_selection_t;
 
-static inline const char *lc_template_setup(void)
-{
-    return g_leancam_setup_template;
-}
-
 static inline const char *lc_template_catalog(lc_menu_catalog_kind_t catalog)
 {
     switch (catalog)
@@ -134,13 +143,13 @@ static inline lc_template_selection_t lc_template_select(lc_menu_template_t tmpl
 
     switch (tmpl)
     {
-        case LC_MENU_TEMPLATE_TOOLCALL:
-            selection.action = LC_TEMPLATE_ACTION_DRAFT;
-            selection.text = g_leancam_tool_call_template;
-            break;
         case LC_MENU_TEMPLATE_PROCESSCALL:
             selection.action = LC_TEMPLATE_ACTION_DRAFT;
             selection.text = g_leancam_process_call_template;
+            break;
+        case LC_MENU_TEMPLATE_TOOL:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_tool_template;
             break;
         case LC_MENU_TEMPLATE_OD:
             selection.action = LC_TEMPLATE_ACTION_PRESET;
@@ -181,6 +190,22 @@ static inline lc_template_selection_t lc_template_select(lc_menu_template_t tmpl
         case LC_MENU_TEMPLATE_END:
             selection.action = LC_TEMPLATE_ACTION_DRAFT;
             selection.text = g_leancam_gcode_templates[LC_GCODE_TMPL_G80];
+            break;
+        case LC_MENU_TEMPLATE_G970:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_gcode_templates[LC_GCODE_TMPL_G970];
+            break;
+        case LC_MENU_TEMPLATE_G971:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_gcode_templates[LC_GCODE_TMPL_G971];
+            break;
+        case LC_MENU_TEMPLATE_G972:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_gcode_templates[LC_GCODE_TMPL_G972];
+            break;
+        case LC_MENU_TEMPLATE_G973:
+            selection.action = LC_TEMPLATE_ACTION_DRAFT;
+            selection.text = g_leancam_gcode_templates[LC_GCODE_TMPL_G973];
             break;
         default:
             break;

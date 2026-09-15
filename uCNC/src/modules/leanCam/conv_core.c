@@ -1,10 +1,4 @@
-/* LeanCam module contract:
- * Purpose: in-memory program line container operations.
- * Called by: bridge, files, presets, editor, validator, and generator.
- * Calls into: basic string/memory helpers only.
- * Owns: program_t line storage passed by the caller; it should not know UI modes or hardware.
- */
-#include "leancam_program.h"
+#include "conv_core.h"
 #include <string.h>
 
 void prog_init(program_t *p)
@@ -106,26 +100,51 @@ bool field_is_required_or_unresolved(const char *line, int s, int e)
     if (len >= 6 && strncmp(p, "(auto)", 6) == 0)
         return true;
 
+    if (len >= 7 && strncmp(p, "(SETUP.", 7) == 0)
+        return true;
+
     if (len >= 5 && strncmp(p, "(CUT.", 5) == 0)
         return true;
 
     return false;
 }
 
-bool line_has_unresolved_required(const char *line)
+bool find_first_required_or_unresolved(const char *line, int *s, int *e)
 {
-    int s;
-    int e;
+    int cs, ce;
     int pos = 0;
 
-    while (find_field(line, pos, &s, &e))
-    {
-        if (field_is_required_or_unresolved(line, s, e))
+    while (find_field(line, pos, &cs, &ce)) {
+        if (field_is_required_or_unresolved(line, cs, ce)) {
+            *s = cs;
+            *e = ce;
             return true;
-        pos = e;
+        }
+        pos = ce;
     }
 
     return false;
 }
 
+bool find_next_required_or_unresolved(const char *line, int from, int *s, int *e)
+{
+    int cs, ce;
+    int pos = from;
 
+    while (find_field(line, pos, &cs, &ce)) {
+        if (field_is_required_or_unresolved(line, cs, ce)) {
+            *s = cs;
+            *e = ce;
+            return true;
+        }
+        pos = ce;
+    }
+
+    return false;
+}
+
+bool line_has_unresolved_required(const char *line)
+{
+    int s, e;
+    return find_first_required_or_unresolved(line, &s, &e);
+}

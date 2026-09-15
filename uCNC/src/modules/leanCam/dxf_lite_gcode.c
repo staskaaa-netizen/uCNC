@@ -22,7 +22,6 @@ static void dxf_gc_header(dxf_lite_gcode_emitter_t *e)
 {
     if (!e || e->header_emitted)
         return;
-    (void)dxf_gc_emit(e, "G21");
     (void)dxf_gc_emit(e, "G90");
     (void)dxf_gc_emit(e, "G17");
     e->header_emitted = 1;

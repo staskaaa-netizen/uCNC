@@ -59,7 +59,6 @@ const char *lc_run_gcode_result_name(lc_gcode_result_t r)
     {
         case LC_GCODE_OK:            return "ok";
         case LC_GCODE_UNSUPPORTED:   return "unsupported";
-        case LC_GCODE_NO_SETUP:      return "no setup";
         case LC_GCODE_BAD_FIELD:     return "bad field";
         case LC_GCODE_STREAM_REJECT: return "write failed";
         default:                     return "gcode failed";
@@ -76,26 +75,12 @@ static int lc_run_discard_line(const char *line, void *user)
 static bool lc_run_is_context_line(const char *line)
 {
     return line &&
-           (lc_code_command_is(line, "SETUP") ||
-            lc_code_command_is(line, "TOOLCALL") ||
-            lc_code_command_is(line, "TOOL") ||
+           (lc_code_tool_line_is(line) ||
+            lc_code_command_is(line, "G970") ||
+            lc_code_command_is(line, "G971") ||
+            lc_code_command_is(line, "G972") ||
+            lc_code_command_is(line, "G973") ||
             line[0] == '(');
-}
-
-static const char *lc_run_setup_for_line(const program_t *prog, int before_or_at)
-{
-    int i;
-
-    if (!prog)
-        return NULL;
-    if (before_or_at >= prog->count)
-        before_or_at = prog->count - 1;
-
-    for (i = before_or_at; i >= 0; --i)
-        if (lc_code_command_is(prog->lines[i], "SETUP"))
-            return prog->lines[i];
-
-    return NULL;
 }
 
 lc_gcode_result_t lc_run_preflight_program(const program_t *prog,
@@ -113,26 +98,6 @@ lc_gcode_result_t lc_run_preflight_program(const program_t *prog,
                                       err_len,
                                       err_line_out,
                                       made_out);
-}
-
-static bool lc_run_emit_setup_comment(const program_t *prog,
-                                      lc_gcode_send_fn send,
-                                      void *send_user)
-{
-    const char *setup = NULL;
-    char buf[MAX_LEN + 12];
-
-    if (!send)
-        return false;
-    if (!prog)
-        return true;
-
-    setup = lc_run_setup_for_line(prog, prog->count - 1);
-    if (!setup || !setup[0])
-        return true;
-
-    snprintf(buf, sizeof(buf), "(LC %s)", setup);
-    return send(buf, send_user);
 }
 
 lc_gcode_result_t lc_run_emit_program(const program_t *prog,
@@ -155,8 +120,6 @@ lc_gcode_result_t lc_run_emit_program(const program_t *prog,
         return LC_GCODE_BAD_FIELD;
 
     if (!leancam_gcode_emit_program_header(send, send_user))
-        return LC_GCODE_STREAM_REJECT;
-    if (!lc_run_emit_setup_comment(prog, send, send_user))
         return LC_GCODE_STREAM_REJECT;
 
     r = lc_run_emit_selected_range(prog,
@@ -204,7 +167,6 @@ lc_gcode_result_t lc_run_emit_selected_range(const program_t *prog,
     for (i = start; i <= end; ++i)
     {
         const char *line = prog->lines[i];
-        const char *setup = NULL;
         const char *tool = NULL;
 
         if (!line || !line[0])
@@ -212,7 +174,6 @@ lc_gcode_result_t lc_run_emit_selected_range(const program_t *prog,
         if (lc_run_is_context_line(line))
             continue;
 
-        setup = lc_run_setup_for_line(prog, i);
         tool = lc_code_effective_tool_for_cycle(prog, i, line);
 
         if (!lc_run_emit_banner(i + 1, tool, send, send_user))
@@ -224,7 +185,7 @@ lc_gcode_result_t lc_run_emit_selected_range(const program_t *prog,
             return LC_GCODE_STREAM_REJECT;
         }
 
-        r = leancam_gcode_run_program_line_ex(line, setup, tool, send, send_user, err, err_len);
+        r = leancam_gcode_run_program_line_ex(line, NULL, tool, send, send_user, err, err_len);
         if (r != LC_GCODE_OK)
         {
             if (err_line_out)

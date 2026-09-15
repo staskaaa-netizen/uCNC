@@ -131,8 +131,10 @@ g7x_cycle_t g7x_cycle_from_line(const char *line)
         return G7X_CYCLE_G71;
     if (g7x_command_is(line, "G72"))
         return G7X_CYCLE_G72;
+#if G7X_ENABLE_G76
     if (g7x_command_is(line, "G76"))
         return G7X_CYCLE_G76;
+#endif
     return G7X_CYCLE_NONE;
 }
 
@@ -242,6 +244,7 @@ g7x_result_t g7x_stream_add_line(g7x_stream_t *stream, const char *line, bool *d
                                  corner_amount, done);
 }
 
+#if G7X_ENABLE_G76
 static bool g7x_field_float2(const char *line, const char *a, const char *b, float *out)
 {
     return g7x_get_field_float(line, a, out) || g7x_get_field_float(line, b, out);
@@ -253,12 +256,14 @@ static bool g7x_field_float3(const char *line, const char *a, const char *b, con
            g7x_get_field_float(line, b, out) ||
            g7x_get_field_float(line, c, out);
 }
+#endif
 
 g7x_result_t g7x_thread_begin(g7x_thread_stream_t *stream,
                               const char *line,
                               float default_start_diameter,
                               float default_clearance)
 {
+#if G7X_ENABLE_G76
     float d_start = default_start_diameter;
     float d_end = 0.0f;
     float z1 = 0.0f;
@@ -312,4 +317,11 @@ g7x_result_t g7x_thread_begin(g7x_thread_stream_t *stream,
                                      spring_passes,
                                      0,
                                      0);
+#else
+    (void)stream;
+    (void)line;
+    (void)default_start_diameter;
+    (void)default_clearance;
+    return G7X_UNSUPPORTED;
+#endif
 }

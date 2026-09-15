@@ -31,15 +31,12 @@ void lc_editor_field_name_from_line(const char *line, uint8_t field_index, char 
 void lc_editor_build_preview_line(const leancam_ui_t *ui, char *out, uint32_t out_len);
 void lc_editor_advance_field(const char *line);
 bool lc_editor_resolve_draft_line_for_commit(leancam_ui_t *ui,
-                                             const char *setup_line,
                                              const char *tool_line,
                                              char *out,
                                              uint32_t out_len);
 bool lc_editor_prepare_draft_for_commit(leancam_ui_t *ui,
-                                        const char *setup_line,
                                         const char *tool_line);
 bool lc_editor_accept_active_field(leancam_ui_t *ui,
-                                   const char *setup_line,
                                    const char *tool_line,
                                    char *err,
                                    size_t err_sz);

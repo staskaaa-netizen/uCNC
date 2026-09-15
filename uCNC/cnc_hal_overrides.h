@@ -102,7 +102,7 @@ extern "C"
 #define G33_DEBUG_EVERY_N 5
 
 #define ENC0_VIRTUAL_INDEX 1
-#define ENC0_VIRTUAL_INDEX_CPR (ENC0_CPR / 5)
+#define ENC0_VIRTUAL_INDEX_CPR (ENC0_CPR / 10)
 #define ENC0_VIRTUAL_INDEX_OFFSET 0
 #define ENC0_VIRTUAL_INDEX_HYSTERESIS 1
 #endif
@@ -131,7 +131,7 @@ extern "C"
 #endif
 
 /* Single RP2350 NC target: encoder/G33 + SD + LVDS renderer. */
-#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(g71_g72); LOAD_MODULE(sd_card_v2); LOAD_MODULE(nc); })
+#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); LOAD_MODULE(nc); LOAD_MODULE(g7x); })
 #endif
 
 #ifdef __cplusplus

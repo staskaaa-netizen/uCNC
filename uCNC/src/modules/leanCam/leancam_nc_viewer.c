@@ -5,6 +5,7 @@
  * Owns: viewer cursor/scroll state; it should not mutate files or generate toolpaths.
  */
 #include "leancam_nc_viewer.h"
+#include "leancam_code.h"
 #include "leancam_resource.h"
 #include "../file_system.h"
 
@@ -100,26 +101,58 @@ static bool lc_nc_read_line(fs_file_t *fp, char *out, int out_sz)
 
 static void lc_nc_capture_setup_comment(const char *line)
 {
-    const char *p;
-    const char *end;
-    size_t n;
-
-    if (!line || g_nc_setup_line[0])
+    if (!line)
         return;
 
-    p = strstr(line, "SETUP ");
-    if (!p)
+    while (*line == ' ' || *line == '\t')
+        line++;
+    if (*line == 'N')
+    {
+        const char *p = line + 1;
+        bool saw_digit = false;
+
+        while (*p >= '0' && *p <= '9')
+        {
+            saw_digit = true;
+            p++;
+        }
+        if (saw_digit && (*p == ' ' || *p == '\t'))
+        {
+            while (*p == ' ' || *p == '\t')
+                p++;
+            line = p;
+        }
+    }
+
+    if (strncmp(line, "G971", 4) == 0 &&
+        (line[4] == 0 || line[4] == ' ' || line[4] == '\t'))
+    {
+        size_t n;
+        const char *end = strchr(line, '(');
+
+        if (!end)
+            end = line + strlen(line);
+        while (end > line && (end[-1] == ' ' || end[-1] == '\t'))
+            end--;
+        n = (size_t)(end - line);
+        if (n >= sizeof(g_nc_setup_line))
+            n = sizeof(g_nc_setup_line) - 1u;
+        memcpy(g_nc_setup_line, line, n);
+        g_nc_setup_line[n] = 0;
         return;
+    }
 
-    end = strchr(p, ')');
-    if (!end)
-        end = p + strlen(p);
+    if (g_nc_setup_line[0] &&
+        strncmp(line, "G972", 4) == 0 &&
+        (line[4] == 0 || line[4] == ' ' || line[4] == '\t'))
+    {
+        char c[24];
 
-    n = (size_t)(end - p);
-    if (n >= sizeof(g_nc_setup_line))
-        n = sizeof(g_nc_setup_line) - 1u;
-    memcpy(g_nc_setup_line, p, n);
-    g_nc_setup_line[n] = 0;
+        if (!lc_code_get_field_text(line, "C", c, sizeof(c)))
+            return;
+        strncat(g_nc_setup_line, " C", sizeof(g_nc_setup_line) - strlen(g_nc_setup_line) - 1u);
+        strncat(g_nc_setup_line, c, sizeof(g_nc_setup_line) - strlen(g_nc_setup_line) - 1u);
+    }
 }
 
 static bool lc_nc_load_window(void)

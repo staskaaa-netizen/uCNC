@@ -152,6 +152,14 @@ typedef struct {
 #define G7X_MAX_THREAD_PASSES 500
 #endif
 
+#ifndef G7X_ENABLE_G76
+#if defined(G33_ENCODER) || defined(G7X_HOST_TEST)
+#define G7X_ENABLE_G76 1
+#else
+#define G7X_ENABLE_G76 0
+#endif
+#endif
+
 typedef struct {
     bool active;
     unsigned stage;

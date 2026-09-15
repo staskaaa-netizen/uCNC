@@ -20,17 +20,49 @@
 
 #if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
 #define G7X_EXTENDED_CODE EXTENDED_MCODE(710)
+#define G7X_G76_EXTENDED_CODE EXTENDED_MCODE(760)
+#define G7X_G33_MOTION_CODE 33
 #define G7X_PARSER_BURST_BLOCKS 1u
 
 static bool g7x_parser_region_active;
 static bool g7x_parser_runner_active;
+#if G7X_ENABLE_G76
+static bool g7x_parser_thread_runner_active;
+#endif
 static g7x_cycle_t g7x_parser_pending_cycle;
 static g7x_stream_t g7x_parser_stream;
+#if G7X_ENABLE_G76
+static g7x_thread_stream_t g7x_parser_thread_stream;
+#endif
 static parser_state_t g7x_parser_runner_state;
 static float g7x_parser_pending_doc;
 static bool g7x_parser_pending_doc_set;
 static g7x_corner_kind_t g7x_parser_pending_corner_kind;
 static float g7x_parser_pending_corner_amount;
+#if G7X_ENABLE_G76
+typedef struct {
+    float x;
+    float z;
+    float f;
+    float p;
+    float q;
+    float r;
+    float d;
+    int spring;
+    int tool_angle;
+    bool has_x;
+    bool has_z;
+    bool has_f;
+    bool has_p;
+    bool has_q;
+    bool has_r;
+    bool has_d;
+    bool has_spring;
+    bool has_tool_angle;
+} g7x_parser_g76_words_t;
+
+static g7x_parser_g76_words_t g7x_parser_g76_words;
+#endif
 
 bool g7x_parse(void *args);
 bool g7x_exec_modifier(void *args);
@@ -48,12 +80,19 @@ static void g7x_parser_clear_state(void)
 {
     g7x_parser_region_active = false;
     g7x_parser_runner_active = false;
+#if G7X_ENABLE_G76
+    g7x_parser_thread_runner_active = false;
+#endif
     g7x_parser_pending_cycle = G7X_CYCLE_NONE;
     g7x_parser_pending_doc = 0.0f;
     g7x_parser_pending_doc_set = false;
     g7x_parser_pending_corner_kind = G7X_CORNER_NONE;
     g7x_parser_pending_corner_amount = 0.0f;
     g7x_stream_reset(&g7x_parser_stream);
+#if G7X_ENABLE_G76
+    g7x_thread_reset(&g7x_parser_thread_stream);
+    memset(&g7x_parser_g76_words, 0, sizeof(g7x_parser_g76_words));
+#endif
     memset(&g7x_parser_runner_state, 0, sizeof(g7x_parser_runner_state));
 }
 #endif
@@ -61,7 +100,11 @@ static void g7x_parser_clear_state(void)
 bool g7x_parser_busy(void)
 {
 #if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
-    return g7x_parser_region_active || g7x_parser_runner_active;
+    return g7x_parser_region_active || g7x_parser_runner_active
+#if G7X_ENABLE_G76
+           || g7x_parser_thread_runner_active
+#endif
+           ;
 #else
     return false;
 #endif
@@ -114,6 +157,7 @@ bool g7x_cycle_profile(g7x_cycle_t cycle, g7x_cycle_profile_t *profile)
             p.rough_doc_word = 'W';
             p.name = "G72";
             break;
+#if G7X_ENABLE_G76
         case G7X_CYCLE_G76:
             p.pass_axis = G7X_AXIS_X;
             p.cut_axis = G7X_AXIS_Z;
@@ -121,6 +165,7 @@ bool g7x_cycle_profile(g7x_cycle_t cycle, g7x_cycle_profile_t *profile)
             p.rough_doc_word = 'J';
             p.name = "G76";
             break;
+#endif
         default:
             return false;
     }
@@ -934,6 +979,13 @@ const char *g7x_result_text(g7x_result_t result)
     }
 }
 
+void g7x_thread_reset(g7x_thread_stream_t *stream)
+{
+    if (stream)
+        memset(stream, 0, sizeof(*stream));
+}
+
+#if G7X_ENABLE_G76
 static float g7x_absf(float v)
 {
     return v < 0.0f ? -v : v;
@@ -955,12 +1007,7 @@ static bool g7x_too_many_steps(float span, float step)
     step = g7x_absf(step);
     return step > 0.0f && (span / step) > (float)G7X_MAX_THREAD_PASSES;
 }
-
-void g7x_thread_reset(g7x_thread_stream_t *stream)
-{
-    if (stream)
-        memset(stream, 0, sizeof(*stream));
-}
+#endif
 
 g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,
                                      float d_start,
@@ -979,6 +1026,7 @@ g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,
                                      int strategy,
                                      float peak_offset)
 {
+#if G7X_ENABLE_G76
     float depth;
     float rough_depth;
 
@@ -1063,6 +1111,25 @@ g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,
     stream->stage = 0;
     stream->active = true;
     return G7X_OK;
+#else
+    (void)stream;
+    (void)d_start;
+    (void)d_end;
+    (void)z1;
+    (void)z2;
+    (void)pitch;
+    (void)doc;
+    (void)clearance;
+    (void)lead;
+    (void)taper;
+    (void)compound_angle;
+    (void)degression;
+    (void)spring_passes;
+    (void)pass_count;
+    (void)strategy;
+    (void)peak_offset;
+    return G7X_UNSUPPORTED;
+#endif
 }
 
 g7x_result_t g7x_thread_begin_semantic(g7x_thread_stream_t *stream,
@@ -1081,6 +1148,7 @@ g7x_result_t g7x_thread_begin_semantic(g7x_thread_stream_t *stream,
                                        int chamfer,
                                        int tool_angle)
 {
+#if G7X_ENABLE_G76
     float diameter_depth;
     float rough_depth;
     float rough_end;
@@ -1145,8 +1213,27 @@ g7x_result_t g7x_thread_begin_semantic(g7x_thread_stream_t *stream,
     stream->tool_angle = tool_angle;
     stream->chamfer = chamfer;
     return G7X_OK;
+#else
+    (void)stream;
+    (void)d_start;
+    (void)d_end;
+    (void)z1;
+    (void)z2;
+    (void)pitch;
+    (void)thread_height;
+    (void)first_cut;
+    (void)min_cut;
+    (void)finish_allowance;
+    (void)clearance;
+    (void)taper;
+    (void)spring_passes;
+    (void)chamfer;
+    (void)tool_angle;
+    return G7X_UNSUPPORTED;
+#endif
 }
 
+#if G7X_ENABLE_G76
 static bool g7x_thread_prepare_next_pass(g7x_thread_stream_t *stream)
 {
     float pass_depth;
@@ -1192,9 +1279,11 @@ static bool g7x_thread_prepare_next_pass(g7x_thread_stream_t *stream)
     }
     return true;
 }
+#endif
 
 g7x_step_result_t g7x_thread_next(g7x_thread_stream_t *stream, char *out, size_t out_sz)
 {
+#if G7X_ENABLE_G76
     if (!stream || !stream->active || !out || out_sz == 0)
         return G7X_STEP_ERROR;
 
@@ -1278,6 +1367,12 @@ g7x_step_result_t g7x_thread_next(g7x_thread_stream_t *stream, char *out, size_t
             return G7X_STEP_DONE;
         }
     }
+#else
+    (void)stream;
+    (void)out;
+    (void)out_sz;
+    return G7X_STEP_ERROR;
+#endif
 }
 
 #if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
@@ -1387,6 +1482,157 @@ static uint8_t g7x_parser_exec_stream(parser_state_t *base_state, unsigned max_b
     return STATUS_OK;
 }
 
+#if G7X_ENABLE_G76
+static bool g7x_parser_parse_thread_line(const char *line, parser_state_t *state, parser_words_t *words, parser_cmd_explicit_t *cmd)
+{
+    float x;
+    float z;
+    float k;
+
+    if (!line || !state || !words || !cmd)
+        return false;
+
+    if (strncmp(line, "G0", 2) == 0) {
+        state->groups.motion = G0;
+        state->groups.motion_mantissa = 0;
+        SETFLAG(cmd->groups, GCODE_GROUP_MOTION);
+        if (g7x_get_field_float(line, "X", &x)) {
+            SETFLAG(cmd->words, GCODE_WORD_X);
+            words->xyzabc[AXIS_X] = x;
+        }
+        if (g7x_get_field_float(line, "Z", &z)) {
+            SETFLAG(cmd->words, GCODE_WORD_Z);
+            words->xyzabc[AXIS_Z] = z;
+        }
+        return CHECKFLAG(cmd->words, GCODE_XYZ_AXIS);
+    }
+
+    if (strncmp(line, "G33", 3) == 0) {
+        state->groups.motion = G7X_G33_MOTION_CODE;
+        state->groups.motion_mantissa = 0;
+        SETFLAG(cmd->groups, GCODE_GROUP_MOTION);
+        cmd->group_extended = EXTENDED_MOTION_GCODE(G7X_G33_MOTION_CODE);
+        if (g7x_get_field_float(line, "X", &x)) {
+            SETFLAG(cmd->words, GCODE_WORD_X);
+            words->xyzabc[AXIS_X] = x;
+        }
+        if (g7x_get_field_float(line, "Z", &z)) {
+            SETFLAG(cmd->words, GCODE_WORD_Z);
+            words->xyzabc[AXIS_Z] = z;
+        }
+        if (g7x_get_field_float(line, "K", &k)) {
+            SETFLAG(cmd->words, GCODE_WORD_K);
+            words->ijk[2] = k;
+        }
+        return CHECKFLAG(cmd->words, GCODE_XYZ_AXIS) && CHECKFLAG(cmd->words, GCODE_WORD_K);
+    }
+
+    return false;
+}
+
+static uint8_t g7x_parser_exec_thread(parser_state_t *base_state, unsigned max_blocks, bool *done)
+{
+    unsigned emitted = 0;
+
+    if (done)
+        *done = false;
+    if (!base_state)
+        return STATUS_INVALID_STATEMENT;
+
+    while (emitted < max_blocks) {
+        char line[96];
+        g7x_step_result_t step = g7x_thread_next(&g7x_parser_thread_stream, line, sizeof(line));
+        parser_state_t state = {0};
+        parser_words_t words = {0};
+        parser_cmd_explicit_t cmd = {0};
+        uint8_t error;
+
+        if (step == G7X_STEP_DONE) {
+            if (done)
+                *done = true;
+            return STATUS_OK;
+        }
+        if (step == G7X_STEP_ERROR)
+            return STATUS_INVALID_STATEMENT;
+
+        if (line[0] == '(') {
+            proto_info("G7X EXEC %s", line);
+            continue;
+        }
+
+        proto_info("G7X EXEC %s", line);
+        memcpy(&state, base_state, sizeof(state));
+        state.groups.nonmodal = 0;
+        if (!g7x_parser_parse_thread_line(line, &state, &words, &cmd))
+            return STATUS_INVALID_STATEMENT;
+
+        if (state.groups.motion != G7X_G33_MOTION_CODE)
+            g7_g8_motion_words_to_program(&cmd, &words);
+
+        error = parser_exec_generated_block(&state, &words, &cmd);
+        if (error != STATUS_OK) {
+            proto_info("G7X EXEC ERROR %u", (unsigned)error);
+            return error;
+        }
+
+        memcpy(base_state, &state, sizeof(*base_state));
+        emitted++;
+    }
+
+    return STATUS_OK;
+}
+
+static void g7x_parser_g76_clear(void)
+{
+    memset(&g7x_parser_g76_words, 0, sizeof(g7x_parser_g76_words));
+}
+
+static bool g7x_parser_g76_accept_word(uint8_t word, float value)
+{
+    switch (word) {
+    case 'X':
+        g7x_parser_g76_words.x = value;
+        g7x_parser_g76_words.has_x = true;
+        return true;
+    case 'Z':
+        g7x_parser_g76_words.z = value;
+        g7x_parser_g76_words.has_z = true;
+        return true;
+    case 'F':
+        g7x_parser_g76_words.f = value;
+        g7x_parser_g76_words.has_f = true;
+        return true;
+    case 'P':
+        g7x_parser_g76_words.p = value;
+        g7x_parser_g76_words.has_p = true;
+        return true;
+    case 'Q':
+        g7x_parser_g76_words.q = value;
+        g7x_parser_g76_words.has_q = true;
+        return true;
+    case 'R':
+        g7x_parser_g76_words.r = value;
+        g7x_parser_g76_words.has_r = true;
+        return true;
+    case 'D':
+        g7x_parser_g76_words.d = value;
+        g7x_parser_g76_words.has_d = true;
+        return true;
+    case 'S':
+    case 'H':
+        g7x_parser_g76_words.spring = (int)lroundf(value);
+        g7x_parser_g76_words.has_spring = true;
+        return true;
+    case 'A':
+        g7x_parser_g76_words.tool_angle = (int)lroundf(value);
+        g7x_parser_g76_words.has_tool_angle = true;
+        return true;
+    default:
+        return false;
+    }
+}
+#endif
+
 bool g7x_parse(void *args)
 {
     gcode_parse_args_t *ptr = (gcode_parse_args_t *)args;
@@ -1395,7 +1641,11 @@ bool g7x_parse(void *args)
         return EVENT_CONTINUE;
     }
 
-    if (ptr->word == 'G' && (ptr->code == 71 || ptr->code == 72)) {
+    if (ptr->word == 'G' && (ptr->code == 71 || ptr->code == 72
+#if G7X_ENABLE_G76
+                             || ptr->code == 76
+#endif
+                             )) {
         proto_info("G7X parse G%u", (unsigned)ptr->code);
         if (g7x_parser_region_active ||
             ptr->cmd->group_extended != 0) {
@@ -1404,6 +1654,14 @@ bool g7x_parse(void *args)
         }
         ptr->cmd->groups = 0;
         ptr->cmd->words = 0;
+#if G7X_ENABLE_G76
+        if (ptr->code == 76) {
+            ptr->cmd->group_extended = G7X_G76_EXTENDED_CODE;
+            g7x_parser_g76_clear();
+            *(ptr->error) = STATUS_OK;
+            return EVENT_HANDLED;
+        }
+#endif
         ptr->cmd->group_extended = G7X_EXTENDED_CODE;
         g7x_parser_pending_cycle = ptr->code == 72 ? G7X_CYCLE_G72 : G7X_CYCLE_G71;
         g7x_parser_pending_doc = 0.0f;
@@ -1411,6 +1669,14 @@ bool g7x_parse(void *args)
         *(ptr->error) = STATUS_OK;
         return EVENT_HANDLED;
     }
+
+#if G7X_ENABLE_G76
+    if (ptr->cmd->group_extended == G7X_G76_EXTENDED_CODE &&
+        g7x_parser_g76_accept_word(ptr->word, ptr->value)) {
+        *(ptr->error) = STATUS_OK;
+        return EVENT_HANDLED;
+    }
+#endif
 
     if (ptr->cmd->group_extended == G7X_EXTENDED_CODE &&
         (ptr->word == 'U' || ptr->word == 'W')) {
@@ -1438,6 +1704,65 @@ bool g7x_exec_modifier(void *args)
     if (!ptr || !ptr->cmd || !ptr->new_state || !ptr->words || !ptr->error) {
         return EVENT_CONTINUE;
     }
+
+#if G7X_ENABLE_G76
+    if (ptr->cmd->group_extended == G7X_G76_EXTENDED_CODE) {
+        float current[AXIS_COUNT];
+        float start_x;
+        float finish_allow = g7x_parser_g76_words.has_r ? g7x_parser_g76_words.r : 0.0f;
+        float taper = g7x_parser_g76_words.has_d ? g7x_parser_g76_words.d : 0.0f;
+        int spring = g7x_parser_g76_words.has_spring ? g7x_parser_g76_words.spring : 0;
+        int tool_angle = g7x_parser_g76_words.has_tool_angle ? g7x_parser_g76_words.tool_angle : 0;
+        g7x_result_t result;
+
+        if (g7x_parser_region_active || g7x_parser_runner_active || g7x_parser_thread_runner_active ||
+            !g7x_parser_g76_words.has_x ||
+            !g7x_parser_g76_words.has_z ||
+            !g7x_parser_g76_words.has_f ||
+            !g7x_parser_g76_words.has_p ||
+            !g7x_parser_g76_words.has_q) {
+            g7x_parser_g76_clear();
+            *(ptr->error) = STATUS_INVALID_STATEMENT;
+            return EVENT_HANDLED;
+        }
+
+        mc_get_position(current);
+        kinematics_apply_transform(current);
+        start_x = current[AXIS_X];
+
+        result = g7x_thread_begin_semantic(&g7x_parser_thread_stream,
+                                           start_x,
+                                           g7x_parser_g76_words.x,
+                                           current[AXIS_Z],
+                                           g7x_parser_g76_words.z,
+                                           g7x_parser_g76_words.f,
+                                           g7x_parser_g76_words.p,
+                                           g7x_parser_g76_words.q,
+                                           g7x_parser_g76_words.q,
+                                           finish_allow,
+                                           1.0f,
+                                           taper,
+                                           spring,
+                                           0,
+                                           tool_angle);
+        g7x_parser_g76_clear();
+        if (result != G7X_OK) {
+            proto_info("G7X G76 failed: %s", g7x_result_text(result));
+            *(ptr->error) = STATUS_INVALID_STATEMENT;
+            return EVENT_HANDLED;
+        }
+
+        memcpy(&g7x_parser_runner_state, ptr->new_state, sizeof(g7x_parser_runner_state));
+        g7x_parser_thread_runner_active = true;
+        ptr->cmd->group_extended = 0;
+        ptr->cmd->groups = 0;
+        ptr->cmd->words = 0;
+        memset(ptr->words, 0, sizeof(*ptr->words));
+        proto_print("[MSG:G7X G76 generated blocks queued]\r\n");
+        *(ptr->error) = STATUS_OK;
+        return EVENT_HANDLED;
+    }
+#endif
 
     if (ptr->cmd->group_extended == G7X_EXTENDED_CODE) {
         g7x_cycle_t cycle = g7x_parser_pending_cycle == G7X_CYCLE_NONE ?
@@ -1562,6 +1887,25 @@ bool g7x_dotasks(void *args)
     uint8_t error;
 
     (void)args;
+#if G7X_ENABLE_G76
+    if (g7x_parser_thread_runner_active) {
+        if (planner_get_buffer_freeblocks() < 2u) {
+            return EVENT_CONTINUE;
+        }
+        error = g7x_parser_exec_thread(&g7x_parser_runner_state, G7X_PARSER_BURST_BLOCKS, &done);
+        if (error != STATUS_OK) {
+            proto_info("G7X G76 generated blocks failed: %u", (unsigned)error);
+            g7x_parser_clear_state();
+            return EVENT_CONTINUE;
+        }
+        parser_set_state_from_module(&g7x_parser_runner_state);
+        if (done) {
+            g7x_parser_thread_runner_active = false;
+            proto_print("[MSG:G7X G76 generated blocks done]\r\n");
+        }
+        return EVENT_CONTINUE;
+    }
+#endif
     if (!g7x_parser_runner_active) {
         return EVENT_CONTINUE;
     }

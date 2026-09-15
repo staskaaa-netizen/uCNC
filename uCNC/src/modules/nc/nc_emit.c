@@ -98,11 +98,15 @@ size_t nc_emit_stream_line(const nc_emit_stream_t *stream)
 
 static nc_emit_result_t nc_emit_g7x_next(nc_emit_stream_t *stream,
                                          char *out,
-                                         size_t out_sz)
+                                         size_t out_sz,
+                                         size_t *source_line)
 {
     g7x_step_result_t step = g7x_stream_next(&stream->g7x, out, out_sz);
 
     if (step == G7X_STEP_LINE) {
+        if (source_line && stream->g7x.last_source_line != (size_t)-1) {
+            *source_line = stream->g7x.last_source_line;
+        }
         if (stream->log) {
             grbl_stream_printf("[MSG:NC G7X OUT %.96s]\r\n", out);
         }
@@ -129,6 +133,7 @@ static bool nc_emit_feed_g7x(nc_emit_stream_t *stream)
         bool done = false;
 
         stream->source_line++;
+        stream->g7x.pending_source_line = stream->source_line - 1u;
         if (g7x_stream_add_line(&stream->g7x, line, &done) != G7X_OK) {
             if (stream->log) {
                 grbl_stream_printf("[MSG:NC G7X ADD FAIL %.96s]\r\n", line);
@@ -169,10 +174,10 @@ nc_emit_result_t nc_emit_stream_next(nc_emit_stream_t *stream,
     }
 
     if (stream->g7x.active) {
-        return nc_emit_g7x_next(stream, out, out_sz);
+        return nc_emit_g7x_next(stream, out, out_sz, source_line);
     }
     if (stream->g7x_collecting && nc_emit_feed_g7x(stream)) {
-        return nc_emit_g7x_next(stream, out, out_sz);
+        return nc_emit_g7x_next(stream, out, out_sz, source_line);
     }
 
     line = nc_emit_trim(stream->doc->lines[stream->source_line].text);
@@ -184,7 +189,7 @@ nc_emit_result_t nc_emit_stream_next(nc_emit_stream_t *stream,
             stream->source_line++;
             stream->g7x_collecting = true;
             if (nc_emit_feed_g7x(stream)) {
-                return nc_emit_g7x_next(stream, out, out_sz);
+                return nc_emit_g7x_next(stream, out, out_sz, source_line);
             }
         }
         if (stream->log) {

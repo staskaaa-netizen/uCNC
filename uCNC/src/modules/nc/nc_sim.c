@@ -34,6 +34,7 @@ void nc_sim_collect_preview(const nc_document_t *doc, nc_preview_info_t *p)
     p->stock_z = 75.0f;
     p->stock_i = 0.0f;
     p->stock_e = 3.0f;
+    p->chuck_c = 15.0f;
     p->min_x = 1000000.0f;
     p->min_z = 1000000.0f;
 
@@ -59,6 +60,9 @@ void nc_sim_collect_preview(const nc_document_t *doc, nc_preview_info_t *p)
             (void)nc_sim_line_word_float(line, 'Z', &p->stock_z);
             (void)nc_sim_line_word_float(line, 'I', &p->stock_i);
             (void)nc_sim_line_word_float(line, 'E', &p->stock_e);
+        }
+        if (g7x_command_is(line, "G972")) {
+            (void)nc_sim_line_word_float(line, 'C', &p->chuck_c);
         }
 
         cycle = g7x_cycle_from_line(line);
@@ -104,6 +108,7 @@ void nc_sim_collect_preview(const nc_document_t *doc, nc_preview_info_t *p)
     if (p->stock_i < 0.0f) p->stock_i = 0.0f;
     if (p->stock_i >= p->stock_x) p->stock_i = 0.0f;
     if (p->stock_e < 0.0f) p->stock_e = 0.0f;
+    if (p->chuck_c <= 0.0f) p->chuck_c = 15.0f;
     p->stock_visible_z = p->stock_z + p->stock_e;
     if (p->stock_visible_z <= 0.0f) p->stock_visible_z = p->stock_z;
     if (p->min_x > p->max_x) {

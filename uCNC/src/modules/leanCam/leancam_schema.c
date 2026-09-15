@@ -31,7 +31,7 @@ static const lc_schema_menu_item_t g_file_name_items[] = {
 };
 
 static const lc_schema_menu_item_t g_program_items[] = {
-    {'0', "Tool", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_TOOLCALL, 0},
+    {'0', "Tool", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_TOOL, 0},
     {'1', "OD", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_OD, 0},
     {'2', "ID", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_ID, 0},
     {'3', "Face", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_FACE, 0},
@@ -51,6 +51,10 @@ static const lc_schema_menu_item_t g_program_other_items[] = {
     {'0', "Proc", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_PROCESSCALL, 0},
     {'1', "Thread", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_THREAD, 0},
     {'2', "End", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_END, 0},
+    {'3', "View", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_G970, 0},
+    {'4', "Stock", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_G971, 0},
+    {'5', "Clamp", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_G972, 0},
+    {'6', "Mode", LC_SCHEMA_ACT_TEMPLATE, LC_MENU_TEMPLATE_G973, 0},
     {'9', "<>", LC_SCHEMA_ACT_TEMPLATE_MORE, 0, 0},
     {'D', "Edit", LC_SCHEMA_ACT_PROGRAM_EDIT, 0, LC_SCHEMA_ITEM_HIDDEN},
     {'#', "Run", LC_SCHEMA_ACT_PROGRAM_RUN, 0, LC_SCHEMA_ITEM_HIDDEN},

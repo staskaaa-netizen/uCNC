@@ -13,12 +13,12 @@ scanout DMA, panel timing, or framebuffer internals.
 - `.lcam` files live in the normal uCNC file system.
 - One text row is one program block.
 - Saved rows are plain resolved values, not template expressions.
-- `SETUP` describes stock and holding.
-- `TOOL` describes catalog/local tool geometry and cutting defaults.
-- `TOOLCALL` selects a tool from the local program or `tools.lct` catalog.
+- `G970/G971/G972/G973` describe graphics extents, raw stock, clamp length,
+  and preview mode as normal NC rows.
+- `Tn` rows describe catalog/local tool geometry and cutting defaults.
 - Cycle rows use the latest setup/tool context above the selected row.
 - Tool lookup is by numeric `T`.
-- A local `TOOL Tn ...` row in the program overrides catalog `Tn` by position.
+- A local `Tn ...` row in the program overrides catalog `Tn` by position.
 - Catalog `T` numbers must be unique; duplicates are rejected as ambiguous.
 - There is no active PROCESS/T+P database in the current minimal path.
 
@@ -28,15 +28,19 @@ scanout DMA, panel timing, or framebuffer internals.
 - Negative Z goes into the stock toward the chuck.
 - Positive Z moves away from the stock.
 - X is diameter mode.
-- Setup `OD`, `ID`, `L`, `CLAMP`, `EXTRA`, and `CLR` define preview stock and
-  conservative safe moves.
+- `G20/G21` are uCNC inch/mm unit-mode words only. LeanCam setup or graphics
+  metadata must not reuse them.
+- `G970` defines preview extents; `G971` defines raw stock; `G972` defines
+  clamping length; `G973` defines preview mode.
 
 ## Core Rows
 
 ```text
-SETUP L{} OD{} ID{(0)} CLAMP{(0)} EXTRA{(0)} CLR{(1)}
-TOOL T{(1)} R{(0.8)} ORIENT{(3)} R_FEED{(120)} FIN_FEED{(60)} DOC{(2.0)} FIN_DOC{(0.5)} RPM{(800)} XOFF{(0)} ZOFF{(0)}
-TOOLCALL T{(1)} R_FEED{(TOOL.R_FEED)} FIN_FEED{(TOOL.FIN_FEED)} DOC{(TOOL.DOC)} FIN_DOC{(TOOL.FIN_DOC)} RPM{(TOOL.RPM)}
+G970 X{} U{} Z{} W{}
+G971 X{} Z{} I{(0)} E{(0)}
+G972 C{(0)}
+G973 P{(3)}
+T{(1)} R{(0.8)} O{(3)} F{(120)} FF{(60)} DOC{(2.0)} FDOC{(0.5)} S{(800)} XO{(0)} ZO{(0)}
 ```
 
 Template expressions are draft-time only:
@@ -44,13 +48,15 @@ Template expressions are draft-time only:
 ```text
 {}                  required user input
 {(literal)}         default literal
-{(SETUP.FIELD)}     default from the active SETUP row
-{(TOOL.FIELD)}      default from the selected TOOL row
-{(TOOLCALL.FIELD)}  default from the current TOOLCALL row
+{(TOOL.FIELD)}      default from the selected T row
 {(THIS.FIELD)}      default from this same row
 ```
 
 Saved `.lcam` rows must contain resolved values only.
+
+The compact row vocabulary is listed in `leancam_dictionary.h` as
+`command + word + conversational meaning` records. That file is the source of
+truth for shared LeanCam command/field spelling.
 
 ## G-code-ish Rows
 
@@ -156,23 +162,23 @@ LeanCam snapshots may be consumed by display renderers such as
 
 ## Tool Data
 
-`TOOL` is both the tool identity and the cutting defaults in the current
+`Tn` is both the tool identity and the cutting defaults in the current
 minimal controller workflow.
 
 - `T`: tool number
 - `R`: nose radius
-- `ORIENT`: keypad-style tool orientation/insert shape
-- `R_FEED`, `FIN_FEED`: roughing and finishing feed defaults
-- `DOC`, `FIN_DOC`: roughing and finishing depth defaults
-- `RPM`: default spindle speed
-- `XOFF`, `ZOFF`: measured offsets
+- `O`: keypad-style tool orientation/insert shape
+- `F`, `FF`: roughing and finishing feed defaults
+- `DOC`, `FDOC`: roughing and finishing depth defaults
+- `S`: default spindle speed
+- `XO`, `ZO`: measured offsets
 
-The file `tools.lct` is the simple tool catalog. It uses the same `TOOL ...`
-row format and is visible in the file manager.
+The file `tools.lct` is the simple tool catalog. It uses the same compact
+`Tn ...` row format and is visible in the file manager.
 
 ## Tool Preview
 
-`TOOL.ORIENT` uses the numeric keypad as a 3x3 tool-shape grid:
+`Tn O...` uses the numeric keypad as a 3x3 tool-shape grid:
 
 ```text
 7 8 9
@@ -182,7 +188,7 @@ row format and is visible in the file manager.
 
 Single digit values keep the legacy simple orientation behavior:
 
-- `0` or missing `ORIENT`: no insert shape, only a red DOC-sized dot at X0/Z0
+- `0` or missing `O`: no insert shape, only a red DOC-sized dot at X0/Z0
 - `1`, `3`, `7`, `9`: square insert anchored on that corner
 - `2`, `4`, `6`, `8`: square insert sharing the nearest corner behavior
 - `5`: center drill-style marker

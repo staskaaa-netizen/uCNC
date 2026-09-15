@@ -18,7 +18,6 @@
 static bool g_execution_in_poll;
 static uint32_t g_execution_snapshot_last_ms;
 static uint32_t g_execution_render_last_ms;
-static uint32_t g_execution_present_last_ms;
 
 static bool execution_controller_update(void *args)
 {
@@ -59,26 +58,9 @@ static void execution_controller_step_render(uint32_t now)
 {
     if ((uint32_t)(now - g_execution_render_last_ms) < EXECUTION_CONTROLLER_RENDER_MS)
         return;
-#if EXECUTION_CONTROLLER_CHUNKED_PRESENT
-    if (lvds_hstx_present_chunked_busy())
-        return;
-#endif
     g_execution_render_last_ms = now;
     leancam_visual_prepare();
     leancam_visual_draw();
-}
-
-static void execution_controller_step_present(uint32_t now)
-{
-#if EXECUTION_CONTROLLER_CHUNKED_PRESENT
-    if (EXECUTION_CONTROLLER_PRESENT_MS &&
-        (uint32_t)(now - g_execution_present_last_ms) < EXECUTION_CONTROLLER_PRESENT_MS)
-        return;
-    g_execution_present_last_ms = now;
-    (void)lvds_hstx_present_chunked_step();
-#else
-    (void)now;
-#endif
 }
 
 void execution_controller_init(void)
@@ -91,7 +73,6 @@ void execution_controller_init(void)
     leancam_visual_init();
     g_execution_snapshot_last_ms = 0;
     g_execution_render_last_ms = 0;
-    g_execution_present_last_ms = 0;
 }
 
 void execution_controller_poll(void)
@@ -109,7 +90,6 @@ void execution_controller_poll(void)
     execution_controller_step_bridge();
     execution_controller_step_snapshot(now_ms);
     execution_controller_step_render(now_ms);
-    execution_controller_step_present(now_ms);
 
     g_execution_in_poll = false;
 }

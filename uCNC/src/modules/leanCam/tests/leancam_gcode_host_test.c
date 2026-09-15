@@ -343,7 +343,7 @@ static int lc_run_g71_example(const char *name,
                               const char *forbidden_rough)
 {
     static const char *setup = "SETUP L50 OD50 ID0 CLAMP0 EXTRA0 CLR1";
-    static const char *tool = "TOOL T1 R0.8 ORIENT3 R_FEED120 FIN_FEED60 DOC2.0 FIN_DOC0.5 RPM800 XOFF0 ZOFF0";
+    static const char *tool = "T1 R0.8 O3 F120 FF60 DOC2.0 FDOC0.5 S800 XO0 ZO0";
     lc_test_sink_t sink;
     lc_gcode_result_t got = LC_GCODE_OK;
     char err[96];
@@ -626,10 +626,15 @@ static int lc_run_raw_g7x_rough_checks(const char *setup, const char *tool)
     if (got == LC_GCODE_OK)
         got = leancam_gcode_run_program_line_ex("G80",
                                                 setup, tool, lc_test_send, &sink, err, sizeof(err));
-    if (got != LC_GCODE_OK || lc_find_emitted_exact_from(&sink, 0, "G1 X5.500 F120.000") < 0)
     {
-        printf("FAIL raw G72 rectangle result=%d err=%s\n", (int)got, err);
-        return 1;
+        int rapid = lc_find_emitted_exact_from(&sink, 0, "G0 X51.000 Z-1.000");
+        int feed = lc_find_emitted_exact_from(&sink, rapid + 1, "G1 X5.500 F120.000");
+        if (got != LC_GCODE_OK || rapid < 0 || feed < 0)
+        {
+            printf("FAIL raw G72 rectangle result=%d err=%s rapid=%d feed=%d\n",
+                   (int)got, err, rapid, feed);
+            return 1;
+        }
     }
 
     memset(&sink, 0, sizeof(sink));
@@ -650,9 +655,51 @@ static int lc_run_raw_g7x_rough_checks(const char *setup, const char *tool)
     if (got == LC_GCODE_OK)
         got = leancam_gcode_run_program_line_ex("G80",
                                                 setup, tool, lc_test_send, &sink, err, sizeof(err));
-    if (got != LC_GCODE_BAD_FIELD || strstr(err, "arc roughing unsupported") == NULL)
+    if (got == LC_GCODE_OK && !leancam_gcode_emit_program_footer_ex(lc_test_send, &sink, err, sizeof(err)))
+        got = LC_GCODE_STREAM_REJECT;
+    if (got != LC_GCODE_OK || !sink.saw_g72_rough)
     {
-        printf("FAIL raw G72 arc unsupported result=%d err=%s\n", (int)got, err);
+        printf("FAIL raw G72 arc rough result=%d err=%s rough=%d\n",
+               (int)got, err, sink.saw_g72_rough);
+        return 1;
+    }
+    {
+        const char *g72_arc_finish[] = {
+            "G1 X10.000 Z-25.000 F45.000",
+            "G2 X40.000 Z-25.000 R20.000",
+            "G1 X40.000 Z0.000"
+        };
+        if (lc_expect_finish_sequence(&sink, "raw G72 arc rough", g72_arc_finish, 3))
+            return 1;
+    }
+
+    memset(&sink, 0, sizeof(sink));
+    err[0] = 0;
+    if (!leancam_gcode_emit_program_header(lc_test_send, &sink))
+        return 1;
+    got = leancam_gcode_run_program_line_ex("G72 W1 R1 X0.5 Z0.5 F120",
+                                            setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X50 Z2 C0 R0",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X50 Z-10",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X25 Z-5 C0 R5",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X25 Z2",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G80",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK && !leancam_gcode_emit_program_footer_ex(lc_test_send, &sink, err, sizeof(err)))
+        got = LC_GCODE_STREAM_REJECT;
+    if (got != LC_GCODE_OK || !sink.saw_g72_rough)
+    {
+        printf("FAIL raw G72 R corner result=%d err=%s rough=%d\n",
+               (int)got, err, sink.saw_g72_rough);
         return 1;
     }
 
@@ -703,14 +750,42 @@ static int lc_run_raw_g7x_rough_checks(const char *setup, const char *tool)
     if (got == LC_GCODE_OK)
         got = leancam_gcode_run_program_line_ex("G80",
                                                 setup, tool, lc_test_send, &sink, err, sizeof(err));
-    if (got == LC_GCODE_OK && leancam_gcode_emit_program_footer_ex(lc_test_send, &sink, err, sizeof(err)))
+    if (got == LC_GCODE_OK && !leancam_gcode_emit_program_footer_ex(lc_test_send, &sink, err, sizeof(err)))
+        got = LC_GCODE_STREAM_REJECT;
+    if (got != LC_GCODE_OK || !sink.saw_g72_rough)
     {
-        printf("FAIL raw G72 nonmonotonic accepted\n");
+        printf("FAIL raw G72 pocket return result=%d err=%s rough=%d\n",
+               (int)got, err, sink.saw_g72_rough);
         return 1;
     }
-    if (strstr(err, "non-monotonic in X") == NULL)
+
+    memset(&sink, 0, sizeof(sink));
+    err[0] = 0;
+    if (!leancam_gcode_emit_program_header(lc_test_send, &sink))
+        return 1;
+    got = leancam_gcode_run_program_line_ex("G72 W1 R1 X0.5 Z0.5 F120",
+                                            setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X50 Z2 C0 R0",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X25 Z-2",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X25 Z-10 C0 R0",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G1 X50 Z-12",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK)
+        got = leancam_gcode_run_program_line_ex("G80",
+                                                setup, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK && !leancam_gcode_emit_program_footer_ex(lc_test_send, &sink, err, sizeof(err)))
+        got = LC_GCODE_STREAM_REJECT;
+    if (got != LC_GCODE_OK || !sink.saw_g72_rough)
     {
-        printf("FAIL raw G72 nonmonotonic err=%s\n", err);
+        printf("FAIL raw G72 inward pocket result=%d err=%s rough=%d\n",
+               (int)got, err, sink.saw_g72_rough);
         return 1;
     }
 
@@ -962,12 +1037,92 @@ static int lc_run_g71_radius_boundary_check(const char *setup, const char *tool)
     return 0;
 }
 
+static int lc_run_setup_nc_checks(const char *tool)
+{
+    lc_test_sink_t sink;
+    lc_gcode_result_t got;
+    char err[96];
+
+    memset(&sink, 0, sizeof(sink));
+    err[0] = 0;
+
+    got = leancam_gcode_run_program_line_ex("N70 G970 X-10 U120 Z-150 W30",
+                                            NULL, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got != LC_GCODE_OK)
+    {
+        printf("FAIL G970 valid result=%d err=%s\n", (int)got, err);
+        return 1;
+    }
+    got = leancam_gcode_run_program_line_ex("N71 G971 X80 Z125 E0",
+                                            NULL, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got != LC_GCODE_OK)
+    {
+        printf("FAIL G971 valid result=%d err=%s\n", (int)got, err);
+        return 1;
+    }
+    got = leancam_gcode_run_program_line_ex("N72 G972 C15",
+                                            NULL, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got != LC_GCODE_OK)
+    {
+        printf("FAIL G972 valid result=%d err=%s\n", (int)got, err);
+        return 1;
+    }
+    got = leancam_gcode_run_program_line_ex("N73 G973 P7",
+                                            NULL, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got != LC_GCODE_OK)
+    {
+        printf("FAIL G973 valid result=%d err=%s\n", (int)got, err);
+        return 1;
+    }
+    if (sink.emitted_count != 0)
+    {
+        printf("FAIL G970-G973 emitted %d lines\n", sink.emitted_count);
+        return 1;
+    }
+
+    got = leancam_gcode_run_program_line_ex("G970 X10 U10 Z-1 W1",
+                                            NULL, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK || strstr(err, "X must be < U") == NULL)
+    {
+        printf("FAIL G970 bad accepted err=%s\n", err);
+        return 1;
+    }
+
+    got = leancam_gcode_run_program_line_ex("G971 X80 Z125 I80",
+                                            NULL, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK || strstr(err, "I must be < X") == NULL)
+    {
+        printf("FAIL G971 bad accepted err=%s\n", err);
+        return 1;
+    }
+
+    got = leancam_gcode_run_program_line_ex("G973 P2",
+                                            NULL, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK || strstr(err, "P must be 0, 1, 3, or 7") == NULL)
+    {
+        printf("FAIL G973 bad accepted err=%s\n", err);
+        return 1;
+    }
+
+    got = leancam_gcode_run_program_line_ex("SETUP L50 OD50 ID0 CLAMP12 EXTRA0 CLR1",
+                                            NULL, tool, lc_test_send, &sink, err, sizeof(err));
+    if (got == LC_GCODE_OK || strstr(err, "SETUP is obsolete") == NULL)
+    {
+        printf("FAIL old SETUP accepted err=%s\n", err);
+        return 1;
+    }
+
+    printf("PASS G970-G973 setup rows\n");
+    return 0;
+}
+
 int main(void)
 {
     static const char *setup = "SETUP L80 OD40 ID10 CLAMP5 EXTRA2 CLR1";
-    static const char *tool = "TOOL T3 R0.8 ORIENT3 R_FEED90 FIN_FEED45 DOC1.0 FIN_DOC0.2 RPM800 XOFF0 ZOFF0";
+    static const char *tool = "T3 R0.8 O3 F90 FF45 DOC1.0 FDOC0.2 S800 XO0 ZO0";
     int fails = 0;
 
+    fails += lc_run_setup_nc_checks(tool);
     fails += lc_run_raw_g7x_rough_checks(setup, tool);
     fails += lc_run_g1_corner_rule_checks(setup, tool);
     fails += lc_run_g71_radius_boundary_check(setup, tool);

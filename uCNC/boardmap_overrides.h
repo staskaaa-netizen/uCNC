@@ -83,7 +83,7 @@ extern "C"
 #define DOUT0_BIT 255
 
 /* Activity LED. */
-#define DOUT31_BIT 24
+#define DOUT31_BIT 255
 
 /* Onboard SD socket: spi1 / uCNC SPI2. */
 #define SPI2_CLK_BIT 30

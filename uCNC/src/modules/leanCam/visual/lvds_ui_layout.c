@@ -14,7 +14,7 @@ void lvds_ui_tool_editor_layout(int screen_w,
                                 uint8_t tool_asset,
                                 lvds_tool_editor_layout_t *out)
 {
-    int glyph_gap = tool_asset ? 14 : 0;
+    int glyph_gap = tool_asset ? 34 : 0;
 
     (void)left_w;
     if (!out) {
@@ -24,7 +24,7 @@ void lvds_ui_tool_editor_layout(int screen_w,
     out->title_x = left_x;
     out->title_y = 64;
     out->row_y = 100;
-    out->detail_y = 354;
+    out->detail_y = 374;
     out->active_field_x = left_x + 16;
     out->active_field_y = 522;
     out->glyph_x = left_x + 8;
@@ -33,7 +33,7 @@ void lvds_ui_tool_editor_layout(int screen_w,
     out->text_cols = tool_asset ? ((screen_w - out->text_x - 18) / 8) : right_cols;
     out->row_cell_x = tool_asset ? 14 : (right_x - 2);
     out->row_cell_w = tool_asset ? (screen_w - 28) : (screen_w - right_x - 16);
-    out->max_rows = tool_asset ? 9 : 7;
+    out->max_rows = tool_asset ? 8 : 7;
 }
 
 void lvds_ui_program_layout(int screen_w,

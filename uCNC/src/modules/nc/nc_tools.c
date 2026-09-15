@@ -1,5 +1,7 @@
 #include "nc_tools.h"
 
+#include "../file_system.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -148,11 +150,12 @@ bool nc_tool_from_line(const char *line, nc_tool_t *tool)
     return true;
 }
 
-bool nc_tool_active_for_line(const nc_document_t *doc, size_t before_or_at, nc_tool_t *tool)
+bool nc_tool_number_for_line(const nc_document_t *doc, size_t before_or_at, int *tool_no)
 {
+    float v;
     size_t i;
 
-    if (!doc || !tool || doc->line_count == 0) {
+    if (!doc || !tool_no || doc->line_count == 0) {
         return false;
     }
     if (before_or_at >= doc->line_count) {
@@ -160,11 +163,108 @@ bool nc_tool_active_for_line(const nc_document_t *doc, size_t before_or_at, nc_t
     }
 
     for (i = before_or_at + 1; i > 0; i--) {
-        if (nc_tool_from_line(doc->lines[i - 1].text, tool)) {
+        if (nc_tool_word_float(doc->lines[i - 1].text, 'T', &v)) {
+            *tool_no = (int)(v + 0.5f);
             return true;
         }
     }
-    return nc_tool_from_line(nc_tool_default_line(1), tool);
+    return false;
+}
+
+bool nc_tool_by_number(const nc_document_t *tool_doc, int tool_no, nc_tool_t *tool)
+{
+    size_t i;
+
+    if (!tool_doc || !tool) {
+        return false;
+    }
+    for (i = 0; i < tool_doc->line_count; i++) {
+        nc_tool_t candidate;
+        if (nc_tool_from_line(tool_doc->lines[i].text, &candidate) &&
+            candidate.t == tool_no) {
+            *tool = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool nc_tool_active_for_line(const nc_document_t *doc, size_t before_or_at, nc_tool_t *tool)
+{
+    int tool_no = 1;
+
+    (void)nc_tool_number_for_line(doc, before_or_at, &tool_no);
+    if (nc_tool_by_number(doc, tool_no, tool)) {
+        return true;
+    }
+    return nc_tool_from_line(nc_tool_default_line(tool_no), tool);
+}
+
+bool nc_tool_active_from_table(const nc_document_t *program_doc,
+                               size_t before_or_at,
+                               const nc_document_t *tool_doc,
+                               nc_tool_t *tool)
+{
+    int tool_no = 1;
+
+    (void)nc_tool_number_for_line(program_doc, before_or_at, &tool_no);
+    if (nc_tool_by_number(tool_doc, tool_no, tool)) {
+        return true;
+    }
+    return nc_tool_from_line(nc_tool_default_line(tool_no), tool);
+}
+
+bool nc_tool_active_from_file(const nc_document_t *program_doc,
+                              size_t before_or_at,
+                              const char *tool_path,
+                              nc_tool_t *tool)
+{
+    fs_file_t *fp;
+    char line[NC_MAX_LINE_LEN];
+    size_t used = 0;
+    int tool_no = 1;
+
+    if (!tool) {
+        return false;
+    }
+    (void)nc_tool_number_for_line(program_doc, before_or_at, &tool_no);
+    if (!tool_path || !tool_path[0]) {
+        return nc_tool_from_line(nc_tool_default_line(tool_no), tool);
+    }
+
+    fp = fs_open(tool_path, "r");
+    if (!fp) {
+        return nc_tool_from_line(nc_tool_default_line(tool_no), tool);
+    }
+    while (fs_available(fp)) {
+        char c;
+        if (fs_read(fp, (uint8_t *)&c, 1) != 1) {
+            break;
+        }
+        if (c == '\n' || used + 1 >= sizeof(line)) {
+            nc_tool_t candidate;
+            line[used] = '\0';
+            if (nc_tool_from_line(line, &candidate) && candidate.t == tool_no) {
+                *tool = candidate;
+                fs_close(fp);
+                return true;
+            }
+            used = 0;
+        } else if (c != '\r') {
+            line[used++] = c;
+        }
+    }
+    if (used > 0) {
+        nc_tool_t candidate;
+        line[used] = '\0';
+        if (nc_tool_from_line(line, &candidate) && candidate.t == tool_no) {
+            *tool = candidate;
+            fs_close(fp);
+            return true;
+        }
+    }
+    fs_close(fp);
+    return nc_tool_from_line(nc_tool_default_line(tool_no), tool);
 }
 
 nc_result_t nc_insert_tool_default(nc_document_t *doc)

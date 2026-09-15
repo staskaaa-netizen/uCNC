@@ -296,6 +296,7 @@ void nc_state_runtime(nc_runtime_state_t *state)
 void nc_state_snapshot(const nc_document_t *doc, nc_snapshot_t *snapshot)
 {
     size_t first = 0;
+    size_t cursor;
     size_t i;
     nc_word_t word;
 
@@ -312,8 +313,13 @@ void nc_state_snapshot(const nc_document_t *doc, nc_snapshot_t *snapshot)
         return;
     }
 
-    if (doc->cursor_line >= NC_MAX_VISIBLE_LINES / 2) {
-        first = doc->cursor_line - (NC_MAX_VISIBLE_LINES / 2);
+    cursor = doc->cursor_line;
+    if (doc->line_count > 0 && cursor >= doc->line_count) {
+        cursor = 0;
+    }
+
+    if (cursor >= NC_MAX_VISIBLE_LINES / 2) {
+        first = cursor - (NC_MAX_VISIBLE_LINES / 2);
     }
     if (first + NC_MAX_VISIBLE_LINES > doc->line_count && doc->line_count > NC_MAX_VISIBLE_LINES) {
         first = doc->line_count - NC_MAX_VISIBLE_LINES;
@@ -321,19 +327,21 @@ void nc_state_snapshot(const nc_document_t *doc, nc_snapshot_t *snapshot)
 
     strncpy(snapshot->path, doc->path, sizeof(snapshot->path) - 1);
     snapshot->first_line = first;
-    snapshot->cursor_line = doc->cursor_line;
+    snapshot->cursor_line = cursor;
     snapshot->line_count = doc->line_count;
     snapshot->dirty = doc->dirty;
 
     for (i = 0; i < NC_MAX_VISIBLE_LINES && first + i < doc->line_count; i++) {
         strncpy(snapshot->lines[i], doc->lines[first + i].text, NC_MAX_LINE_LEN - 1);
-        if (first + i == doc->cursor_line) {
+        if (first + i == cursor) {
             snapshot->cursor_visible_index = (int)i;
         }
     }
 
-    if (nc_get_selected_word(doc, &word) == NC_OK && doc->cursor_line < doc->line_count) {
-        const char *label = nc_vocab_label_for_word(doc->lines[doc->cursor_line].text, &word);
+    if (cursor == doc->cursor_line &&
+        nc_get_selected_word(doc, &word) == NC_OK &&
+        cursor < doc->line_count) {
+        const char *label = nc_vocab_label_for_word(doc->lines[cursor].text, &word);
         snapshot->selected_word_start = word.start;
         snapshot->selected_word_end = word.end;
         strncpy(snapshot->selected_label, label, sizeof(snapshot->selected_label) - 1);

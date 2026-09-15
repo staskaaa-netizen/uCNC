@@ -46,13 +46,15 @@ static void nc_module_poll_keyboard(void)
 static bool nc_module_update(void *args)
 {
     uint32_t now;
+    bool periodic;
 
     (void)args;
     nc_module_poll_keyboard();
 
     now = mcu_millis();
-    if (nc_visual_dirty() ||
-        (uint32_t)(now - g_nc_module_last_draw_ms) >= NC_MODULE_DRAW_PERIOD_MS) {
+    periodic = nc_visual_periodic_needed() &&
+               (uint32_t)(now - g_nc_module_last_draw_ms) >= NC_MODULE_DRAW_PERIOD_MS;
+    if (nc_visual_dirty() || periodic) {
         g_nc_module_last_draw_ms = now;
         nc_visual_draw();
     }

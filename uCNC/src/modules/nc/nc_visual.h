@@ -32,6 +32,7 @@ typedef enum
 void nc_visual_init(void);
 void nc_visual_handle_key(nc_visual_key_t key);
 bool nc_visual_dirty(void);
+bool nc_visual_periodic_needed(void);
 void nc_visual_draw(void);
 
 #ifdef __cplusplus

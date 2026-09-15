@@ -2,7 +2,7 @@
 #define NC_EMIT_H
 
 #include "nc.h"
-#include "../g71_g72/g71_g72.h"
+#include "../g7x/g7x_contour.h"
 
 #include <stdbool.h>
 #include <stddef.h>

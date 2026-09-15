@@ -7,6 +7,7 @@
  */
 #include "leancam_code.h"
 #include "leancam_tool_catalog.h"
+#include "leancam_dictionary.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,9 +21,62 @@ bool lc_code_command_is(const char *line, const char *cmd)
         return false;
     while (*line == ' ' || *line == '\t')
         line++;
+
+    if (*line == 'N')
+    {
+        const char *p = line + 1;
+        bool saw_digit = false;
+
+        while (*p >= '0' && *p <= '9')
+        {
+            saw_digit = true;
+            p++;
+        }
+        if (saw_digit && (*p == ' ' || *p == '\t'))
+        {
+            while (*p == ' ' || *p == '\t')
+                p++;
+            line = p;
+        }
+    }
+
     n = strlen(cmd);
     return strncmp(line, cmd, n) == 0 &&
            (line[n] == 0 || line[n] == ' ' || line[n] == '\t');
+}
+
+bool lc_code_tool_line_is(const char *line)
+{
+    char t[16];
+    char *endp;
+    long v;
+
+    if (!line)
+        return false;
+    while (*line == ' ' || *line == '\t')
+        line++;
+
+    if (*line == 'N') {
+        const char *p = line + 1;
+        bool saw_digit = false;
+
+        while (*p >= '0' && *p <= '9') {
+            saw_digit = true;
+            p++;
+        }
+        if (saw_digit && (*p == ' ' || *p == '\t')) {
+            while (*p == ' ' || *p == '\t')
+                p++;
+            line = p;
+        }
+    }
+
+    if (line[0] != 'T' || line[1] == 0 || line[1] == ' ' || line[1] == '\t')
+        return false;
+    if (!lc_code_get_field_text(line, LC_DICT_WORD_T, t, sizeof(t)))
+        return false;
+    v = strtol(t, &endp, 10);
+    return endp && *endp == 0 && v >= 0;
 }
 
 bool lc_code_get_field_text(const char *line, const char *key, char *out, size_t out_sz)
@@ -56,7 +110,8 @@ bool lc_code_get_field_text(const char *line, const char *key, char *out, size_t
         e = p;
         saw_token = true;
 
-        if (!is_command_token &&
+        if ((!is_command_token ||
+             (key_len == 1u && key[0] == 'T' && b[0] == 'T')) &&
             (size_t)(e - b) > key_len &&
             strncmp(b, key, key_len) == 0 &&
             b[key_len] != '_')
@@ -136,18 +191,8 @@ static int lc_find_named_field(const char *line,
         static char plain_value[UI_LC_LINE_LEN + 1u];
 
         plain_value[0] = '{';
-        if (!lc_code_get_field_text(line, field, plain_value + 1, sizeof(plain_value) - 1u))
-        {
-            if (strcmp(field, "RPM") == 0 &&
-                (lc_code_get_field_text(line, "S", plain_value + 1, sizeof(plain_value) - 1u) ||
-                 lc_code_get_field_text(line, "SPINDLE_RPM", plain_value + 1, sizeof(plain_value) - 1u)))
-            {
-                /* handled below */
-            }
-            else
-            {
-                return 0;
-            }
+        if (!lc_code_get_field_text(line, field, plain_value + 1, sizeof(plain_value) - 1u)) {
+            return 0;
         }
 
         if (open_out) *open_out = plain_value;
@@ -216,7 +261,6 @@ static int lc_strip_default_expr(const char *raw,
 
 static int lc_resolve_value_from_line(const char *line,
                                       const char *field,
-                                      const char *setup_line,
                                       const char *tool_line,
                                       const char *this_line,
                                       char *out,
@@ -224,7 +268,6 @@ static int lc_resolve_value_from_line(const char *line,
                                       uint8_t depth);
 
 static int lc_resolve_raw_value(const char *raw,
-                                const char *setup_line,
                                 const char *tool_line,
                                 const char *this_line,
                                 char *out,
@@ -249,17 +292,11 @@ static int lc_resolve_raw_value(const char *raw,
         raw = expr;
     }
 
-    if (strncmp(raw, "SETUP.", 6) == 0)
-        return lc_resolve_value_from_line(setup_line, raw + 6, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
-
     if (strncmp(raw, "TOOL.", 5) == 0)
-        return lc_resolve_value_from_line(tool_line, raw + 5, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
-
-    if (strncmp(raw, "TOOLCALL.", 9) == 0)
-        return lc_resolve_value_from_line(tool_line, raw + 9, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
+        return lc_resolve_value_from_line(tool_line, raw + 5, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
 
     if (strncmp(raw, "THIS.", 5) == 0)
-        return lc_resolve_value_from_line(this_line, raw + 5, setup_line, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
+        return lc_resolve_value_from_line(this_line, raw + 5, tool_line, this_line, out, out_len, (uint8_t)(depth + 1u));
 
     if (raw == expr)
     {
@@ -273,7 +310,6 @@ static int lc_resolve_raw_value(const char *raw,
 
 static int lc_resolve_value_from_line(const char *line,
                                       const char *field,
-                                      const char *setup_line,
                                       const char *tool_line,
                                       const char *this_line,
                                       char *out,
@@ -290,36 +326,21 @@ static int lc_resolve_value_from_line(const char *line,
     out[0] = 0;
 
     if (!lc_find_named_field(line, field, &open, &close))
-    {
-        if (field && strcmp(field, "RPM") == 0)
-        {
-            if (lc_find_named_field(line, "S", &open, &close) ||
-                lc_find_named_field(line, "SPINDLE_RPM", &open, &close))
-            {
-                if (!lc_copy_span(raw, sizeof(raw), open + 1, close))
-                    return 0;
-                return lc_resolve_raw_value(raw, setup_line, tool_line, this_line, out, out_len, depth);
-            }
-            ui_snapshot_strcpy(out, "800", out_len);
-            return 1;
-        }
         return 0;
-    }
 
     if (!lc_copy_span(raw, sizeof(raw), open + 1, close))
         return 0;
 
-    return lc_resolve_raw_value(raw, setup_line, tool_line, this_line, out, out_len, depth);
+    return lc_resolve_raw_value(raw, tool_line, this_line, out, out_len, depth);
 }
 
 int lc_code_resolve_field_value(const char *raw,
-                                     const char *setup_line,
                                      const char *tool_line,
                                      const char *this_line,
                                      char *out,
                                      uint32_t out_len)
 {
-    return lc_resolve_raw_value(raw, setup_line, tool_line, this_line, out, out_len, 0);
+    return lc_resolve_raw_value(raw, tool_line, this_line, out, out_len, 0);
 }
 
 static void lc_append_span(char *dst, uint32_t dst_len, uint32_t *pos, const char *a, const char *b)
@@ -368,13 +389,12 @@ static void lc_append_cstr(char *dst, uint32_t dst_len, uint32_t *pos, const cha
 
 void lc_code_build_draft_display(char *dst,
                                       uint32_t dst_len,
-                                      const char *draft,
-                                      const char *input,
-                                      uint8_t active_index,
-                                      const char *setup_line,
-                                      const char *tool_line,
-                                      const char *this_line,
-                                      uint8_t *hi_start,
+                                 const char *draft,
+                                 const char *input,
+                                 uint8_t active_index,
+                                 const char *tool_line,
+                                 const char *this_line,
+                                 uint8_t *hi_start,
                                       uint8_t *hi_end)
 {
     const char *scan;
@@ -479,7 +499,7 @@ void lc_code_build_draft_display(char *dst,
         if (idx == active_index && input[0])
             ui_snapshot_strcpy(shown, input, sizeof(shown));
         else
-            (void)lc_resolve_raw_value(raw, setup_line, tool_line, this_line, shown, sizeof(shown), 0);
+            (void)lc_resolve_raw_value(raw, tool_line, this_line, shown, sizeof(shown), 0);
 
         lc_append_cstr(dst, dst_len, &pos, shown);
 
@@ -490,7 +510,7 @@ void lc_code_build_draft_display(char *dst,
             uint32_t old_len;
 
             old_shown[0] = 0;
-            (void)lc_resolve_raw_value(raw, setup_line, tool_line, this_line, old_shown, sizeof(old_shown), 0);
+            (void)lc_resolve_raw_value(raw, tool_line, this_line, old_shown, sizeof(old_shown), 0);
             old_len = (uint32_t)strlen(old_shown);
 
             while (min_len < old_len && pos + 1u < dst_len)
@@ -553,9 +573,11 @@ int lc_code_region_display_indent(const program_t *prog, int index, const char *
             return 1;
         if (lc_code_region_is_end(prev))
             break;
-        if (lc_code_command_is(prev, "SETUP") ||
-            lc_code_command_is(prev, "TOOL") ||
-            lc_code_command_is(prev, "TOOLCALL"))
+        if (lc_code_tool_line_is(prev) ||
+            lc_code_command_is(prev, "G970") ||
+            lc_code_command_is(prev, "G971") ||
+            lc_code_command_is(prev, "G972") ||
+            lc_code_command_is(prev, "G973"))
             continue;
         if (lc_code_region_is_contour(prev))
             continue;
@@ -652,51 +674,15 @@ const char *lc_code_effective_tool_for_cycle(const program_t *prog, int before_o
 
         for (i = before_or_at; i >= 0; --i)
         {
-            float header_t = 0.0f;
             const char *line = prog->lines[i];
 
             if (!line)
                 continue;
 
-            if (lc_code_command_is(line, "TOOLCALL") &&
-                lc_code_validate_line_get_float(line, "T", &header_t) &&
-                header_t > 0.0f &&
-                lc_code_validate_float_is_int(header_t))
-            {
-                tool = lc_tool_catalog_find_in_program_or_catalog(prog, i, (int)header_t);
-                if (tool)
-                    return tool;
-            }
-
-            if (lc_code_command_is(line, "TOOL"))
+            if (lc_code_tool_line_is(line))
                 return line;
         }
     }
 
     return NULL;
 }
-
-bool lc_code_validate_tool_call(const program_t *prog,
-                           int before_or_at,
-                           const char *line,
-                           char *err,
-                           size_t err_sz)
-{
-    float tv = 0.0f;
-
-    if (err && err_sz)
-        err[0] = 0;
-    if (!lc_code_command_is(line, "TOOLCALL"))
-        return true;
-    if (!lc_code_validate_line_get_float(line, "T", &tv) || tv <= 0.0f || !lc_code_validate_float_is_int(tv))
-    {
-        if (err && err_sz) snprintf(err, err_sz, "TOOLCALL T INVALID");
-        return false;
-    }
-    (void)prog;
-    (void)before_or_at;
-    return true;
-}
-
-
-

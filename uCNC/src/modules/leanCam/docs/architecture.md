@@ -43,7 +43,7 @@ leancam_visual_state_poll()
   -> build one UI snapshot
 leancam_visual_draw()
   -> draw pixels from snapshot
-lvds_hstx_present/chunked_step()
+lvds_hstx_present()
   -> publish pixels to scanout
 ```
 

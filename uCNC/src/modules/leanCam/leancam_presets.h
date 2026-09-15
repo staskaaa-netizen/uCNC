@@ -28,15 +28,14 @@ typedef struct
     int rpm;
 } lc_preset_meta_t;
 
-void lc_presets_clear_meta(void);
-lc_preset_meta_kind_t lc_presets_kind_from_line(const char *line);
-lc_preset_meta_kind_t lc_presets_region_kind(const program_t *prog, int header_idx);
-bool lc_presets_expand_committed(program_t *prog,
-                                 int row,
-                                 const char *setup_line,
-                                 int *target_row,
-                                 char *err,
-                                 size_t err_sz);
+bool lc_presets_insert_region(program_t *prog,
+                              int insert_after,
+                              lc_preset_meta_kind_t kind,
+                              const char *preset,
+                              const char *setup_line,
+                              int *target_row,
+                              char *err,
+                              size_t err_sz);
 
 #ifdef __cplusplus
 }

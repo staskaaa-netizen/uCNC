@@ -31,6 +31,8 @@ Unsupported modules must fail clearly instead of emitting placeholder machining 
 * Positive `Z` moves away from stock.
 * `X` values are emitted as diameters.
 * The converter emits `G7` so the local G7/G8 parser keeps X in diameter mode.
+* LeanCam does not emit `G20` or `G21`. Those remain uCNC inch/mm modal words
+  only and must not be reused for setup, stock, or graphics metadata.
 * Safe/retract X words are also diameter-mode X words. `CLR` is added to the emitted X diameter value; it is not doubled again as a radius clearance.
 * Arc center offsets such as `I` stay in machine radius-space.
 
@@ -38,7 +40,7 @@ Unsupported modules must fail clearly instead of emitting placeholder machining 
 
 For each cycle, the caller resolves:
 
-* active setup: last `SETUP` line above the cycle
+* active setup: `G970/G971/G972/G973` rows above the cycle
 * active tool: last `TOOL` line above the cycle
 
 The tool line supplies fallback `S`, `R_FEED`, `FIN_FEED`, `R_DOC`, `FIN_DOC`, and display/comment metadata such as `T` and tool diameter. The converter also accepts the older long names as aliases.
@@ -48,7 +50,6 @@ The tool line supplies fallback `S`, `R_FEED`, `FIN_FEED`, `R_DOC`, `FIN_DOC`, a
 The single-line/run-now path emits a complete wrapper around one cycle:
 
 ```gcode
-G21
 G90
 G18
 G7

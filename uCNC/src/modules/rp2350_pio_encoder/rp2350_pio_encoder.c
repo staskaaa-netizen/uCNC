@@ -10,6 +10,13 @@
 #define ENCODER_HW_PIO 2
 #endif
 
+#define RP2350_ENCODER_MODE_QUADRATURE 0
+#define RP2350_ENCODER_MODE_PULSE 1
+
+#ifndef ENC0_RP2350_ENCODER_MODE
+#define ENC0_RP2350_ENCODER_MODE RP2350_ENCODER_MODE_QUADRATURE
+#endif
+
 #if defined(ENABLE_RP2350_PIO_ENCODER) && !defined(ENC0_USE_HARDWARE_COUNTER)
 #define ENC0_USE_HARDWARE_COUNTER 1
 #endif
@@ -61,6 +68,10 @@
 
 static bool rp_pio_encoder_ready;
 static PIO rp_pio_encoder_pio;
+#if ENC0_RP2350_ENCODER_MODE == RP2350_ENCODER_MODE_PULSE
+static int32_t rp_pio_encoder_pulse_position;
+static uint8_t rp_pio_encoder_pulse_last;
+#endif
 
 static const uint16_t quadrature_encoder_program_instructions[] = {
 	0x000f, 0x000e, 0x0015, 0x000f,
@@ -137,9 +148,16 @@ static int32_t quadrature_encoder_get_count_inline(PIO pio, uint sm)
 
 static void encoder_rp_pio_init(void)
 {
+#if ENC0_RP2350_ENCODER_MODE == RP2350_ENCODER_MODE_PULSE
+	gpio_init(ENC0_PULSE_GPIO);
+	gpio_set_dir(ENC0_PULSE_GPIO, GPIO_IN);
+	gpio_pull_up(ENC0_PULSE_GPIO);
+	rp_pio_encoder_pulse_last = gpio_get(ENC0_PULSE_GPIO) ? 1U : 0U;
+#else
 	rp_pio_encoder_pio = enc0_get_pio();
 	pio_add_program_at_offset(rp_pio_encoder_pio, &quadrature_encoder_program, ENC0_PIO_PROGRAM_OFFSET);
 	quadrature_encoder_program_init_inline(rp_pio_encoder_pio, ENC0_PIO_SM, ENC0_PULSE_GPIO, ENC0_MAX_STEP_RATE);
+#endif
 }
 
 static int32_t read_encoder_rp_pio(void)
@@ -148,7 +166,17 @@ static int32_t read_encoder_rp_pio(void)
 	{
 		return 0;
 	}
+#if ENC0_RP2350_ENCODER_MODE == RP2350_ENCODER_MODE_PULSE
+	uint8_t now = gpio_get(ENC0_PULSE_GPIO) ? 1U : 0U;
+	if (now && !rp_pio_encoder_pulse_last)
+	{
+		rp_pio_encoder_pulse_position++;
+	}
+	rp_pio_encoder_pulse_last = now;
+	return rp_pio_encoder_pulse_position;
+#else
 	return quadrature_encoder_get_count_inline(rp_pio_encoder_pio, ENC0_PIO_SM);
+#endif
 }
 
 #if defined(ENC0_INDEX_GPIO) && !ENC0_VIRTUAL_INDEX_ONLY

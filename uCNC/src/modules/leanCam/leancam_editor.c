@@ -6,12 +6,28 @@
  */
 #include "leancam_editor.h"
 #include "leancam_code.h"
+#include "leancam_dictionary.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static uint8_t g_lc_editor_field_index = 0;
+
+static const char *const g_lc_tool_editor_fields[] = {
+    LC_DICT_WORD_T,
+    LC_DICT_WORD_R,
+    LC_DICT_WORD_O,
+    LC_DICT_WORD_F,
+    LC_DICT_WORD_FF,
+    LC_DICT_WORD_DOC,
+    LC_DICT_WORD_FDOC,
+    LC_DICT_WORD_S,
+    LC_DICT_WORD_XO,
+    LC_DICT_WORD_ZO
+};
+
+#define LC_TOOL_EDITOR_FIELD_COUNT ((uint8_t)(sizeof(g_lc_tool_editor_fields) / sizeof(g_lc_tool_editor_fields[0])))
 
 static bool lc_editor_token_value_span(const char *tok,
                                        const char *end,
@@ -88,6 +104,33 @@ static bool lc_editor_plain_field_span(const char *line,
     if (value_end) *value_end = NULL;
     if (!line)
         return false;
+
+    if (lc_code_tool_line_is(line)) {
+        const char *tok;
+        const char *end;
+
+        if (field_index >= LC_TOOL_EDITOR_FIELD_COUNT)
+            return false;
+        p = line;
+        while (*p)
+        {
+            while (*p == ' ' || *p == '\t')
+                p++;
+            if (!*p)
+                break;
+            tok = p;
+            while (*p && *p != ' ' && *p != '\t')
+                p++;
+            end = p;
+            if (lc_editor_token_named_value_span(tok,
+                                                 end,
+                                                 g_lc_tool_editor_fields[field_index],
+                                                 value_start,
+                                                 value_end))
+                return true;
+        }
+        return false;
+    }
 
     while (*p == ' ' || *p == '\t')
         p++;
@@ -170,6 +213,9 @@ uint8_t lc_editor_field_count(const char *line)
     uint8_t n = 0;
     const char *p = line;
     const char *q;
+
+    if (line && lc_code_tool_line_is(line))
+        return LC_TOOL_EDITOR_FIELD_COUNT;
 
     if (line && !strchr(line, '{'))
     {
@@ -529,6 +575,13 @@ void lc_editor_field_name_from_line(const char *line, uint8_t field_index, char 
         const char *name_start;
         size_t len;
 
+        if (lc_code_tool_line_is(line))
+        {
+            if (field_index < LC_TOOL_EDITOR_FIELD_COUNT)
+                snprintf(out, out_sz, "%s", g_lc_tool_editor_fields[field_index]);
+            return;
+        }
+
         if (!lc_editor_plain_field_span(line, field_index, &vs, &ve))
             return;
         (void)ve;
@@ -617,7 +670,6 @@ void lc_editor_advance_field(const char *line)
 }
 
 bool lc_editor_resolve_draft_line_for_commit(leancam_ui_t *ui,
-                                             const char *setup_line,
                                              const char *tool_line,
                                              char *out,
                                              uint32_t out_len)
@@ -655,7 +707,6 @@ bool lc_editor_resolve_draft_line_for_commit(leancam_ui_t *ui,
 
             if (raw[0] &&
                 !lc_code_resolve_field_value(raw,
-                                                  setup_line,
                                                   tool_line,
                                                   preview_line,
                                                   resolved,
@@ -680,7 +731,6 @@ bool lc_editor_resolve_draft_line_for_commit(leancam_ui_t *ui,
 }
 
 bool lc_editor_prepare_draft_for_commit(leancam_ui_t *ui,
-                                        const char *setup_line,
                                         const char *tool_line)
 {
     char resolved_line[MAX_LEN];
@@ -690,7 +740,6 @@ bool lc_editor_prepare_draft_for_commit(leancam_ui_t *ui,
         return false;
 
     if (!lc_editor_resolve_draft_line_for_commit(ui,
-                                                 setup_line,
                                                  tool_line,
                                                  resolved_line,
                                                  sizeof(resolved_line)))
@@ -707,7 +756,6 @@ bool lc_editor_prepare_draft_for_commit(leancam_ui_t *ui,
 }
 
 bool lc_editor_accept_active_field(leancam_ui_t *ui,
-                                   const char *setup_line,
                                    const char *tool_line,
                                    char *err,
                                    size_t err_sz)
@@ -745,7 +793,7 @@ bool lc_editor_accept_active_field(leancam_ui_t *ui,
         memcpy(raw, open + ((*open == '{') ? 1 : 0), n);
         raw[n] = 0;
 
-        if (!lc_code_resolve_field_value(raw, setup_line, tool_line, ui->draft_line, accepted, sizeof(accepted)) ||
+        if (!lc_code_resolve_field_value(raw, tool_line, ui->draft_line, accepted, sizeof(accepted)) ||
             !accepted[0])
         {
             size_t raw_len = strlen(raw);

@@ -13,7 +13,7 @@
 #include "nc_state.h"
 #include "nc_text.h"
 #include "nc_tools.h"
-#include "../g71_g72/g71_g72.h"
+#include "../g7x/g7x_contour.h"
 #include "../lvds_renderer/lvds_draw_api.h"
 #include "../lvds_renderer/lvds_hstx.h"
 #if __has_include("../lvds_renderer/lvds_psram.h")
@@ -28,8 +28,14 @@
 #include <math.h>
 #include <string.h>
 
-#define NC_PREVIEW_ARC_MAX_STEPS 32
+#define NC_PREVIEW_ARC_MAX_STEPS 64
 #define NC_PREVIEW_CONTOUR_MAX 48
+#ifndef NC_PREVIEW_DIN_STYLE
+#define NC_PREVIEW_DIN_STYLE 1
+#endif
+#ifndef NC_PREVIEW_DIN_POINT_MARKERS
+#define NC_PREVIEW_DIN_POINT_MARKERS 1
+#endif
 #define NC_LIVE_STOCK_MAX_W 680
 #define NC_LIVE_STOCK_MAX_H 380
 #define NC_LIVE_STOCK_PSRAM_OFFSET (512u * 1024u)
@@ -51,6 +57,48 @@ static char g_nc_visual_status[64];
 static bool g_nc_visual_dirty;
 static bool g_nc_visual_sim_stock = true;
 static bool g_nc_visual_sim_path = true;
+static bool g_nc_visual_sim_rough = true;
+static bool g_nc_visual_show_dims = true;
+static uint16_t g_nc_visual_fps;
+static uint16_t g_nc_visual_fps_frames;
+static uint32_t g_nc_visual_fps_last_ms;
+static uint16_t g_nc_visual_stat_snapshot_ms;
+static uint16_t g_nc_visual_stat_draw_ms;
+static uint16_t g_nc_visual_stat_present_ms;
+static uint16_t g_nc_visual_stat_total_ms;
+static uint16_t g_nc_visual_stat_header_ms;
+static uint16_t g_nc_visual_stat_preview_ms;
+static uint16_t g_nc_visual_stat_body_ms;
+static uint16_t g_nc_visual_stat_footer_ms;
+static uint16_t g_nc_visual_stat_preview_collect_ms;
+static uint16_t g_nc_visual_stat_preview_clear_ms;
+static uint16_t g_nc_visual_stat_preview_stock_ms;
+static uint16_t g_nc_visual_stat_preview_geom_ms;
+static uint16_t g_nc_visual_stat_preview_tool_ms;
+static uint32_t g_nc_visual_acc_snapshot_us;
+static uint32_t g_nc_visual_acc_draw_us;
+static uint32_t g_nc_visual_acc_present_us;
+static uint32_t g_nc_visual_acc_total_us;
+static uint32_t g_nc_visual_acc_header_us;
+static uint32_t g_nc_visual_acc_preview_us;
+static uint32_t g_nc_visual_acc_body_us;
+static uint32_t g_nc_visual_acc_footer_us;
+static uint32_t g_nc_visual_acc_preview_collect_us;
+static uint32_t g_nc_visual_acc_preview_clear_us;
+static uint32_t g_nc_visual_acc_preview_stock_us;
+static uint32_t g_nc_visual_acc_preview_geom_us;
+static uint32_t g_nc_visual_acc_preview_tool_us;
+static uint32_t g_nc_visual_frame_header_us;
+static uint32_t g_nc_visual_frame_preview_us;
+static uint32_t g_nc_visual_frame_body_us;
+static uint32_t g_nc_visual_frame_footer_us;
+static uint32_t g_nc_visual_frame_preview_collect_us;
+static uint32_t g_nc_visual_frame_preview_clear_us;
+static uint32_t g_nc_visual_frame_preview_stock_us;
+static uint32_t g_nc_visual_frame_preview_geom_us;
+static uint32_t g_nc_visual_frame_preview_tool_us;
+static size_t g_nc_visual_last_draw_run_line = (size_t)-1;
+static bool g_nc_visual_last_runtime_busy;
 static nc_text_edit_t g_nc_visual_edit;
 static bool g_nc_visual_new_file_active;
 static char g_nc_visual_new_file_name[NC_FILE_NAME_MAX];
@@ -65,6 +113,20 @@ static float g_nc_live_stock_setup_z;
 static float g_nc_live_stock_setup_i;
 static float g_nc_live_stock_last_x;
 static float g_nc_live_stock_last_z;
+static bool g_nc_live_tool_rect_valid;
+static int g_nc_live_tool_rect_x;
+static int g_nc_live_tool_rect_y;
+static int g_nc_live_tool_rect_w;
+static int g_nc_live_tool_rect_h;
+static bool g_nc_live_preview_cache_valid;
+static nc_preview_info_t g_nc_live_preview_cache;
+static nc_tool_t g_nc_live_tool_cache;
+static bool g_nc_live_have_tool_cache;
+static int g_nc_live_stock_w_cache;
+static int g_nc_live_stock_h_cache;
+static int g_nc_live_stock_left_cache;
+static int g_nc_live_stock_top_cache;
+static int g_nc_live_z0_x_cache;
 
 typedef enum {
     NC_PREVIEW_SEG_FEED = 0,
@@ -83,6 +145,11 @@ static void nc_visual_serial_selected_line(void);
 static void nc_visual_serial_selected_file(void);
 static size_t nc_visual_code_line(void);
 static bool nc_visual_can_edit_code(void);
+static const char *nc_visual_file_basename(const char *path);
+static void nc_visual_fps_tick(uint32_t snapshot_us,
+                               uint32_t draw_us,
+                               uint32_t present_us,
+                               uint32_t total_us);
 static void nc_visual_draw_tool_glyph(int tip_x,
                                       int tip_y,
                                       int size,
@@ -92,6 +159,13 @@ static void nc_visual_draw_tool_glyph(int tip_x,
 
 static nc_mode_t g_nc_visual_mode = NC_MODE_MANUAL;
 static uint8_t g_nc_visual_selected_action = NC_FOOTER_ACTION_NONE;
+
+static const char *nc_visual_tool_path(void)
+{
+    const char *path = nc_state_path(NC_MODE_TOOLS);
+
+    return (path && path[0] && nc_state_tool_path_supported(path)) ? path : NC_TOOL_PATH;
+}
 
 static void nc_visual_set_mode(nc_mode_t mode)
 {
@@ -242,7 +316,7 @@ static void nc_visual_draw_preview_tool_panel(int x,
     int panel_w = 112;
     int panel_h = 48;
     int panel_x = x + w - panel_w - 10;
-    int panel_y = y + h - panel_h - 10;
+    int panel_y = y + 8;
     char buf[32];
 
     if (!tool || !tool->valid) {
@@ -257,6 +331,43 @@ static void nc_visual_draw_preview_tool_panel(int x,
     nc_visual_draw_text_clip(panel_x + 54, panel_y + 10, buf, 8, NC_VISUAL_TEXT, NC_VISUAL_PREVIEW_BG, LVDS_FONT_NORMAL);
     snprintf(buf, sizeof(buf), "R %.2g", (double)tool->r);
     nc_visual_draw_text_clip(panel_x + 54, panel_y + 28, buf, 8, NC_VISUAL_DIM, NC_VISUAL_PREVIEW_BG, LVDS_FONT_NORMAL);
+}
+
+static void nc_visual_draw_sim_code_pane(const nc_document_t *doc, int x, int y, int w)
+{
+    size_t line = nc_visual_code_line();
+    size_t first;
+    int row;
+
+    if (!doc || doc->line_count == 0) {
+        nc_visual_draw_text_clip(x, y, "No SIM file", w / NC_VISUAL_CHAR_W, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+        return;
+    }
+    if (line >= doc->line_count) {
+        line = 0;
+    }
+    first = line > 1u ? line - 1u : 0u;
+    if (first + 3u > doc->line_count && doc->line_count > 3u) {
+        first = doc->line_count - 3u;
+    }
+
+    for (row = 0; row < 3 && first + (size_t)row < doc->line_count; row++) {
+        size_t idx = first + (size_t)row;
+        bool selected = idx == line;
+        char buf[96];
+
+        if (selected) {
+            lvds_draw_fill_rect(x - 4, y + row * 24 - 4, w + 8, 22, NC_VISUAL_SELECT);
+        }
+        snprintf(buf, sizeof(buf), "%3lu  %.44s", (unsigned long)(idx + 1u), doc->lines[idx].text);
+        nc_visual_draw_text_clip(x,
+                                 y + row * 24,
+                                 buf,
+                                 w / NC_VISUAL_CHAR_W,
+                                 selected ? NC_VISUAL_TEXT : NC_VISUAL_DIM,
+                                 selected ? NC_VISUAL_SELECT : NC_VISUAL_BG,
+                                 LVDS_FONT_NORMAL);
+    }
 }
 
 static int nc_visual_tool_tip_digit(int orient)
@@ -284,6 +395,38 @@ static int nc_visual_tool_tip_digit(int orient)
     return 3;
 }
 
+static int nc_visual_tool_orient_digits(int orient, int *digits, int max_digits)
+{
+    int tmp[4];
+    int n = 0;
+    int i;
+
+    while (orient > 0 && n < (int)(sizeof(tmp) / sizeof(tmp[0]))) {
+        tmp[n++] = orient % 10;
+        orient /= 10;
+    }
+    if (orient > 0 || n <= 0 || n > max_digits) {
+        return 0;
+    }
+    for (i = 0; i < n; i++) {
+        digits[i] = tmp[n - 1 - i];
+    }
+    return n;
+}
+
+static bool nc_visual_tool_keypad_point(int digit, int ox, int oy, int step, int *x, int *y)
+{
+    static const int kx[10] = {0, -1, 0, 1, -1, 0, 1, -1, 0, 1};
+    static const int ky[10] = {0,  1, 1, 1,  0, 0, 0, -1,-1,-1};
+
+    if (digit < 1 || digit > 9) {
+        return false;
+    }
+    if (x) *x = ox + (kx[digit] * step);
+    if (y) *y = oy + (ky[digit] * step);
+    return true;
+}
+
 static void nc_visual_tool_edges(int orient, bool *left, bool *top, bool *right, bool *bottom)
 {
     int o = nc_visual_tool_tip_digit(orient);
@@ -292,6 +435,148 @@ static void nc_visual_tool_edges(int orient, bool *left, bool *top, bool *right,
     if (top) *top = (o == 7 || o == 8 || o == 9 || o == 4 || o == 5 || o == 6);
     if (right) *right = (o == 3 || o == 6 || o == 9 || o == 2 || o == 5 || o == 8);
     if (bottom) *bottom = (o == 1 || o == 2 || o == 3 || o == 4 || o == 5 || o == 6);
+}
+
+static void nc_visual_fill_triangle(int x1, int y1,
+                                    int x2, int y2,
+                                    int x3, int y3,
+                                    lvds_color_t color)
+{
+    int min_y = y1;
+    int max_y = y1;
+    int y;
+
+    if (y2 < min_y) min_y = y2;
+    if (y3 < min_y) min_y = y3;
+    if (y2 > max_y) max_y = y2;
+    if (y3 > max_y) max_y = y3;
+
+    if (min_y < 0) min_y = 0;
+    if (max_y >= LVDS_HSTX_HEIGHT) max_y = LVDS_HSTX_HEIGHT - 1;
+
+    for (y = min_y; y <= max_y; y++) {
+        int xs[3];
+        int n = 0;
+        if ((y1 <= y && y < y2) || (y2 <= y && y < y1)) {
+            xs[n++] = x1 + ((x2 - x1) * (y - y1)) / (y2 - y1);
+        }
+        if ((y2 <= y && y < y3) || (y3 <= y && y < y2)) {
+            xs[n++] = x2 + ((x3 - x2) * (y - y2)) / (y3 - y2);
+        }
+        if ((y3 <= y && y < y1) || (y1 <= y && y < y3)) {
+            xs[n++] = x3 + ((x1 - x3) * (y - y3)) / (y1 - y3);
+        }
+        if (n >= 2) {
+            int xa = xs[0];
+            int xb = xs[1];
+            if (xa > xb) {
+                int t = xa;
+                xa = xb;
+                xb = t;
+            }
+            if (xa < 0) xa = 0;
+            if (xb >= LVDS_HSTX_WIDTH) xb = LVDS_HSTX_WIDTH - 1;
+            if (xb >= xa) {
+                lvds_draw_fill_rect(xa, y, xb - xa + 1, 1, color);
+            }
+        }
+    }
+}
+
+static void nc_visual_tool_marker_line(int x1,
+                                       int y1,
+                                       int x2,
+                                       int y2,
+                                       lvds_color_t color,
+                                       int thick)
+{
+    x1 = nc_visual_clampi(x1, 0, LVDS_HSTX_WIDTH - 1);
+    y1 = nc_visual_clampi(y1, 0, LVDS_HSTX_HEIGHT - 1);
+    x2 = nc_visual_clampi(x2, 0, LVDS_HSTX_WIDTH - 1);
+    y2 = nc_visual_clampi(y2, 0, LVDS_HSTX_HEIGHT - 1);
+
+    if (thick > 1) {
+        lvds_draw_line_w(x1, y1, x2, y2, color, thick);
+    } else {
+        lvds_draw_line(x1, y1, x2, y2, color);
+    }
+}
+
+static int nc_visual_tool_polygon_points(int tip_x,
+                                         int tip_y,
+                                         int orient,
+                                         int size,
+                                         int *px,
+                                         int *py)
+{
+    int digits[4];
+    int tip_grid_x;
+    int tip_grid_y;
+    int step = nc_visual_clampi(size / 2, 6, 56);
+    int n = nc_visual_tool_orient_digits(orient, digits, 4);
+    int i;
+
+    if (n < 3) {
+        return 0;
+    }
+    if (n == 4) {
+        int cut_x;
+        int cut_y;
+        int z_x;
+        int z_y;
+        if (!nc_visual_tool_keypad_point(digits[1], 0, 0, step, &cut_x, &cut_y) ||
+            !nc_visual_tool_keypad_point(digits[2], 0, 0, step, &z_x, &z_y)) {
+            return 0;
+        }
+        tip_grid_x = cut_x;
+        tip_grid_y = z_y;
+    } else {
+        int tip_digit = nc_visual_tool_tip_digit(orient);
+        if (!nc_visual_tool_keypad_point(tip_digit, 0, 0, step, &tip_grid_x, &tip_grid_y)) {
+            return 0;
+        }
+    }
+
+    for (i = 0; i < n; i++) {
+        int gx;
+        int gy;
+        if (!nc_visual_tool_keypad_point(digits[i], 0, 0, step, &gx, &gy)) {
+            return 0;
+        }
+        px[i] = tip_x + gx - tip_grid_x;
+        py[i] = tip_y + gy - tip_grid_y;
+    }
+    return n;
+}
+
+static void nc_visual_draw_tool_polygon(int tip_x,
+                                        int tip_y,
+                                        int orient,
+                                        int size,
+                                        int thick,
+                                        lvds_color_t fill,
+                                        lvds_color_t edge,
+                                        lvds_color_t mount)
+{
+    int px[4];
+    int py[4];
+    int n = nc_visual_tool_polygon_points(tip_x, tip_y, orient, size, px, py);
+    int i;
+
+    if (n < 3) {
+        return;
+    }
+    for (i = 1; i + 1 < n; i++) {
+        nc_visual_fill_triangle(px[0], py[0], px[i], py[i], px[i + 1], py[i + 1], fill);
+    }
+    if (n == 3) {
+        nc_visual_tool_marker_line(px[1], py[1], px[0], py[0], edge, thick);
+        nc_visual_tool_marker_line(px[1], py[1], px[2], py[2], edge, thick);
+        nc_visual_tool_marker_line(px[0], py[0], px[2], py[2], mount, 1);
+    } else {
+        nc_visual_tool_marker_line(px[1], py[1], px[2], py[2], edge, thick > 1 ? thick : 2);
+        nc_visual_tool_marker_line(px[3], py[3], px[0], py[0], mount, 1);
+    }
 }
 
 static void nc_visual_draw_tool_glyph(int tip_x,
@@ -310,7 +595,7 @@ static void nc_visual_draw_tool_glyph(int tip_x,
     bool right;
     bool bottom;
     lvds_color_t edge = selected ? NC_VISUAL_LINE_NO_SELECTED : NC_VISUAL_TOOL_MARK;
-    lvds_color_t fill = selected ? NC_VISUAL_LINE_NO_SELECTED : NC_VISUAL_TOOL_FILL;
+    lvds_color_t fill = NC_VISUAL_TOOL_FILL;
 
     if (!tool || !tool->valid) {
         return;
@@ -348,10 +633,14 @@ static void nc_visual_draw_tool_glyph(int tip_x,
         lvds_draw_line(tip_x - size / 2, tip_y, tip_x + size / 2, tip_y, edge);
         lvds_draw_line(tip_x, tip_y - size / 2, tip_x, tip_y + size / 2, edge);
     } else if (tool->orient > 9) {
-        lvds_draw_fill_rect(tip_x - size / 2, tip_y - size / 2, size, size, fill);
-        lvds_draw_rect(tip_x - size / 2, tip_y - size / 2, size, size, edge);
-        lvds_draw_line(tip_x - size / 2, tip_y + size / 2, tip_x + size / 2, tip_y - size / 2, edge);
-        lvds_draw_fill_ellipse(tip_x, tip_y, rr, rr, edge);
+        nc_visual_draw_tool_polygon(tip_x,
+                                    tip_y,
+                                    tool->orient,
+                                    size,
+                                    selected ? 2 : 1,
+                                    fill,
+                                    edge,
+                                    NC_VISUAL_DIM);
     } else {
         nc_visual_tool_edges(tool->orient, &left, &top, &right, &bottom);
         lvds_draw_fill_rect(sx + 1, sy + 1, size - 1, size - 1, fill);
@@ -363,6 +652,74 @@ static void nc_visual_draw_tool_glyph(int tip_x,
         lvds_draw_rect(tip_x - rr, tip_y - rr, rr * 2, rr * 2, bg);
     }
     lvds_draw_fill_ellipse(tip_x, tip_y, 2, 2, edge);
+}
+
+static void nc_visual_draw_tool_glyph_centered(int x,
+                                               int y,
+                                               int box_size,
+                                               int marker_size,
+                                               const nc_tool_t *tool,
+                                               lvds_color_t bg,
+                                               bool selected)
+{
+    int sx;
+    int sy;
+    int tip_x;
+    int tip_y;
+    int corner;
+
+    if (!tool || !tool->valid) {
+        return;
+    }
+
+    sx = x + ((box_size - marker_size) / 2);
+    sy = y + ((box_size - marker_size) / 2);
+    tip_x = x + (box_size / 2);
+    tip_y = y + (box_size / 2);
+
+    if (tool->orient > 9) {
+        int px[4];
+        int py[4];
+        int n = nc_visual_tool_polygon_points(tip_x, tip_y, tool->orient, marker_size, px, py);
+        if (n >= 3) {
+            int min_x = px[0];
+            int max_x = px[0];
+            int min_y = py[0];
+            int max_y = py[0];
+            int i;
+            for (i = 1; i < n; i++) {
+                if (px[i] < min_x) min_x = px[i];
+                if (px[i] > max_x) max_x = px[i];
+                if (py[i] < min_y) min_y = py[i];
+                if (py[i] > max_y) max_y = py[i];
+            }
+            tip_x += (x + (box_size / 2)) - ((min_x + max_x) / 2);
+            tip_y += (y + (box_size / 2)) - ((min_y + max_y) / 2);
+        }
+    } else if (tool->orient > 0 && tool->orient <= 9 && tool->orient != 5) {
+        corner = nc_visual_tool_tip_digit(tool->orient);
+        switch (corner) {
+        case 7:
+            tip_x = sx;
+            tip_y = sy;
+            break;
+        case 9:
+            tip_x = sx + marker_size;
+            tip_y = sy;
+            break;
+        case 1:
+            tip_x = sx;
+            tip_y = sy + marker_size;
+            break;
+        case 3:
+        default:
+            tip_x = sx + marker_size;
+            tip_y = sy + marker_size;
+            break;
+        }
+    }
+
+    nc_visual_draw_tool_glyph(tip_x, tip_y, marker_size, tool, bg, selected);
 }
 
 static bool nc_visual_selected_tool_word(char *letter, int *line_index)
@@ -423,7 +780,7 @@ static void nc_visual_draw_tool_param(const char *line,
 {
     char value[24];
     char buf[24];
-    lvds_color_t value_fg = active ? NC_VISUAL_WORD_FG : NC_VISUAL_FOOTER_VALUE;
+    lvds_color_t value_fg = active ? NC_VISUAL_WORD_FG : NC_VISUAL_TEXT;
     lvds_color_t value_bg = active ? NC_VISUAL_WORD_BG : NC_VISUAL_BG;
 
     snprintf(buf, sizeof(buf), "%-7s", label ? label : "");
@@ -473,47 +830,417 @@ static int nc_visual_selected_tool_index(void)
     return count > 0 ? count - 1 : 0;
 }
 
-static void nc_visual_preview_label(int x, int y, const char *text, bool selected)
+#if NC_PREVIEW_DIN_STYLE
+static void nc_visual_draw_dashdot_line(int x0,
+                                        int y0,
+                                        int x1,
+                                        int y1,
+                                        lvds_color_t color)
 {
-    lvds_color_t bg = selected ? NC_VISUAL_SELECT : NC_VISUAL_PREVIEW_BG;
-    lvds_color_t fg = selected ? NC_VISUAL_LINE_NO_SELECTED : NC_VISUAL_FOOTER_VALUE;
-    int w;
+    int dx = x1 - x0;
+    int dy = y1 - y0;
+    int len2 = dx * dx + dy * dy;
+    float len;
+    int pos = 0;
+    static const uint8_t pattern[] = {18, 5, 3, 5};
+    int pat = 0;
 
-    if (!text || !text[0]) {
+    if (len2 <= 0) {
         return;
     }
-    w = lvds_draw_text_width(text, LVDS_FONT_NORMAL) + 6;
-    lvds_draw_fill_rect(x - 3, y - 2, w, 16, bg);
-    lvds_draw_text(x, y, text, fg, bg, LVDS_FONT_NORMAL);
+    len = sqrtf((float)len2);
+    while (pos < (int)len) {
+        int seg = pattern[pat & 3];
+        int a = pos;
+        int b = pos + seg;
+
+        if (b > (int)len) {
+            b = (int)len;
+        }
+        if ((pat & 1) == 0 && b > a) {
+            int xa = x0 + (int)((float)dx * ((float)a / len));
+            int ya = y0 + (int)((float)dy * ((float)a / len));
+            int xb = x0 + (int)((float)dx * ((float)b / len));
+            int yb = y0 + (int)((float)dy * ((float)b / len));
+            lvds_draw_line(xa, ya, xb, yb, color);
+        }
+        pos += seg;
+        pat++;
+    }
 }
 
-static void nc_visual_draw_chuck(int stock_left, int stock_top, int stock_w, int stock_h)
+static void nc_visual_draw_centerline(int x0, int y0, int x1, int y1)
 {
-    int jaw_w = 26;
-    int jaw_x = stock_left - jaw_w;
-    int jaw_h = 58;
-    int jaw_y = stock_top + stock_h - 18;
-    int clamp_w = stock_w / 4;
+    nc_visual_draw_dashdot_line(x0, y0, x1, y1, NC_VISUAL_DIM);
+}
 
-    if (jaw_x < 0) {
-        jaw_x = 0;
-        jaw_w = stock_left;
+static void nc_visual_draw_origin_marker(int x, int y)
+{
+    lvds_draw_ellipse(x, y, 11, 11, NC_VISUAL_TEXT);
+    lvds_draw_ellipse(x, y, 6, 6, NC_VISUAL_TEXT);
+    lvds_draw_line(x - 15, y, x - 8, y, NC_VISUAL_TEXT);
+    lvds_draw_line(x + 8, y, x + 15, y, NC_VISUAL_TEXT);
+    lvds_draw_line(x, y - 15, x, y - 8, NC_VISUAL_TEXT);
+    lvds_draw_line(x, y + 8, x, y + 15, NC_VISUAL_TEXT);
+}
+
+static void nc_visual_draw_chuck_hatching(int x, int y, int w, int h, lvds_color_t color)
+{
+    int s;
+
+    if (w <= 0 || h <= 0) {
+        return;
     }
-    if (clamp_w < 24) {
-        clamp_w = 24;
+    for (s = -h; s < w; s += 8) {
+        int x0 = s > 0 ? s : 0;
+        int y0 = s > 0 ? 0 : -s;
+        int x1 = (s + h) < w ? s + h : w;
+        int y1 = (s + h) < w ? h : w - s;
+
+        y1 = nc_visual_clampi(y1, 0, h);
+        lvds_draw_line(x + x0, y + y0, x + x1, y + y1, color);
     }
-    if (clamp_w > stock_w) {
-        clamp_w = stock_w;
+    for (s = 0; s < w + h; s += 8) {
+        int x0 = s < w ? s : w;
+        int y0 = s < w ? 0 : s - w;
+        int x1 = s < h ? 0 : s - h;
+        int y1 = s < h ? s : h;
+
+        x1 = nc_visual_clampi(x1, 0, w);
+        y0 = nc_visual_clampi(y0, 0, h);
+        lvds_draw_line(x + x0, y + y0, x + x1, y + y1, color);
+    }
+}
+
+static void nc_visual_draw_arrowhead(int x, int y, int dir_x, int dir_y, lvds_color_t color)
+{
+    int px = -dir_y;
+    int py = dir_x;
+
+    lvds_draw_line(x, y, x - dir_x * 7 + px * 3, y - dir_y * 7 + py * 3, color);
+    lvds_draw_line(x, y, x - dir_x * 7 - px * 3, y - dir_y * 7 - py * 3, color);
+}
+
+static void nc_visual_draw_diameter_dimension(int x,
+                                              int y0,
+                                              int y1,
+                                              const char *label)
+{
+    lvds_draw_line(x, y0, x, y1, NC_VISUAL_DIM);
+    nc_visual_draw_arrowhead(x, y1, 0, 1, NC_VISUAL_DIM);
+    if (label && label[0]) {
+        lvds_draw_text(x + 6,
+                       y1 - 8,
+                       label,
+                       NC_VISUAL_DIM,
+                       NC_VISUAL_PREVIEW_BG,
+                       LVDS_FONT_NORMAL);
+    }
+}
+
+static void nc_visual_draw_z_point_dimension(int start_x,
+                                             int point_x,
+                                             int zero_x,
+                                             int center_y,
+                                             int point_y,
+                                             const char *label)
+{
+    int dim_y = center_y - 15;
+    int ext_top = center_y - 20;
+    int ext_bottom = point_y + 3;
+    int text_x;
+
+    if (ext_bottom < ext_top) {
+        int t = ext_bottom;
+        ext_bottom = ext_top;
+        ext_top = t;
+    }
+    lvds_draw_line(point_x, ext_top, point_x, ext_bottom, NC_VISUAL_DIM);
+    lvds_draw_line(start_x, dim_y, point_x, dim_y, NC_VISUAL_DIM);
+    if (start_x == zero_x) {
+        lvds_draw_fill_rect(start_x - 1, dim_y - 1, 3, 3, NC_VISUAL_DIM);
+    } else {
+        nc_visual_draw_arrowhead(point_x, dim_y, -1, 0, NC_VISUAL_DIM);
+    }
+    if (!label || !label[0]) {
+        return;
+    }
+    text_x = point_x - lvds_draw_text_width(label, LVDS_FONT_SMALL) / 2;
+    lvds_draw_text(text_x,
+                   center_y - 26,
+                   label,
+                   NC_VISUAL_DIM,
+                   NC_VISUAL_PREVIEW_BG,
+                   LVDS_FONT_SMALL);
+}
+
+static void nc_visual_draw_x_point_dimension(int dim_x,
+                                             int start_y,
+                                             int point_y,
+                                             int zero_y,
+                                             int point_x,
+                                             const char *label)
+{
+    int text_y;
+
+    lvds_draw_line(dim_x, start_y, dim_x, point_y, NC_VISUAL_DIM);
+    lvds_draw_line(point_x + 3, point_y, dim_x, point_y, NC_VISUAL_DIM);
+    if (start_y == zero_y) {
+        lvds_draw_fill_rect(dim_x - 1, start_y - 1, 3, 3, NC_VISUAL_DIM);
+    }
+    nc_visual_draw_arrowhead(dim_x, point_y, 0, 1, NC_VISUAL_DIM);
+    if (!label || !label[0]) {
+        return;
+    }
+    text_y = point_y - 6;
+    lvds_draw_text(dim_x + 4,
+                   text_y,
+                   label,
+                   NC_VISUAL_DIM,
+                   NC_VISUAL_PREVIEW_BG,
+                   LVDS_FONT_SMALL);
+}
+
+static void nc_visual_draw_contour_point_marker(int x, int y, bool filled)
+{
+    if (filled) {
+        lvds_draw_fill_ellipse(x, y, 3, 3, NC_VISUAL_TEXT);
+    } else {
+        lvds_draw_ellipse(x, y, 5, 5, NC_VISUAL_TEXT);
+    }
+}
+
+#endif
+
+static void nc_visual_draw_chuck(const nc_preview_info_t *preview,
+                                 int stock_left,
+                                 int stock_top,
+                                 int stock_w,
+                                 int stock_h)
+{
+    float c = preview && preview->chuck_c > 0.0f ? preview->chuck_c : 15.0f;
+    int c_w = preview && preview->stock_visible_z > 0.0f ?
+              (int)((c / preview->stock_visible_z) * (float)stock_w + 0.5f) :
+              24;
+    int c_h = preview && preview->stock_x > 0.0f ?
+              (int)((c / preview->stock_x) * (float)stock_h + 0.5f) :
+              24;
+    int block_x = 0;
+    int block_w;
+    int block_y;
+    lvds_color_t fill = NC_VISUAL_FOOTER_BUTTON;
+    lvds_color_t ink = NC_VISUAL_LINE_NO_SELECTED;
+
+    if (c_w < 8) c_w = 8;
+    if (c_h < 8) c_h = 8;
+    block_w = stock_left + c_w;
+    if (block_w > stock_left + stock_w) {
+        block_w = stock_left + stock_w;
+    }
+    block_y = stock_top + stock_h - (c_h / 2);
+    if (block_y < 44) {
+        block_y = 44;
+    }
+    if (block_y + c_h > NC_FOOTER_Y) {
+        c_h = NC_FOOTER_Y - block_y;
+    }
+    if (block_w <= 0 || c_h <= 0) {
+        return;
     }
 
-    lvds_draw_fill_rect(jaw_x, jaw_y, jaw_w, jaw_h, NC_VISUAL_PREVIEW_CHUCK);
-    lvds_draw_fill_rect(stock_left, stock_top + stock_h + 1, clamp_w, 16, NC_VISUAL_PREVIEW_CHUCK);
-    lvds_draw_text(jaw_x + 4,
-                   jaw_y + 20,
-                   "CH",
-                   NC_VISUAL_PREVIEW_CHUCK_TEXT,
-                   NC_VISUAL_PREVIEW_CHUCK,
+    lvds_draw_fill_rect(block_x, block_y, block_w, c_h, fill);
+    lvds_draw_rect(block_x, block_y, block_w, c_h, ink);
+#if NC_PREVIEW_DIN_STYLE
+    nc_visual_draw_chuck_hatching(block_x, block_y, block_w, c_h, ink);
+#endif
+}
+
+static void nc_visual_draw_chuck_relief(const nc_preview_info_t *preview,
+                                        int stock_left,
+                                        int stock_top,
+                                        int stock_h)
+{
+    float c = preview && preview->chuck_c > 0.0f ? preview->chuck_c : 15.0f;
+    int c_h = preview && preview->stock_x > 0.0f ?
+              (int)((c / preview->stock_x) * (float)stock_h + 0.5f) :
+              24;
+    int r = c_h / 8;
+
+    if (r < 2) {
+        r = 2;
+    }
+    lvds_draw_fill_ellipse(stock_left,
+                           stock_top + stock_h,
+                           r,
+                           r,
+                           NC_VISUAL_PREVIEW_BG);
+    lvds_draw_ellipse(stock_left,
+                      stock_top + stock_h,
+                      r,
+                      r,
+                      NC_VISUAL_LINE_NO_SELECTED);
+}
+
+#if NC_PREVIEW_DIN_STYLE
+static void nc_visual_draw_din_layer(const nc_preview_info_t *preview,
+                                     int stock_left,
+                                     int stock_top,
+                                     int stock_w,
+                                     int stock_h,
+                                     int z0_x)
+{
+    char label[16];
+    int stock_right;
+    int stock_bottom;
+    int dim_x;
+    int id_y;
+
+    if (!preview) {
+        return;
+    }
+
+    stock_right = stock_left + stock_w;
+    stock_bottom = stock_top + stock_h;
+    dim_x = stock_right + 14;
+    if (dim_x > LVDS_HSTX_WIDTH - 24) {
+        dim_x = stock_right - 18;
+    }
+
+    nc_visual_draw_centerline(stock_left - 34,
+                              stock_top,
+                              stock_right + 18,
+                              stock_top);
+    nc_visual_draw_centerline(z0_x,
+                              stock_top - 26,
+                              z0_x,
+                              stock_bottom + 20);
+    nc_visual_draw_origin_marker(z0_x, stock_top);
+
+    /*lvds_draw_line(z0_x, stock_top, z0_x + 24, stock_top - 22, NC_VISUAL_DIM);
+    lvds_draw_text(z0_x + 27,
+                   stock_top - 29,
+                   "+Z",
+                   NC_VISUAL_DIM,
+                   NC_VISUAL_PREVIEW_BG,
                    LVDS_FONT_NORMAL);
+    lvds_draw_line(z0_x, stock_top, z0_x - 18, stock_top - 24, NC_VISUAL_DIM);
+    lvds_draw_text(z0_x - 35,
+                   stock_top - 39,
+                   "+X",
+                   NC_VISUAL_DIM,
+                   NC_VISUAL_PREVIEW_BG,
+                   LVDS_FONT_NORMAL);*/
+
+    if (g_nc_visual_mode != NC_MODE_SIM && g_nc_visual_mode != NC_MODE_RUN) {
+        snprintf(label, sizeof(label), "%.0f", preview->stock_x);
+        nc_visual_draw_diameter_dimension(dim_x,
+                                          stock_top,
+                                          stock_bottom,
+                                          label);
+    }
+    if (g_nc_visual_mode != NC_MODE_SIM && g_nc_visual_mode != NC_MODE_RUN &&
+        preview->stock_i > 0.0f && preview->stock_i < preview->stock_x) {
+        id_y = nc_visual_preview_x(preview, stock_top, stock_h, preview->stock_i);
+        nc_visual_draw_centerline(stock_left - 18, id_y, stock_right + 8, id_y);
+        snprintf(label, sizeof(label), "%.0f", preview->stock_i);
+        nc_visual_draw_diameter_dimension(dim_x - 18,
+                                          stock_top,
+                                          id_y,
+                                          label);
+    }
+}
+#endif
+
+static void nc_visual_draw_sim_contour_points(const nc_document_t *doc,
+                                              const nc_preview_info_t *preview,
+                                              int z0_x,
+                                              int stock_left,
+                                              int stock_right,
+                                              int stock_w,
+                                              int stock_top,
+                                              int stock_h)
+{
+#if NC_PREVIEW_DIN_POINT_MARKERS
+    size_t i;
+    bool in_region = false;
+    float x = preview ? preview->stock_x : 0.0f;
+    float z = 0.0f;
+    int prev_z_px = z0_x;
+    int prev_x_py = stock_top;
+    int x_dim = stock_right + 15;
+    char label[16];
+
+    if (!doc || !preview ||
+        (g_nc_visual_mode != NC_MODE_SIM && g_nc_visual_mode != NC_MODE_RUN)) {
+        return;
+    }
+
+    for (i = 0; i < doc->line_count; i++) {
+        const char *line = doc->lines[i].text;
+        g7x_contour_cmd_t cmd;
+        bool has_x;
+        bool has_z;
+
+        if (g7x_cycle_from_line(line) != G7X_CYCLE_NONE) {
+            in_region = true;
+            continue;
+        }
+        if (!in_region) {
+            continue;
+        }
+        cmd = g7x_contour_cmd_from_line(line);
+        if (cmd == G7X_CONTOUR_END) {
+            break;
+        }
+        if (cmd == G7X_CONTOUR_NONE || cmd == G7X_CONTOUR_RAPID) {
+            continue;
+        }
+
+        has_x = nc_sim_line_word_float(line, 'X', &x);
+        has_z = nc_sim_line_word_float(line, 'Z', &z);
+        if (has_x || has_z) {
+            int px = nc_visual_preview_z(preview, z0_x, stock_w, z);
+            int py = nc_visual_preview_x(preview, stock_top, stock_h, x);
+            float feature = 0.0f;
+            if (g_nc_visual_mode == NC_MODE_SIM ||
+                (g_nc_visual_mode == NC_MODE_RUN &&
+                 !nc_run_active() &&
+                 !nc_run_hold() &&
+                 !cnc_get_exec_state(EXEC_RUN | EXEC_HOLD))) {
+                nc_visual_draw_contour_point_marker(px, py, i == doc->cursor_line);
+            }
+            snprintf(label, sizeof(label), "%.0f", x);
+            nc_visual_draw_x_point_dimension(x_dim, prev_x_py, py, stock_top, px, label);
+            prev_x_py = py;
+            snprintf(label, sizeof(label), "%.0f", z);
+            nc_visual_draw_z_point_dimension(prev_z_px, px, z0_x, stock_top, py, label);
+            prev_z_px = px;
+            if (nc_sim_line_word_float(line, 'R', &feature) && feature > 0.0001f) {
+                snprintf(label, sizeof(label), "R%.0f", feature);
+                lvds_draw_text(px + 4, py - 16, label, NC_VISUAL_DIM, NC_VISUAL_PREVIEW_BG, LVDS_FONT_SMALL);
+            } else if (nc_sim_line_word_float(line, 'C', &feature) && feature > 0.0001f) {
+                snprintf(label, sizeof(label), "C%.0f", feature);
+                lvds_draw_text(px + 4, py - 16, label, NC_VISUAL_DIM, NC_VISUAL_PREVIEW_BG, LVDS_FONT_SMALL);
+            }
+        }
+    }
+    snprintf(label, sizeof(label), "%.0f", -preview->stock_visible_z);
+    nc_visual_draw_z_point_dimension(prev_z_px,
+                                     stock_left,
+                                     z0_x,
+                                     stock_top,
+                                     stock_top,
+                                     label);
+#else
+    (void)doc;
+    (void)preview;
+    (void)z0_x;
+    (void)stock_left;
+    (void)stock_right;
+    (void)stock_w;
+    (void)stock_top;
+    (void)stock_h;
+#endif
 }
 
 static bool nc_visual_draw_explicit_arc(const nc_preview_info_t *preview,
@@ -534,6 +1261,7 @@ static bool nc_visual_draw_explicit_arc(const nc_preview_info_t *preview,
     float a0;
     float sweep;
     float abs_r = nc_visual_absf(r);
+    float screen_r;
     int steps;
     int last_px;
     int last_py;
@@ -548,8 +1276,9 @@ static bool nc_visual_draw_explicit_arc(const nc_preview_info_t *preview,
                                          atan2f((end_x * 0.5f) - (center.x * 0.5f),
                                                 end_z - center.z),
                                          cw);
-    steps = nc_visual_clampi((int)(nc_visual_absf(sweep) * abs_r * 0.45f) + 6,
-                             6,
+    screen_r = abs_r * (float)stock_w / (preview->stock_z > 0.0001f ? preview->stock_z : 1.0f);
+    steps = nc_visual_clampi((int)(nc_visual_absf(sweep) * screen_r * 0.35f) + 8,
+                             10,
                              NC_PREVIEW_ARC_MAX_STEPS);
     last_px = nc_visual_preview_z(preview, z0_x, stock_w, start_z);
     last_py = nc_visual_preview_x(preview, stock_top, stock_h, start_x);
@@ -557,6 +1286,64 @@ static bool nc_visual_draw_explicit_arc(const nc_preview_info_t *preview,
         float a = a0 + sweep * ((float)i / (float)steps);
         float z = center.z + cosf(a) * abs_r;
         float x = ((center.x * 0.5f) + sinf(a) * abs_r) * 2.0f;
+        int px = nc_visual_preview_z(preview, z0_x, stock_w, z);
+        int py = nc_visual_preview_x(preview, stock_top, stock_h, x);
+        lvds_draw_line_w(last_px, last_py, px, py, color, width);
+        last_px = px;
+        last_py = py;
+    }
+    return true;
+}
+
+static bool nc_visual_draw_center_arc(const nc_preview_info_t *preview,
+                                      int z0_x,
+                                      int stock_w,
+                                      int stock_top,
+                                      int stock_h,
+                                      float start_x,
+                                      float start_z,
+                                      float end_x,
+                                      float end_z,
+                                      float i_off,
+                                      float k_off,
+                                      bool cw,
+                                      lvds_color_t color,
+                                      int width)
+{
+    float center_z = start_z + k_off;
+    float center_xr = (start_x * 0.5f) + i_off;
+    float start_xr = start_x * 0.5f;
+    float end_xr = end_x * 0.5f;
+    float dz = start_z - center_z;
+    float dx = start_xr - center_xr;
+    float radius = sqrtf(dz * dz + dx * dx);
+    float screen_r;
+    float a0;
+    float sweep;
+    int steps;
+    int last_px;
+    int last_py;
+    int n;
+
+    if (!preview || radius < 0.0001f) {
+        return false;
+    }
+
+    a0 = atan2f(start_xr - center_xr, start_z - center_z);
+    sweep = nc_visual_directed_arc_sweep(a0,
+                                         atan2f(end_xr - center_xr,
+                                                end_z - center_z),
+                                         cw);
+    screen_r = radius * (float)stock_w / (preview->stock_z > 0.0001f ? preview->stock_z : 1.0f);
+    steps = nc_visual_clampi((int)(nc_visual_absf(sweep) * screen_r * 0.35f) + 8,
+                             10,
+                             NC_PREVIEW_ARC_MAX_STEPS);
+    last_px = nc_visual_preview_z(preview, z0_x, stock_w, start_z);
+    last_py = nc_visual_preview_x(preview, stock_top, stock_h, start_x);
+    for (n = 1; n <= steps; n++) {
+        float a = a0 + sweep * ((float)n / (float)steps);
+        float z = center_z + cosf(a) * radius;
+        float x = (center_xr + sinf(a) * radius) * 2.0f;
         int px = nc_visual_preview_z(preview, z0_x, stock_w, z);
         int py = nc_visual_preview_x(preview, stock_top, stock_h, x);
         lvds_draw_line_w(last_px, last_py, px, py, color, width);
@@ -623,6 +1410,7 @@ static bool nc_visual_draw_emitted_motion_line(const nc_preview_info_t *preview,
                                                int stock_h,
                                                const char *line,
                                                nc_preview_segment_t segment,
+                                               bool selected,
                                                float *last_x,
                                                float *last_z,
                                                bool *have_last)
@@ -637,12 +1425,11 @@ static bool nc_visual_draw_emitted_motion_line(const nc_preview_info_t *preview,
     int x1;
     int y1;
     lvds_color_t color = NC_VISUAL_PREVIEW_CUT;
-    int width = 2;
+    int width = selected ? 3 : 1;
 
     if (!preview || !line || !last_x || !last_z || !have_last) {
         return false;
     }
-
     cmd = g7x_contour_cmd_from_line(line);
     if (cmd == G7X_CONTOUR_NONE || cmd == G7X_CONTOUR_END) {
         return false;
@@ -668,16 +1455,32 @@ static bool nc_visual_draw_emitted_motion_line(const nc_preview_info_t *preview,
     y1 = nc_visual_preview_x(preview, stock_top, stock_h, x);
     if (segment == NC_PREVIEW_SEG_ROUGH) {
         color = NC_VISUAL_PREVIEW_HATCH;
-        width = 1;
     } else if (segment == NC_PREVIEW_SEG_FINISH) {
-        color = NC_VISUAL_PREVIEW_CUT;
-        width = 3;
+        color = NC_VISUAL_TOOL_MARK;
     }
 
     if (cmd == G7X_CONTOUR_ARC_CW || cmd == G7X_CONTOUR_ARC_CCW) {
         float r = 0.0f;
-        if (!nc_sim_line_word_float(line, 'R', &r) ||
-            !nc_visual_draw_explicit_arc(preview,
+        float i_off = 0.0f;
+        float k_off = 0.0f;
+        if ((nc_sim_line_word_float(line, 'I', &i_off) &&
+             nc_sim_line_word_float(line, 'K', &k_off) &&
+             nc_visual_draw_center_arc(preview,
+                                       z0_x,
+                                       stock_w,
+                                       stock_top,
+                                       stock_h,
+                                       *last_x,
+                                       *last_z,
+                                       x,
+                                       z,
+                                       i_off,
+                                       k_off,
+                                       cmd == G7X_CONTOUR_ARC_CW,
+                                       color,
+                                       width)) ||
+            (nc_sim_line_word_float(line, 'R', &r) &&
+             nc_visual_draw_explicit_arc(preview,
                                          z0_x,
                                          stock_w,
                                          stock_top,
@@ -689,7 +1492,9 @@ static bool nc_visual_draw_emitted_motion_line(const nc_preview_info_t *preview,
                                          r,
                                          cmd == G7X_CONTOUR_ARC_CW,
                                          color,
-                                         width)) {
+                                         width))) {
+            /* Arc drawn above. */
+        } else {
             lvds_draw_line_w(x0, y0, x1, y1, color, width);
         }
     } else if (cmd == G7X_CONTOUR_RAPID) {
@@ -753,6 +1558,12 @@ static void nc_visual_draw_emitted_preview(const nc_document_t *doc,
             if (drawn_lines >= max_lines) {
                 break;
             }
+            if (g_nc_visual_mode == NC_MODE_SIM &&
+                ((segment == NC_PREVIEW_SEG_ROUGH && !g_nc_visual_sim_rough) ||
+                 (segment != NC_PREVIEW_SEG_ROUGH && !g_nc_visual_sim_path))) {
+                drawn_lines++;
+                continue;
+            }
             (void)nc_visual_draw_emitted_motion_line(preview,
                                                      z0_x,
                                                      stock_w,
@@ -760,6 +1571,7 @@ static void nc_visual_draw_emitted_preview(const nc_document_t *doc,
                                                      stock_h,
                                                      line,
                                                      segment,
+                                                     emitted_line == doc->cursor_line,
                                                      &last_x,
                                                      &last_z,
                                                      &have_last);
@@ -771,15 +1583,20 @@ static void nc_visual_draw_emitted_preview(const nc_document_t *doc,
     }
 }
 
-static const char *nc_visual_run_state_text(void)
+static bool nc_visual_runtime_busy(const nc_runtime_state_t *runtime)
+{
+    return runtime && (runtime->exec_state & (EXEC_RUN | EXEC_HOLD));
+}
+
+static const char *nc_visual_run_state_text(const nc_runtime_state_t *runtime)
 {
     if (g_nc_visual_mode != NC_MODE_RUN) {
         return nc_menu_mode_name(g_nc_visual_mode);
     }
-    if (nc_run_hold()) {
+    if (nc_run_hold() || (runtime && (runtime->exec_state & EXEC_HOLD))) {
         return "RUN HOLD";
     }
-    if (nc_run_active()) {
+    if (nc_visual_runtime_busy(runtime) || nc_run_active()) {
         return "RUN ACTIVE";
     }
     if (nc_run_done()) {
@@ -809,6 +1626,54 @@ static float nc_live_runtime_x_to_diam(float runtime_x)
     return nc_visual_absf(runtime_x) * 2.0f;
 }
 
+static bool nc_visual_live_tool_rect(const nc_preview_info_t *preview,
+                                     const nc_runtime_state_t *runtime,
+                                     int z0_x,
+                                     int stock_w,
+                                     int stock_top,
+                                     int stock_h,
+                                     int *rx,
+                                     int *ry,
+                                     int *rw,
+                                     int *rh)
+{
+    int sx;
+    int sy;
+    int pad = 16;
+    int min_x;
+    int max_x;
+    int min_y;
+    int max_y;
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+
+    if (!preview || !runtime) {
+        return false;
+    }
+
+    sx = nc_visual_preview_z(preview, z0_x, stock_w, runtime->z);
+    sy = nc_visual_preview_x(preview, stock_top, stock_h, nc_live_runtime_x_to_diam(runtime->x));
+    sx = nc_visual_clampi(sx, 0, LVDS_HSTX_WIDTH - 1);
+    sy = nc_visual_clampi(sy, 44, LVDS_HSTX_HEIGHT - 1);
+
+    min_x = 0;
+    max_x = nc_visual_clampi(z0_x + stock_w + pad, 0, LVDS_HSTX_WIDTH - 1);
+    min_y = nc_visual_clampi(stock_top - pad, 44, LVDS_HSTX_HEIGHT - 1);
+    max_y = nc_visual_clampi(stock_top + stock_h + pad, 44, LVDS_HSTX_HEIGHT - 1);
+    x0 = nc_visual_clampi(sx - pad, min_x, max_x);
+    y0 = nc_visual_clampi(sy - pad, min_y, max_y);
+    x1 = nc_visual_clampi(sx + pad, min_x, max_x);
+    y1 = nc_visual_clampi(sy + pad, min_y, max_y);
+
+    if (rx) *rx = x0;
+    if (ry) *ry = y0;
+    if (rw) *rw = x1 - x0 + 1;
+    if (rh) *rh = y1 - y0 + 1;
+    return true;
+}
+
 static void nc_visual_draw_live_tool(const nc_preview_info_t *preview,
                                      const nc_runtime_state_t *runtime,
                                      int z0_x,
@@ -819,6 +1684,10 @@ static void nc_visual_draw_live_tool(const nc_preview_info_t *preview,
 {
     int sx;
     int sy;
+    int rx;
+    int ry;
+    int rw;
+    int rh;
 
     if (!preview || !runtime || !tool || !tool->valid) {
         return;
@@ -829,9 +1698,14 @@ static void nc_visual_draw_live_tool(const nc_preview_info_t *preview,
     sx = nc_visual_clampi(sx, 0, LVDS_HSTX_WIDTH - 1);
     sy = nc_visual_clampi(sy, 44, LVDS_HSTX_HEIGHT - 1);
 
-    lvds_draw_line(sx, stock_top - 18, sx, stock_top + stock_h + 18, NC_VISUAL_TOOL_CROSSHAIR);
-    lvds_draw_line(z0_x - 4, sy, z0_x + stock_w + 4, sy, NC_VISUAL_TOOL_CROSSHAIR);
-    lvds_draw_fill_ellipse(sx, sy, 2, 2, NC_VISUAL_TOOL_CROSSHAIR);
+    if (nc_visual_live_tool_rect(preview, runtime, z0_x, stock_w, stock_top, stock_h, &rx, &ry, &rw, &rh)) {
+        g_nc_live_tool_rect_x = rx;
+        g_nc_live_tool_rect_y = ry;
+        g_nc_live_tool_rect_w = rw;
+        g_nc_live_tool_rect_h = rh;
+        g_nc_live_tool_rect_valid = true;
+    }
+    nc_visual_draw_tool_glyph(sx, sy, 20, tool, NC_VISUAL_PREVIEW_BG, false);
 }
 
 static bool nc_live_stock_alloc(void)
@@ -1005,24 +1879,44 @@ static void nc_live_stock_update(const nc_preview_info_t *preview,
     g_nc_live_stock_has_last = true;
 }
 
-static void nc_live_stock_draw(int stock_left, int stock_top)
+static void nc_live_stock_draw(int stock_left,
+                               int stock_top,
+                               int clip_x,
+                               int clip_y,
+                               int clip_w,
+                               int clip_h)
 {
+    int y0;
+    int y1;
     int y;
+    int clip_left = clip_x - stock_left;
+    int clip_right = clip_left + clip_w - 1;
 
     if (!g_nc_live_stock_mask || !g_nc_live_stock_ready) {
         return;
     }
-    lvds_draw_fill_rect(stock_left, stock_top, g_nc_live_stock_w, g_nc_live_stock_h, NC_VISUAL_PREVIEW_BG);
-    for (y = 0; y < g_nc_live_stock_h; y++) {
+    clip_left = nc_visual_clampi(clip_left, 0, g_nc_live_stock_w - 1);
+    clip_right = nc_visual_clampi(clip_right, 0, g_nc_live_stock_w - 1);
+    y0 = nc_visual_clampi(clip_y - stock_top, 0, g_nc_live_stock_h - 1);
+    y1 = nc_visual_clampi(clip_y + clip_h - stock_top - 1, 0, g_nc_live_stock_h - 1);
+    if (clip_right < clip_left || y1 < y0) {
+        return;
+    }
+    lvds_draw_fill_rect(stock_left + clip_left,
+                        stock_top + y0,
+                        clip_right - clip_left + 1,
+                        y1 - y0 + 1,
+                        NC_VISUAL_PREVIEW_BG);
+    for (y = y0; y <= y1; y++) {
         const uint8_t *row = g_nc_live_stock_mask + ((size_t)y * NC_LIVE_STOCK_MAX_W);
-        int x = 0;
-        while (x < g_nc_live_stock_w) {
+        int x = clip_left;
+        while (x <= clip_right) {
             int start;
-            while (x < g_nc_live_stock_w && !row[x]) {
+            while (x <= clip_right && !row[x]) {
                 x++;
             }
             start = x;
-            while (x < g_nc_live_stock_w && row[x]) {
+            while (x <= clip_right && row[x]) {
                 x++;
             }
             if (x > start) {
@@ -1043,24 +1937,44 @@ static bool nc_visual_draw_live_stock(const nc_preview_info_t *preview,
                                       int stock_top,
                                       int stock_w,
                                       int stock_h,
-                                      int z0_x)
+                                      int z0_x,
+                                      int tool_panel_x,
+                                      int tool_panel_y,
+                                      int tool_panel_w,
+                                      bool draw_static_panel)
 {
-    bool live_run = false;
+    bool live_run;
+    bool context_changed;
+    bool retain_stock;
+    int clear_y;
+    int clear_h;
+    uint32_t t0;
+    uint32_t t1;
+    uint32_t t2;
+    uint32_t t3;
+    uint32_t t4;
 
-    if (runtime) {
-        live_run = (runtime->exec_state & (EXEC_RUN | EXEC_HOLD)) != 0;
-    }
-    live_run = live_run || nc_run_active();
+    live_run = nc_visual_runtime_busy(runtime) || nc_run_active();
 
-    if (!preview || !runtime || !live_run) {
+    if (!preview || !runtime) {
         g_nc_live_stock_was_active = false;
+        g_nc_live_tool_rect_valid = false;
         return false;
     }
-    if (!g_nc_live_stock_was_active ||
-        nc_live_stock_context_changed(preview, stock_w, stock_h)) {
-        nc_live_stock_reset(preview, stock_w, stock_h);
+    context_changed = nc_live_stock_context_changed(preview, stock_w, stock_h);
+    retain_stock = g_nc_visual_mode == NC_MODE_RUN &&
+                   g_nc_live_stock_ready &&
+                   !context_changed;
+    if (!live_run && !retain_stock) {
+        g_nc_live_stock_was_active = false;
+        g_nc_live_tool_rect_valid = false;
+        return false;
     }
-    g_nc_live_stock_was_active = true;
+    if (live_run && (!g_nc_live_stock_was_active || context_changed)) {
+        nc_live_stock_reset(preview, stock_w, stock_h);
+        g_nc_live_tool_rect_valid = false;
+    }
+    g_nc_live_stock_was_active = live_run || retain_stock;
     if (!g_nc_live_stock_ready) {
         nc_visual_draw_text_clip(stock_left,
                                  stock_top + 16,
@@ -1071,13 +1985,51 @@ static bool nc_visual_draw_live_stock(const nc_preview_info_t *preview,
                                  LVDS_FONT_NORMAL);
         return true;
     }
-    nc_live_stock_update(preview, runtime, z0_x, stock_left, stock_w, stock_top, stock_h);
-    nc_live_stock_draw(stock_left, stock_top);
-    nc_visual_draw_chuck(stock_left, stock_top, stock_w, stock_h);
-    lvds_draw_rect(stock_left, stock_top, stock_w, stock_h, NC_VISUAL_PREVIEW_FRAME);
+    t0 = mcu_micros();
+    clear_y = nc_visual_clampi(stock_top - 24, 44, NC_FOOTER_Y - 1);
+    clear_h = nc_visual_clampi(stock_top + stock_h + 74 - clear_y, 1, NC_FOOTER_Y - clear_y);
+    lvds_draw_fill_rect(tool_panel_x, clear_y, tool_panel_w, clear_h, NC_VISUAL_PREVIEW_BG);
+    t1 = mcu_micros();
+    if (live_run) {
+        nc_live_stock_update(preview, runtime, z0_x, stock_left, stock_w, stock_top, stock_h);
+    }
+    nc_visual_draw_chuck(preview, stock_left, stock_top, stock_w, stock_h);
+    nc_visual_draw_chuck_relief(preview, stock_left, stock_top, stock_h);
+    nc_live_stock_draw(stock_left, stock_top, stock_left, stock_top, stock_w, stock_h);
+    t2 = mcu_micros();
+#if NC_PREVIEW_DIN_STYLE
+    if (g_nc_visual_show_dims) {
+        nc_visual_draw_din_layer(preview, stock_left, stock_top, stock_w, stock_h, z0_x);
+    }
+#endif
+    if (g_nc_visual_show_dims) {
+        nc_visual_draw_sim_contour_points(&g_nc_visual_doc,
+                                          preview,
+                                          z0_x,
+                                          stock_left,
+                                          stock_left + stock_w,
+                                          stock_w,
+                                          stock_top,
+                                          stock_h);
+    }
+#if !NC_PREVIEW_DIN_STYLE
     lvds_draw_line(z0_x, stock_top - 18, z0_x, stock_top + stock_h + 18, NC_VISUAL_DIM);
     lvds_draw_text(z0_x - 12, stock_top - 34, "Z0", NC_VISUAL_DIM, NC_VISUAL_PREVIEW_BG, LVDS_FONT_NORMAL);
+#endif
+    t3 = mcu_micros();
     nc_visual_draw_live_tool(preview, runtime, z0_x, stock_w, stock_top, stock_h, tool);
+    if (draw_static_panel) {
+        nc_visual_draw_preview_tool_panel(tool_panel_x,
+                                          tool_panel_y,
+                                          tool_panel_w,
+                                          58,
+                                          tool);
+    }
+    t4 = mcu_micros();
+    g_nc_visual_frame_preview_clear_us += t1 - t0;
+    g_nc_visual_frame_preview_stock_us += t2 - t1;
+    g_nc_visual_frame_preview_geom_us += t3 - t2;
+    g_nc_visual_frame_preview_tool_us += t4 - t3;
     return true;
 }
 
@@ -1086,7 +2038,8 @@ static void nc_visual_draw_thin_preview(const nc_document_t *doc,
                                         int x,
                                         int y,
                                         int w,
-                                        int h)
+                                        int h,
+                                        bool clear_bg)
 {
     nc_preview_info_t preview;
     int stock_w;
@@ -1094,63 +2047,116 @@ static void nc_visual_draw_thin_preview(const nc_document_t *doc,
     int stock_left;
     int stock_top;
     int z0_x;
-    int profile_left;
-    int profile_right;
-    int profile_top;
-    int profile_bottom;
     float usable_w;
     float usable_h;
     float z_scale;
     float x_scale;
     float scale;
-    float contour_z[NC_PREVIEW_CONTOUR_MAX];
-    float contour_x[NC_PREVIEW_CONTOUR_MAX];
-    size_t contour_line[NC_PREVIEW_CONTOUR_MAX];
-    uint8_t contour_count = 0;
-    size_t i;
     nc_tool_t tool;
     bool have_tool = false;
     size_t tool_line = doc && doc->line_count ? doc->cursor_line : 0;
+    uint32_t t0 = mcu_micros();
+    uint32_t t1;
+    uint32_t t2;
+    uint32_t t3;
+    uint32_t t5;
+    bool use_live_cache = !clear_bg &&
+                          g_nc_visual_mode == NC_MODE_RUN &&
+                          g_nc_live_preview_cache_valid;
 
     if (doc && g_nc_visual_mode == NC_MODE_RUN && nc_run_line() < doc->line_count) {
         tool_line = nc_run_line();
     }
 
-    nc_sim_collect_preview(doc, &preview);
-    lvds_draw_fill_rect(x, y, w, h, NC_VISUAL_PREVIEW_BG);
-    nc_visual_draw_text_clip(x + 12,
-                             y + 10,
-                             nc_visual_run_state_text(),
-                             18,
-                             NC_VISUAL_ACCENT,
-                             NC_VISUAL_PREVIEW_BG,
-                             LVDS_FONT_NORMAL);
+    if (use_live_cache) {
+        preview = g_nc_live_preview_cache;
+        tool = g_nc_live_tool_cache;
+        have_tool = g_nc_live_have_tool_cache;
+        stock_w = g_nc_live_stock_w_cache;
+        stock_h = g_nc_live_stock_h_cache;
+        stock_left = g_nc_live_stock_left_cache;
+        stock_top = g_nc_live_stock_top_cache;
+        z0_x = g_nc_live_z0_x_cache;
+        t1 = t0;
+        t2 = t0;
+        t3 = t0;
+    } else {
+        nc_sim_collect_preview(doc, &preview);
+        t1 = mcu_micros();
+        if (clear_bg) {
+            lvds_draw_fill_rect(x, y, w, h, NC_VISUAL_PREVIEW_BG);
+            if (g_nc_visual_mode == NC_MODE_SIM) {
+                nc_visual_draw_text_clip(x + 12,
+                                         y + 10,
+                                         "SIM",
+                                         4,
+                                         NC_VISUAL_ACCENT,
+                                         NC_VISUAL_PREVIEW_BG,
+                                         LVDS_FONT_NORMAL);
+                nc_visual_draw_text_clip(x + 50,
+                                         y + 10,
+                                         nc_visual_file_basename(doc ? doc->path : ""),
+                                         26,
+                                         NC_VISUAL_DIM,
+                                         NC_VISUAL_PREVIEW_BG,
+                                         LVDS_FONT_NORMAL);
+            } else {
+                nc_visual_draw_text_clip(x + 12,
+                                         y + 10,
+                                         nc_visual_run_state_text(runtime),
+                                         18,
+                                         NC_VISUAL_ACCENT,
+                                         NC_VISUAL_PREVIEW_BG,
+                                         LVDS_FONT_NORMAL);
+            }
+        }
+        t2 = mcu_micros();
 
-    usable_w = (float)(w - 72);
-    usable_h = (float)(h - 84);
-    if (usable_w < 40.0f) usable_w = 40.0f;
-    if (usable_h < 40.0f) usable_h = 40.0f;
-    z_scale = usable_w / preview.stock_visible_z;
-    x_scale = usable_h / (preview.stock_x * 0.5f);
-    scale = z_scale < x_scale ? z_scale : x_scale;
-    if (scale <= 0.0f) scale = 1.0f;
-    stock_w = (int)(preview.stock_visible_z * scale + 0.5f);
-    stock_h = (int)((preview.stock_x * 0.5f) * scale + 0.5f);
-    if (stock_w < 24) stock_w = 24;
-    if (stock_h < 24) stock_h = 24;
-    if (stock_w > (int)usable_w) stock_w = (int)usable_w;
-    if (stock_h > (int)usable_h) stock_h = (int)usable_h;
+        usable_w = (float)(w - 72);
+        usable_h = (float)(h - (g_nc_visual_mode == NC_MODE_SIM ? 104 : 84));
+        if (usable_w < 40.0f) usable_w = 40.0f;
+        if (usable_h < 40.0f) usable_h = 40.0f;
+        z_scale = usable_w / preview.stock_visible_z;
+        x_scale = usable_h / (preview.stock_x * 0.5f);
+        scale = z_scale < x_scale ? z_scale : x_scale;
+        if (scale <= 0.0f) scale = 1.0f;
+        stock_w = (int)(preview.stock_visible_z * scale + 0.5f);
+        stock_h = (int)((preview.stock_x * 0.5f) * scale + 0.5f);
+        if (stock_w < 24) stock_w = 24;
+        if (stock_h < 24) stock_h = 24;
+        if (stock_w > (int)usable_w) stock_w = (int)usable_w;
+        if (stock_h > (int)usable_h) stock_h = (int)usable_h;
 
-    stock_left = x + 20;
-    stock_top = y + 112;
-    z0_x = stock_left + (int)(preview.stock_z * scale + 0.5f);
-    if (z0_x < stock_left) z0_x = stock_left;
-    if (z0_x > stock_left + stock_w) z0_x = stock_left + stock_w;
-
-    memset(&tool, 0, sizeof(tool));
-    if (doc && nc_tool_active_for_line(doc, tool_line, &tool)) {
-        have_tool = true;
+        stock_left = x + 20;
+        stock_top = y + 112;
+        z0_x = stock_left + (int)(preview.stock_z * scale + 0.5f);
+        if (z0_x < stock_left) z0_x = stock_left;
+        if (z0_x > stock_left + stock_w) z0_x = stock_left + stock_w;
+        memset(&tool, 0, sizeof(tool));
+        if (doc && g_nc_visual_mode == NC_MODE_TOOLS &&
+            nc_tool_active_from_table(doc, tool_line, &g_nc_visual_doc, &tool)) {
+            have_tool = true;
+        } else if (doc && nc_tool_active_from_file(doc,
+                                                   tool_line,
+                                                   nc_visual_tool_path(),
+                                                   &tool)) {
+            have_tool = true;
+        }
+        t3 = mcu_micros();
+        if (g_nc_visual_mode == NC_MODE_RUN) {
+            g_nc_live_preview_cache = preview;
+            g_nc_live_tool_cache = tool;
+            g_nc_live_have_tool_cache = have_tool;
+            g_nc_live_stock_w_cache = stock_w;
+            g_nc_live_stock_h_cache = stock_h;
+            g_nc_live_stock_left_cache = stock_left;
+            g_nc_live_stock_top_cache = stock_top;
+            g_nc_live_z0_x_cache = z0_x;
+            g_nc_live_preview_cache_valid = true;
+        }
     }
+    g_nc_visual_frame_preview_collect_us += (t1 - t0) + (t3 - t2);
+    g_nc_visual_frame_preview_clear_us += t2 - t1;
     if (g_nc_visual_mode == NC_MODE_RUN && nc_visual_draw_live_stock(&preview,
                                                                       runtime,
                                                                       have_tool ? &tool : NULL,
@@ -1158,10 +2164,17 @@ static void nc_visual_draw_thin_preview(const nc_document_t *doc,
                                                                       stock_top,
                                                                       stock_w,
                                                                       stock_h,
-                                                                      z0_x)) {
+                                                                      z0_x,
+                                                                      x,
+                                                                      y,
+                                                                      w,
+                                                                      clear_bg)) {
         return;
     }
 
+    t0 = mcu_micros();
+    nc_visual_draw_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
+    nc_visual_draw_chuck_relief(&preview, stock_left, stock_top, stock_h);
     if (g_nc_visual_sim_stock || g_nc_visual_mode != NC_MODE_SIM) {
         lvds_draw_fill_rect(stock_left, stock_top, stock_w, stock_h, NC_VISUAL_PREVIEW_STOCK);
         if (preview.stock_i > 0.0f) {
@@ -1171,68 +2184,46 @@ static void nc_visual_draw_thin_preview(const nc_document_t *doc,
             }
         }
     }
-    nc_visual_draw_chuck(stock_left, stock_top, stock_w, stock_h);
-    lvds_draw_rect(stock_left, stock_top, stock_w, stock_h, NC_VISUAL_PREVIEW_FRAME);
+    t1 = mcu_micros();
+#if NC_PREVIEW_DIN_STYLE
+    if (g_nc_visual_show_dims) {
+        nc_visual_draw_din_layer(&preview, stock_left, stock_top, stock_w, stock_h, z0_x);
+    }
+#endif
+    if (g_nc_visual_show_dims) {
+        nc_visual_draw_sim_contour_points(doc,
+                                          &preview,
+                                          z0_x,
+                                          stock_left,
+                                          stock_left + stock_w,
+                                          stock_w,
+                                          stock_top,
+                                          stock_h);
+    }
+#if !NC_PREVIEW_DIN_STYLE
     lvds_draw_line(z0_x, stock_top - 18, z0_x, stock_top + stock_h + 18, NC_VISUAL_DIM);
     lvds_draw_text(z0_x - 12, stock_top - 34, "Z0", NC_VISUAL_DIM, NC_VISUAL_PREVIEW_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_preview_tool_panel(x, y, w, h, have_tool ? &tool : NULL);
-    memset(contour_z, 0, sizeof(contour_z));
-    memset(contour_x, 0, sizeof(contour_x));
-
-    if (doc) {
-        for (i = 0; i < doc->line_count; i++) {
-            const char *line = doc->lines[i].text;
-            g7x_contour_cmd_t cmd = g7x_contour_cmd_from_line(line);
-            float xw;
-            float zw;
-
-            if (cmd == G7X_CONTOUR_END) {
-                break;
-            }
-            if (cmd == G7X_CONTOUR_NONE || contour_count >= NC_PREVIEW_CONTOUR_MAX) {
-                continue;
-            }
-            if (!nc_sim_line_word_float(line, 'X', &xw) ||
-                !nc_sim_line_word_float(line, 'Z', &zw)) {
-                continue;
-            }
-            contour_z[contour_count] = zw;
-            contour_x[contour_count] = xw;
-            contour_line[contour_count] = i;
-            contour_count++;
-        }
+#endif
+    t2 = mcu_micros();
+    if (g_nc_visual_mode != NC_MODE_SIM) {
+        nc_visual_draw_preview_tool_panel(x, y, w, h, have_tool ? &tool : NULL);
     }
-
-    profile_left = nc_visual_preview_z(&preview, z0_x, stock_w, preview.min_z);
-    profile_right = nc_visual_preview_z(&preview, z0_x, stock_w, preview.max_z);
-    profile_top = nc_visual_preview_x(&preview, stock_top, stock_h, preview.min_x);
-    profile_bottom = nc_visual_preview_x(&preview, stock_top, stock_h, preview.max_x);
-    if (profile_right > profile_left && profile_bottom > profile_top) {
-        lvds_draw_rect(profile_left, profile_top, profile_right - profile_left, profile_bottom - profile_top, NC_VISUAL_DIM);
-    }
-
-    if (g_nc_visual_sim_path || g_nc_visual_mode != NC_MODE_SIM) {
-        nc_visual_draw_emitted_preview(doc,
-                                       &preview,
-                                       z0_x,
-                                       stock_w,
-                                       stock_top,
-                                       stock_h,
-                                       96u);
-    }
-    for (i = 0; i < contour_count; i++) {
-        char label[8];
-        int lx = nc_visual_preview_z(&preview, z0_x, stock_w, contour_z[i]);
-        int ly = nc_visual_preview_x(&preview, stock_top, stock_h, contour_x[i]);
-        bool selected = doc && contour_line[i] == doc->cursor_line;
-
-        snprintf(label, sizeof(label), "C%u", (unsigned)(i + 1u));
-        nc_visual_preview_label(lx + 4, ly - 10, label, selected);
-    }
-    if (have_tool) {
+    t3 = mcu_micros();
+    nc_visual_draw_emitted_preview(doc,
+                                   &preview,
+                                   z0_x,
+                                   stock_w,
+                                   stock_top,
+                                   stock_h,
+                                   96u);
+    t5 = mcu_micros();
+    if (have_tool && g_nc_visual_mode != NC_MODE_SIM) {
         nc_visual_draw_live_tool(&preview, runtime, z0_x, stock_w, stock_top, stock_h, &tool);
         nc_visual_draw_preview_tool_panel(x, y, w, h, &tool);
     }
+    g_nc_visual_frame_preview_stock_us += t1 - t0;
+    g_nc_visual_frame_preview_geom_us += (t2 - t1) + (t5 - t3);
+    g_nc_visual_frame_preview_tool_us += (t3 - t2) + (mcu_micros() - t5);
 }
 
 static void nc_visual_footer_text(char *out, size_t out_sz)
@@ -1484,29 +2475,32 @@ static void nc_visual_run_arm(size_t line, const char *label)
 
 static void nc_visual_run_step(void)
 {
-    if (!nc_run_start_stream(&g_nc_visual_doc, g_nc_visual_doc.cursor_line)) {
-        strncpy(g_nc_visual_status, "RUN needs a program", sizeof(g_nc_visual_status) - 1);
+    size_t line = g_nc_visual_doc.cursor_line;
+
+    if (!nc_run_send_document_line(&g_nc_visual_doc, line)) {
+        strncpy(g_nc_visual_status, "RUN line skipped", sizeof(g_nc_visual_status) - 1);
         return;
     }
     g_nc_visual_doc.cursor_line = nc_run_line();
     g_nc_visual_doc.selected_word = -1;
     snprintf(g_nc_visual_status,
              sizeof(g_nc_visual_status),
-             "RUN stream from %lu",
-             (unsigned long)(g_nc_visual_doc.cursor_line + 1u));
+             "RUN sent line %lu",
+             (unsigned long)(line + 1u));
 }
 
 static bool nc_visual_is_code_view(void)
 {
     return g_nc_visual_mode == NC_MODE_PROGRAM ||
-           g_nc_visual_mode == NC_MODE_SIM ||
            g_nc_visual_mode == NC_MODE_MDI ||
            g_nc_visual_mode == NC_MODE_RUN;
 }
 
 static bool nc_visual_uses_file(void)
 {
-    return nc_visual_is_code_view() || g_nc_visual_mode == NC_MODE_TOOLS;
+    return nc_visual_is_code_view() ||
+           g_nc_visual_mode == NC_MODE_SIM ||
+           g_nc_visual_mode == NC_MODE_TOOLS;
 }
 
 static bool nc_visual_can_edit_code(void)
@@ -1565,14 +2559,17 @@ static void nc_visual_set_code_line(size_t line)
 
 static size_t nc_visual_code_line(void)
 {
-    return g_nc_visual_mode == NC_MODE_RUN ? nc_run_line() : g_nc_visual_doc.cursor_line;
+    size_t line = g_nc_visual_mode == NC_MODE_RUN ? nc_run_line() : g_nc_visual_doc.cursor_line;
+
+    return g_nc_visual_doc.line_count && line >= g_nc_visual_doc.line_count ? 0 : line;
 }
 
 static void nc_visual_move_code_line(int delta)
 {
     size_t line = nc_visual_code_line();
 
-    if (!nc_visual_is_code_view() || g_nc_visual_doc.line_count == 0) {
+    if ((!nc_visual_is_code_view() && g_nc_visual_mode != NC_MODE_SIM) ||
+        g_nc_visual_doc.line_count == 0) {
         strncpy(g_nc_visual_status, "No code lines", sizeof(g_nc_visual_status) - 1);
         return;
     }
@@ -1590,6 +2587,46 @@ static void nc_visual_move_code_line(int delta)
              (unsigned long)(line + 1));
 }
 
+static nc_result_t nc_visual_insert_tool_ref(void)
+{
+    int tool_no = 1;
+    char line[16];
+
+    (void)nc_tool_number_for_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line + 1u, &tool_no);
+    if (tool_no <= 0) {
+        tool_no = 1;
+    }
+    snprintf(line, sizeof(line), "T%d", tool_no);
+    return nc_insert_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line + 1u, line);
+}
+
+static void nc_visual_open_file_view(const char *root, bool seed_samples)
+{
+    int made = seed_samples ? nc_files_seed_samples() : 0;
+
+    nc_files_set_active(true);
+    g_nc_visual_new_file_active = false;
+    if (nc_files_refresh(root)) {
+        snprintf(g_nc_visual_status,
+                 sizeof(g_nc_visual_status),
+                 made ? "Samples loaded: %s" : "Files: %s",
+                 nc_files_cwd());
+    } else {
+        strncpy(g_nc_visual_status, "File list unavailable", sizeof(g_nc_visual_status) - 1);
+    }
+}
+
+static void nc_visual_insert_preset_action(nc_preset_t preset,
+                                           const char *ok,
+                                           const char *fail)
+{
+    if (nc_insert_preset(&g_nc_visual_doc, preset) == NC_OK) {
+        strncpy(g_nc_visual_status, ok, sizeof(g_nc_visual_status) - 1);
+    } else {
+        strncpy(g_nc_visual_status, fail, sizeof(g_nc_visual_status) - 1);
+    }
+}
+
 static bool nc_visual_handle_selected_word_edit(nc_visual_key_t key)
 {
     char key_char = nc_visual_key_char(key);
@@ -1600,11 +2637,14 @@ static bool nc_visual_handle_selected_word_edit(nc_visual_key_t key)
         return false;
     }
 
-    return nc_text_edit_handle_key(&g_nc_visual_doc,
-                                   &g_nc_visual_edit,
-                                   key_char,
-                                   g_nc_visual_status,
-                                   sizeof(g_nc_visual_status));
+    if (nc_text_edit_handle_key(&g_nc_visual_doc,
+                                &g_nc_visual_edit,
+                                key_char,
+                                g_nc_visual_status,
+                                sizeof(g_nc_visual_status))) {
+        return true;
+    }
+    return false;
 }
 
 static void nc_visual_dispatch_footer_action(uint8_t action)
@@ -1612,14 +2652,11 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
     g_nc_visual_selected_action = action;
 
     switch (action) {
+    case NC_FOOTER_ACTION_FILE:
+        nc_visual_open_file_view(NC_FILES_DIR, true);
+        break;
     case NC_FOOTER_ACTION_FILES:
-        nc_files_set_active(true);
-        g_nc_visual_new_file_active = false;
-        if (nc_files_refresh(NULL)) {
-            snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Files: %s", nc_files_cwd());
-        } else {
-            strncpy(g_nc_visual_status, "File list unavailable", sizeof(g_nc_visual_status) - 1);
-        }
+        nc_visual_open_file_view(NULL, false);
         break;
     case NC_FOOTER_ACTION_OPEN:
         if (nc_files_active()) {
@@ -1664,56 +2701,39 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
         }
         break;
     case NC_FOOTER_ACTION_PRESET_OD:
-        if (nc_insert_preset(&g_nc_visual_doc, NC_PRESET_OD) == NC_OK) {
-            strncpy(g_nc_visual_status, "Inserted OD preset", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "OD preset failed", sizeof(g_nc_visual_status) - 1);
-        }
+        nc_visual_insert_preset_action(NC_PRESET_OD, "Inserted OD preset", "OD preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_ID:
-        if (nc_insert_preset(&g_nc_visual_doc, NC_PRESET_ID) == NC_OK) {
-            strncpy(g_nc_visual_status, "Inserted ID preset", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "ID preset failed", sizeof(g_nc_visual_status) - 1);
-        }
+        nc_visual_insert_preset_action(NC_PRESET_ID, "Inserted ID preset", "ID preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_FACE:
-        if (nc_insert_preset(&g_nc_visual_doc, NC_PRESET_FACE) == NC_OK) {
-            strncpy(g_nc_visual_status, "Inserted FACE preset", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "FACE preset failed", sizeof(g_nc_visual_status) - 1);
-        }
+        nc_visual_insert_preset_action(NC_PRESET_FACE, "Inserted FACE preset", "FACE preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_LINE:
-        if (nc_insert_preset(&g_nc_visual_doc, NC_PRESET_LINE) == NC_OK) {
-            strncpy(g_nc_visual_status, "Inserted line preset", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "Line preset failed", sizeof(g_nc_visual_status) - 1);
-        }
+        nc_visual_insert_preset_action(NC_PRESET_LINE, "Inserted line preset", "Line preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_ARC:
-        if (nc_insert_preset(&g_nc_visual_doc, NC_PRESET_ARC) == NC_OK) {
-            strncpy(g_nc_visual_status, "Inserted arc preset", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "Arc preset failed", sizeof(g_nc_visual_status) - 1);
-        }
+        nc_visual_insert_preset_action(NC_PRESET_ARC, "Inserted arc preset", "Arc preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_SETUP:
-        if (nc_insert_preset(&g_nc_visual_doc, NC_PRESET_SETUP) == NC_OK) {
-            strncpy(g_nc_visual_status, "Inserted setup preset", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "Setup preset failed", sizeof(g_nc_visual_status) - 1);
-        }
+        nc_visual_insert_preset_action(NC_PRESET_SETUP, "Inserted setup preset", "Setup preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_END:
-        if (nc_insert_preset(&g_nc_visual_doc, NC_PRESET_END) == NC_OK) {
-            strncpy(g_nc_visual_status, "Inserted G80", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "G80 preset failed", sizeof(g_nc_visual_status) - 1);
-        }
+        nc_visual_insert_preset_action(NC_PRESET_END, "Inserted G80", "G80 preset failed");
         break;
     case NC_FOOTER_ACTION_TOOL:
-        if (g_nc_visual_mode != NC_MODE_TOOLS) {
+        if (g_nc_visual_mode == NC_MODE_PROGRAM || g_nc_visual_mode == NC_MODE_MDI) {
+            if (nc_visual_insert_tool_ref() == NC_OK) {
+                nc_cursor_down(&g_nc_visual_doc);
+                g_nc_visual_doc.selected_word = -1;
+                snprintf(g_nc_visual_status,
+                         sizeof(g_nc_visual_status),
+                         "Inserted tool ref line %lu",
+                         (unsigned long)(g_nc_visual_doc.cursor_line + 1u));
+            } else {
+                strncpy(g_nc_visual_status, "Tool ref insert failed", sizeof(g_nc_visual_status) - 1);
+            }
+        } else if (g_nc_visual_mode != NC_MODE_TOOLS) {
             nc_visual_set_mode(NC_MODE_TOOLS);
             nc_files_set_active(false);
             nc_text_edit_clear(&g_nc_visual_edit);
@@ -1826,6 +2846,8 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
         } else if (g_nc_visual_mode == NC_MODE_SIM) {
             g_nc_visual_sim_stock = true;
             g_nc_visual_sim_path = true;
+            g_nc_visual_sim_rough = true;
+            g_nc_visual_show_dims = true;
             strncpy(g_nc_visual_status, "SIM view reset", sizeof(g_nc_visual_status) - 1);
         } else {
             strncpy(g_nc_visual_status, "Reset is stubbed", sizeof(g_nc_visual_status) - 1);
@@ -1884,6 +2906,18 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
                 g_nc_visual_sim_path ? "SIM path on" : "SIM path hidden",
                 sizeof(g_nc_visual_status) - 1);
         break;
+    case NC_FOOTER_ACTION_ROUGH:
+        g_nc_visual_sim_rough = !g_nc_visual_sim_rough;
+        strncpy(g_nc_visual_status,
+                g_nc_visual_sim_rough ? "SIM rough on" : "SIM rough hidden",
+                sizeof(g_nc_visual_status) - 1);
+        break;
+    case NC_FOOTER_ACTION_DIMS:
+        g_nc_visual_show_dims = !g_nc_visual_show_dims;
+        strncpy(g_nc_visual_status,
+                g_nc_visual_show_dims ? "Dimensions on" : "Dimensions hidden",
+                sizeof(g_nc_visual_status) - 1);
+        break;
     case NC_FOOTER_ACTION_SINGLE:
         if (g_nc_visual_mode == NC_MODE_MDI) {
             nc_visual_dispatch_footer_action(NC_FOOTER_ACTION_SEND);
@@ -1909,13 +2943,12 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
         break;
     case NC_FOOTER_ACTION_SEND:
         if (g_nc_visual_mode == NC_MODE_MDI) {
-            char emit[64];
-            nc_emit_result_t er = nc_emit_source_line(&g_nc_visual_doc,
-                                                      g_nc_visual_doc.cursor_line,
-                                                      emit,
-                                                      sizeof(emit));
-            if (er == NC_EMIT_LINE) {
-                snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "MDI send: %.46s", emit);
+            size_t line = g_nc_visual_doc.cursor_line;
+            if (nc_run_send_document_line(&g_nc_visual_doc, line)) {
+                snprintf(g_nc_visual_status,
+                         sizeof(g_nc_visual_status),
+                         "MDI sent line %lu",
+                         (unsigned long)(line + 1u));
             } else {
                 strncpy(g_nc_visual_status, "MDI line skipped", sizeof(g_nc_visual_status) - 1);
             }
@@ -2072,15 +3105,15 @@ static void nc_visual_draw_tool_screen(void)
     nc_visual_draw_text_clip(674, 68, buf, 12, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
 
     nc_visual_draw_text_clip(72, 96, "T", 4, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(116, 96, "R", 5, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(170, 96, "O", 5, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(224, 96, "FEED", 5, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(282, 96, "FF", 5, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(338, 96, "DOC", 5, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(394, 96, "FDOC", 5, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(454, 96, "RPM", 5, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(516, 96, "XOFF", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(584, 96, "ZOFF", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_visual_draw_text_clip(120, 96, "RADIUS", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_visual_draw_text_clip(190, 96, "ORIENT", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_visual_draw_text_clip(260, 96, "FEED", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_visual_draw_text_clip(326, 96, "FF", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_visual_draw_text_clip(392, 96, "DOC", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_visual_draw_text_clip(458, 96, "FDOC", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_visual_draw_text_clip(524, 96, "RPM", 7, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_visual_draw_text_clip(604, 96, "XOFF", 7, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_visual_draw_text_clip(684, 96, "ZOFF", 7, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
     lvds_draw_line(28, 118, LVDS_HSTX_WIDTH - 28, 118, NC_VISUAL_DIM);
 
     if (tool_count == 0) {
@@ -2106,17 +3139,17 @@ static void nc_visual_draw_tool_screen(void)
         if (selected) {
             lvds_draw_fill_rect(24, y - 4, LVDS_HSTX_WIDTH - 48, 24, bg);
         }
-        nc_visual_draw_tool_glyph(46, y + 8, 18, &tool, bg, selected);
+        nc_visual_draw_tool_glyph_centered(30, y - 3, 32, 18, &tool, bg, selected);
         nc_visual_draw_tool_cell(line, 'T', 72, y, 4, fg, bg, tool_line == active_line && active_letter == 'T');
-        nc_visual_draw_tool_cell(line, 'R', 116, y, 5, fg, bg, tool_line == active_line && active_letter == 'R');
-        nc_visual_draw_tool_cell(line, 'O', 170, y, 5, fg, bg, tool_line == active_line && active_letter == 'O');
-        nc_visual_draw_tool_cell(line, 'F', 224, y, 5, fg, bg, tool_line == active_line && active_letter == 'F');
-        nc_visual_draw_tool_cell(line, 'Q', 282, y, 5, fg, bg, tool_line == active_line && active_letter == 'Q');
-        nc_visual_draw_tool_cell(line, 'D', 338, y, 5, fg, bg, tool_line == active_line && active_letter == 'D');
-        nc_visual_draw_tool_cell(line, 'E', 394, y, 5, fg, bg, tool_line == active_line && active_letter == 'E');
-        nc_visual_draw_tool_cell(line, 'S', 454, y, 5, fg, bg, tool_line == active_line && active_letter == 'S');
-        nc_visual_draw_tool_cell(line, 'X', 516, y, 6, fg, bg, tool_line == active_line && active_letter == 'X');
-        nc_visual_draw_tool_cell(line, 'Z', 584, y, 6, fg, bg, tool_line == active_line && active_letter == 'Z');
+        nc_visual_draw_tool_cell(line, 'R', 120, y, 6, fg, bg, tool_line == active_line && active_letter == 'R');
+        nc_visual_draw_tool_cell(line, 'O', 190, y, 6, fg, bg, tool_line == active_line && active_letter == 'O');
+        nc_visual_draw_tool_cell(line, 'F', 260, y, 6, fg, bg, tool_line == active_line && active_letter == 'F');
+        nc_visual_draw_tool_cell(line, 'Q', 326, y, 6, fg, bg, tool_line == active_line && active_letter == 'Q');
+        nc_visual_draw_tool_cell(line, 'D', 392, y, 6, fg, bg, tool_line == active_line && active_letter == 'D');
+        nc_visual_draw_tool_cell(line, 'E', 458, y, 6, fg, bg, tool_line == active_line && active_letter == 'E');
+        nc_visual_draw_tool_cell(line, 'S', 524, y, 7, fg, bg, tool_line == active_line && active_letter == 'S');
+        nc_visual_draw_tool_cell(line, 'X', 604, y, 7, fg, bg, tool_line == active_line && active_letter == 'X');
+        nc_visual_draw_tool_cell(line, 'Z', 684, y, 7, fg, bg, tool_line == active_line && active_letter == 'Z');
     }
 
     lvds_draw_line(18, detail_y, LVDS_HSTX_WIDTH - 18, detail_y, NC_VISUAL_DIM);
@@ -2135,8 +3168,8 @@ static void nc_visual_draw_tool_screen(void)
         snprintf(buf, sizeof(buf), "Line %d: %.48s", selected_line + 1, line);
         nc_visual_draw_text_clip(170, detail_y + 18, buf, 70, NC_VISUAL_TEXT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
         nc_visual_draw_tool_param(line, 'T', "T", 170, detail_y + 44, 8, selected_line == active_line && active_letter == 'T');
-        nc_visual_draw_tool_param(line, 'O', "ORIENT", 170, detail_y + 64, 8, selected_line == active_line && active_letter == 'O');
-        nc_visual_draw_tool_param(line, 'R', "RADIUS", 170, detail_y + 84, 8, selected_line == active_line && active_letter == 'R');
+        nc_visual_draw_tool_param(line, 'O', "Orient", 170, detail_y + 64, 8, selected_line == active_line && active_letter == 'O');
+        nc_visual_draw_tool_param(line, 'R', "Radius", 170, detail_y + 84, 8, selected_line == active_line && active_letter == 'R');
         nc_visual_draw_tool_param(line, 'D', "DOC", 170, detail_y + 104, 8, selected_line == active_line && active_letter == 'D');
         nc_visual_draw_tool_param(line, 'E', "FDOC", 400, detail_y + 44, 8, selected_line == active_line && active_letter == 'E');
         nc_visual_draw_tool_param(line, 'F', "FEED", 400, detail_y + 64, 8, selected_line == active_line && active_letter == 'F');
@@ -2166,6 +3199,8 @@ static const char *nc_visual_exec_state_text(uint8_t state)
 static void nc_visual_draw_header(const nc_snapshot_t *s)
 {
     char buf[96];
+    char fps[72];
+    char preview[56];
     const nc_runtime_state_t *runtime = s ? &s->runtime : 0;
     const char *state_text = nc_visual_exec_state_text(runtime ? runtime->exec_state : EXEC_IDLE);
 
@@ -2179,6 +3214,37 @@ static void nc_visual_draw_header(const nc_snapshot_t *s)
              (double)(runtime ? runtime->feed : 0.0f),
              runtime ? runtime->spindle : 0);
     lvds_draw_text(12, 10, buf, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+    snprintf(fps,
+             sizeof(fps),
+             "%u S%u H%u V%u R%u F%u P%u T%u",
+             (unsigned)g_nc_visual_fps,
+             (unsigned)g_nc_visual_stat_snapshot_ms,
+             (unsigned)g_nc_visual_stat_header_ms,
+             (unsigned)g_nc_visual_stat_preview_ms,
+             (unsigned)g_nc_visual_stat_body_ms,
+             (unsigned)g_nc_visual_stat_footer_ms,
+             (unsigned)g_nc_visual_stat_present_ms,
+             (unsigned)g_nc_visual_stat_total_ms);
+    lvds_draw_text(LVDS_HSTX_WIDTH - lvds_draw_text_width(fps, LVDS_FONT_NORMAL) - 12,
+                   13,
+                   fps,
+                   NC_VISUAL_DIM,
+                   NC_VISUAL_HEADER,
+                   LVDS_FONT_NORMAL);
+    snprintf(preview,
+             sizeof(preview),
+             "C%u B%u S%u G%u L%u",
+             (unsigned)g_nc_visual_stat_preview_collect_ms,
+             (unsigned)g_nc_visual_stat_preview_clear_ms,
+             (unsigned)g_nc_visual_stat_preview_stock_ms,
+             (unsigned)g_nc_visual_stat_preview_geom_ms,
+             (unsigned)g_nc_visual_stat_preview_tool_ms);
+    lvds_draw_text(LVDS_HSTX_WIDTH - lvds_draw_text_width(preview, LVDS_FONT_SMALL) - 12,
+                   30,
+                   preview,
+                   NC_VISUAL_DIM,
+                   NC_VISUAL_HEADER,
+                   LVDS_FONT_SMALL);
 }
 
 static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
@@ -2187,19 +3253,30 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
     int line_cols = (NC_RIGHT_PANE_W - NC_LINE_TEXT_X_PAD) / NC_VISUAL_CHAR_W;
     char buf[80];
     char footer_text[160];
+    bool sim_full = !nc_files_active() && g_nc_visual_mode == NC_MODE_SIM;
     bool split = nc_files_active() || nc_visual_is_code_view();
+    uint32_t t0;
+    uint32_t t1;
+    uint32_t t2;
+    uint32_t t3;
+    uint32_t t4;
 
     lvds_draw_fill_rect(0, 0, LVDS_HSTX_WIDTH, LVDS_HSTX_HEIGHT, NC_VISUAL_BG);
+    t0 = mcu_micros();
     nc_visual_draw_header(s);
+    t1 = mcu_micros();
 
-    if (split) {
-        nc_visual_draw_thin_preview(&g_nc_visual_doc, &s->runtime, NC_LEFT_PANE_X, 58, NC_LEFT_PANE_W, 474);
+    if (sim_full) {
+        nc_visual_draw_thin_preview(&g_nc_visual_doc, &s->runtime, 20, 58, LVDS_HSTX_WIDTH - 40, 474, true);
+    } else if (split) {
+        nc_visual_draw_thin_preview(&g_nc_visual_doc, &s->runtime, NC_LEFT_PANE_X, 58, NC_LEFT_PANE_W, 474, true);
         lvds_draw_line(NC_SPLIT_X, 58, NC_SPLIT_X, 532, NC_VISUAL_DIM);
         lvds_draw_fill_rect(NC_RIGHT_PANE_X, 58, NC_RIGHT_PANE_W, 474, NC_VISUAL_BG);
     } else {
         lvds_draw_fill_rect(20, 62, LVDS_HSTX_WIDTH - 40, 378, NC_VISUAL_PANEL);
         lvds_draw_rect(20, 62, LVDS_HSTX_WIDTH - 40, 378, NC_VISUAL_DIM);
     }
+    t2 = mcu_micros();
 
     if (nc_files_active()) {
         int count = nc_files_count();
@@ -2254,6 +3331,17 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
                                      NC_VISUAL_BG,
                                      LVDS_FONT_NORMAL);
         }
+    } else if (sim_full) {
+        const int pane_div_x = LVDS_HSTX_WIDTH / 2;
+        const int pane_x = pane_div_x + 18;
+        const int pane_w = LVDS_HSTX_WIDTH - pane_x - 22;
+        const int pane_y = 64;
+        lvds_draw_fill_rect(pane_x - 8, pane_y - 4, pane_w + 16, 74, NC_VISUAL_PREVIEW_BG);
+        lvds_draw_line(pane_div_x, pane_y, pane_div_x, pane_y + 66, NC_VISUAL_DIM);
+        nc_visual_draw_sim_code_pane(&g_nc_visual_doc,
+                                     pane_x,
+                                     pane_y,
+                                     pane_w);
     } else if (g_nc_visual_mode == NC_MODE_TOOLS) {
         nc_visual_draw_tool_screen();
     } else if (nc_visual_is_code_view()) {
@@ -2355,10 +3443,34 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
         lvds_draw_fill_rect(20, 526, LVDS_HSTX_WIDTH - 40, 18, NC_VISUAL_BG);
         nc_visual_draw_text_clip(34, 526, buf, 70, NC_VISUAL_ACCENT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
     }
+    t3 = mcu_micros();
 
     nc_visual_footer_text(footer_text, sizeof(footer_text));
     nc_visual_draw_footer_status(g_nc_visual_status[0] ? g_nc_visual_status : "NC bring-up",
                                  footer_text);
+    t4 = mcu_micros();
+    g_nc_visual_frame_header_us += t1 - t0;
+    g_nc_visual_frame_preview_us += t2 - t1;
+    g_nc_visual_frame_body_us += t3 - t2;
+    g_nc_visual_frame_footer_us += t4 - t3;
+}
+
+static void nc_visual_draw_live_snapshot(const nc_snapshot_t *s)
+{
+    uint32_t t0;
+    uint32_t t1;
+    uint32_t t2;
+
+    if (!s) {
+        return;
+    }
+    t0 = mcu_micros();
+    nc_visual_draw_header(s);
+    t1 = mcu_micros();
+    nc_visual_draw_thin_preview(&g_nc_visual_doc, &s->runtime, NC_LEFT_PANE_X, 58, NC_LEFT_PANE_W, 474, false);
+    t2 = mcu_micros();
+    g_nc_visual_frame_header_us += t1 - t0;
+    g_nc_visual_frame_preview_us += t2 - t1;
 }
 
 void nc_visual_init(void)
@@ -2415,18 +3527,18 @@ void nc_visual_handle_key(nc_visual_key_t key)
         return;
     }
 
+    if (nc_visual_handle_selected_word_edit(key)) {
+        g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
+        g_nc_visual_dirty = true;
+        return;
+    }
+
     if ((key == NC_VISUAL_KEY_PREV || key == NC_VISUAL_KEY_NEXT) &&
         (nc_files_active() ||
          nc_visual_is_code_view() ||
          g_nc_visual_mode == NC_MODE_TOOLS)) {
         nc_text_edit_clear(&g_nc_visual_edit);
         nc_visual_dispatch_footer_action(key == NC_VISUAL_KEY_PREV ? NC_FOOTER_ACTION_BACK : NC_FOOTER_ACTION_STEP);
-        g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
-        g_nc_visual_dirty = true;
-        return;
-    }
-
-    if (nc_visual_handle_selected_word_edit(key)) {
         g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
         g_nc_visual_dirty = true;
         return;
@@ -2491,9 +3603,26 @@ bool nc_visual_dirty(void)
     return g_nc_visual_dirty;
 }
 
+bool nc_visual_periodic_needed(void)
+{
+    return g_nc_visual_mode == NC_MODE_MANUAL ||
+           (g_nc_visual_mode == NC_MODE_RUN &&
+            (nc_run_active() ||
+             nc_run_hold() ||
+             cnc_get_exec_state(EXEC_RUN | EXEC_HOLD) ||
+             g_nc_visual_last_runtime_busy));
+}
+
 void nc_visual_draw(void)
 {
     nc_snapshot_t snapshot;
+    uint32_t t0;
+    uint32_t t1;
+    uint32_t t2;
+    uint32_t t3;
+    bool full_draw;
+    bool runtime_busy;
+    size_t run_line;
 
     if (g_nc_visual_in_draw) {
         return;
@@ -2501,10 +3630,100 @@ void nc_visual_draw(void)
 
     g_nc_visual_in_draw = true;
 
+    g_nc_visual_frame_header_us = 0;
+    g_nc_visual_frame_preview_us = 0;
+    g_nc_visual_frame_body_us = 0;
+    g_nc_visual_frame_footer_us = 0;
+    g_nc_visual_frame_preview_collect_us = 0;
+    g_nc_visual_frame_preview_clear_us = 0;
+    g_nc_visual_frame_preview_stock_us = 0;
+    g_nc_visual_frame_preview_geom_us = 0;
+    g_nc_visual_frame_preview_tool_us = 0;
+    t0 = mcu_micros();
     nc_state_snapshot(&g_nc_visual_doc, &snapshot);
-    nc_visual_draw_snapshot(&snapshot);
+    t1 = mcu_micros();
+    run_line = nc_run_line();
+    runtime_busy = nc_visual_runtime_busy(&snapshot.runtime);
+    full_draw = g_nc_visual_dirty ||
+                g_nc_visual_mode != NC_MODE_RUN ||
+                (g_nc_visual_last_runtime_busy && !runtime_busy) ||
+                (!runtime_busy && !nc_run_active() && !nc_run_hold()) ||
+                run_line != g_nc_visual_last_draw_run_line;
+    if (full_draw) {
+        g_nc_live_tool_rect_valid = false;
+        g_nc_live_preview_cache_valid = false;
+        nc_visual_draw_snapshot(&snapshot);
+    } else {
+        nc_visual_draw_live_snapshot(&snapshot);
+    }
+    t2 = mcu_micros();
     lvds_hstx_present();
+    t3 = mcu_micros();
+    nc_visual_fps_tick(t1 - t0, t2 - t1, t3 - t2, t3 - t0);
 
+    g_nc_visual_last_draw_run_line = g_nc_visual_mode == NC_MODE_RUN ? run_line : (size_t)-1;
+    g_nc_visual_last_runtime_busy = g_nc_visual_mode == NC_MODE_RUN && runtime_busy;
     g_nc_visual_dirty = false;
     g_nc_visual_in_draw = false;
+}
+
+static void nc_visual_fps_tick(uint32_t snapshot_us,
+                               uint32_t draw_us,
+                               uint32_t present_us,
+                               uint32_t total_us)
+{
+    uint32_t now = mcu_millis();
+    uint32_t elapsed;
+
+    if (!g_nc_visual_fps_last_ms) {
+        g_nc_visual_fps_last_ms = now;
+    }
+    g_nc_visual_fps_frames++;
+    g_nc_visual_acc_snapshot_us += snapshot_us;
+    g_nc_visual_acc_draw_us += draw_us;
+    g_nc_visual_acc_present_us += present_us;
+    g_nc_visual_acc_total_us += total_us;
+    g_nc_visual_acc_header_us += g_nc_visual_frame_header_us;
+    g_nc_visual_acc_preview_us += g_nc_visual_frame_preview_us;
+    g_nc_visual_acc_body_us += g_nc_visual_frame_body_us;
+    g_nc_visual_acc_footer_us += g_nc_visual_frame_footer_us;
+    g_nc_visual_acc_preview_collect_us += g_nc_visual_frame_preview_collect_us;
+    g_nc_visual_acc_preview_clear_us += g_nc_visual_frame_preview_clear_us;
+    g_nc_visual_acc_preview_stock_us += g_nc_visual_frame_preview_stock_us;
+    g_nc_visual_acc_preview_geom_us += g_nc_visual_frame_preview_geom_us;
+    g_nc_visual_acc_preview_tool_us += g_nc_visual_frame_preview_tool_us;
+    elapsed = now - g_nc_visual_fps_last_ms;
+    if (elapsed >= 1000u) {
+        g_nc_visual_fps = (uint16_t)(((uint32_t)g_nc_visual_fps_frames * 1000u) / elapsed);
+        if (g_nc_visual_fps_frames) {
+            g_nc_visual_stat_snapshot_ms = (uint16_t)((g_nc_visual_acc_snapshot_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_draw_ms = (uint16_t)((g_nc_visual_acc_draw_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_present_ms = (uint16_t)((g_nc_visual_acc_present_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_total_ms = (uint16_t)((g_nc_visual_acc_total_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_header_ms = (uint16_t)((g_nc_visual_acc_header_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_preview_ms = (uint16_t)((g_nc_visual_acc_preview_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_body_ms = (uint16_t)((g_nc_visual_acc_body_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_footer_ms = (uint16_t)((g_nc_visual_acc_footer_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_preview_collect_ms = (uint16_t)((g_nc_visual_acc_preview_collect_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_preview_clear_ms = (uint16_t)((g_nc_visual_acc_preview_clear_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_preview_stock_ms = (uint16_t)((g_nc_visual_acc_preview_stock_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_preview_geom_ms = (uint16_t)((g_nc_visual_acc_preview_geom_us / g_nc_visual_fps_frames + 500u) / 1000u);
+            g_nc_visual_stat_preview_tool_ms = (uint16_t)((g_nc_visual_acc_preview_tool_us / g_nc_visual_fps_frames + 500u) / 1000u);
+        }
+        g_nc_visual_fps_frames = 0;
+        g_nc_visual_acc_snapshot_us = 0;
+        g_nc_visual_acc_draw_us = 0;
+        g_nc_visual_acc_present_us = 0;
+        g_nc_visual_acc_total_us = 0;
+        g_nc_visual_acc_header_us = 0;
+        g_nc_visual_acc_preview_us = 0;
+        g_nc_visual_acc_body_us = 0;
+        g_nc_visual_acc_footer_us = 0;
+        g_nc_visual_acc_preview_collect_us = 0;
+        g_nc_visual_acc_preview_clear_us = 0;
+        g_nc_visual_acc_preview_stock_us = 0;
+        g_nc_visual_acc_preview_geom_us = 0;
+        g_nc_visual_acc_preview_tool_us = 0;
+        g_nc_visual_fps_last_ms = now;
+    }
 }

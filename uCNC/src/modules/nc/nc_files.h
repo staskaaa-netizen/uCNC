@@ -39,6 +39,7 @@ bool nc_files_enter_selected(void);
 bool nc_files_go_parent(void);
 bool nc_files_delete_selected(void);
 bool nc_files_create_named(const char *name, const char *ext, char *out_path, int out_sz);
+int nc_files_seed_samples(void);
 bool nc_files_ready(void);
 
 #ifdef __cplusplus

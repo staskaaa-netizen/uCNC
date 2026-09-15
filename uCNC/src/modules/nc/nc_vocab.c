@@ -87,8 +87,8 @@ const char *nc_vocab_label_for_word(const char *line, const nc_word_t *word)
     if (gcode < 0 && nc_tool_line_is_tool(line)) {
         switch (letter) {
         case 'T': return "Tool number";
-        case 'R': return "Nose radius";
-        case 'O': return "Tool orientation";
+        case 'R': return "Radius";
+        case 'O': return "Orient";
         case 'F': return "Rough feed";
         case 'Q': return "Finish feed";
         case 'D': return "Rough DOC";

@@ -12,50 +12,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static bool line_get_field_value(const char *line, const char *key, char *out, int out_sz)
-{
-    return lc_code_get_field_text(line, key, out, (size_t)out_sz);
-}
-
-static const char *find_last_setup_line_before(const program_t *p, int after_idx)
-{
-    int i;
-    for (i = after_idx; i >= 0; --i) {
-        if (lc_code_command_is(p->lines[i], "SETUP"))
-            return p->lines[i];
-    }
-    return NULL;
-}
-
-static void resolve_setup_refs_in_line(char *line, const program_t *p, int after_idx)
-{
-    const char *setup;
-    int s, e;
-    int pos = 0;
-    char key[64];
-    char value[64];
-
-    setup = find_last_setup_line_before(p, after_idx);
-    if (!setup) return;
-
-    while (find_field(line, pos, &s, &e)) {
-        int len = e - s;
-        if (len > 8 && strncmp(line + s, "(SETUP.", 7) == 0) {
-            int klen = len - 8;
-            if (klen > 0 && klen < (int)sizeof(key)) {
-                memcpy(key, line + s + 7, klen);
-                key[klen] = 0;
-                if (line_get_field_value(setup, key, value, sizeof(value))) {
-                    set_field(line, s, e, value);
-                    pos = 0;
-                    continue;
-                }
-            }
-        }
-        pos = e;
-    }
-}
-
 void leancam_ui_init(leancam_ui_t *ui)
 {
     memset(ui, 0, sizeof(*ui));
@@ -79,7 +35,6 @@ bool leancam_ui_begin_template(leancam_ui_t *ui, const char *tmpl)
     ui->draft_insert_after = ui->cur_line;
     ui->draft_replace_index = -1;
 
-    resolve_setup_refs_in_line(ui->draft_line, &ui->prog, ui->draft_insert_after);
     return true;
 }
 
@@ -161,8 +116,6 @@ static void lc_resolve_line_for_save(const char *in, char *out, size_t out_sz)
 
             if (strncmp(expr, "THIS.", 5) == 0) {
                 ok = lc_line_get_float_local(in, expr + 5, &v);
-            } else if (strncmp(expr, "SETUP.", 6) == 0) {
-                ok = lc_line_get_float_local(in, expr + 6, &v);
             } else {
                 v = strtof(expr, NULL);
                 num_end = NULL;
@@ -181,7 +134,6 @@ static void lc_resolve_line_for_save(const char *in, char *out, size_t out_sz)
                 int n;
 
                 if (strncmp(expr, "THIS.", 5) == 0 ||
-                    strncmp(expr, "SETUP.", 6) == 0 ||
                     strncmp(expr, "CUT.", 4) == 0) {
                     if ((size_t)(w - out) + 2 >= out_sz) break;
                     *w++ = '{';
@@ -214,9 +166,11 @@ static bool lc_line_is_plain_command_storage(const char *line)
              line[1] >= '0' &&
              line[1] <= '9' &&
              (line[2] == 0 || line[2] == ' ' || (line[2] >= '0' && line[2] <= '9'))) ||
-            lc_code_command_is(line, "SETUP") ||
-            lc_code_command_is(line, "TOOL") ||
-            lc_code_command_is(line, "TOOLCALL") ||
+            lc_code_tool_line_is(line) ||
+            lc_code_command_is(line, "G970") ||
+            lc_code_command_is(line, "G971") ||
+            lc_code_command_is(line, "G972") ||
+            lc_code_command_is(line, "G973") ||
             lc_code_command_is(line, "PROCESSCALL"));
 }
 
@@ -330,9 +284,6 @@ void leancam_ui_delete_line(leancam_ui_t *ui)
 {
     if (ui->draft_active) return;
     if (ui->cur_line < 0 || ui->cur_line >= ui->prog.count) return;
-
-    if (ui->cur_line == 0 && lc_code_command_is(ui->prog.lines[0], "SETUP"))
-        return;
 
     prog_delete(&ui->prog, ui->cur_line);
     if (ui->prog.count == 0) ui->cur_line = -1;

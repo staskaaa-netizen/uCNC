@@ -29,6 +29,7 @@ bool nc_run_done(void);
 size_t nc_run_line(void);
 void nc_run_set_line(const nc_document_t *doc, size_t line);
 void nc_run_send_line(const char *line);
+bool nc_run_send_document_line(const nc_document_t *doc, size_t line);
 bool nc_run_start_stream(const nc_document_t *doc, size_t line);
 nc_run_step_result_t nc_run_step(const nc_document_t *doc,
                                  char *out,

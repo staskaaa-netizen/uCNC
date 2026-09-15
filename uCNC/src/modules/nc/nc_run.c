@@ -1,9 +1,11 @@
 #include "nc_run.h"
 
 #include "../../interface/grbl_stream.h"
+#include "../g7x/g7x.h"
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static bool g_nc_run_active;
 static bool g_nc_run_hold;
@@ -14,6 +16,7 @@ static size_t g_nc_run_stream_pos;
 static size_t g_nc_run_stream_len;
 static const nc_document_t *g_nc_run_stream_doc;
 static bool g_nc_run_stream_active;
+static size_t g_nc_run_stream_end_line;
 
 static bool nc_run_stream_load_line(void);
 
@@ -36,12 +39,62 @@ static uint8_t nc_run_stream_getc(void)
 
 static void nc_run_stream_clear(void)
 {
+    bool was_active = g_nc_run_stream_active;
+
     g_nc_run_stream_pos = 0;
     g_nc_run_stream_len = 0;
     g_nc_run_stream_line[0] = '\0';
     g_nc_run_stream_doc = NULL;
     g_nc_run_stream_active = false;
+    g_nc_run_stream_end_line = (size_t)-1;
+    if (was_active) {
+        g_nc_run_active = false;
+        g_nc_run_done = true;
+    }
     grbl_stream_change(NULL);
+}
+
+static bool nc_run_line_starts_gcode(const char *line, unsigned code)
+{
+    char *end;
+    unsigned long value;
+
+    if (!line) {
+        return false;
+    }
+    while (*line == ' ' || *line == '\t') {
+        line++;
+    }
+    if (toupper((unsigned char)*line++) != 'G') {
+        return false;
+    }
+    value = strtoul(line, &end, 10);
+    if (end == line || value != code) {
+        return false;
+    }
+    return *end == '\0' || *end == ' ' || *end == '\t';
+}
+
+static bool nc_run_line_is_g7x_header(const char *line)
+{
+    return nc_run_line_starts_gcode(line, 71u) ||
+           nc_run_line_starts_gcode(line, 72u);
+}
+
+static bool nc_run_find_g7x_end(const nc_document_t *doc, size_t line, size_t *end_line)
+{
+    size_t i;
+
+    if (!doc || !end_line || line >= doc->line_count) {
+        return false;
+    }
+    for (i = line + 1u; i < doc->line_count; i++) {
+        if (nc_run_line_starts_gcode(doc->lines[i].text, 80u)) {
+            *end_line = i;
+            return true;
+        }
+    }
+    return false;
 }
 
 static bool nc_run_line_sendable(const char *line)
@@ -111,7 +164,7 @@ bool nc_run_toggle_hold(void)
 
 bool nc_run_active(void)
 {
-    return g_nc_run_active;
+    return g_nc_run_active || g7x_parser_busy();
 }
 
 bool nc_run_hold(void)
@@ -161,6 +214,35 @@ void nc_run_send_line(const char *line)
                          nc_run_stream_clear);
 }
 
+bool nc_run_send_document_line(const nc_document_t *doc, size_t line)
+{
+    const char *text;
+    size_t end_line;
+
+    if (!doc || line >= doc->line_count) {
+        return false;
+    }
+    text = doc->lines[line].text;
+    if (!nc_run_line_sendable(text)) {
+        return false;
+    }
+
+    if (nc_run_line_is_g7x_header(text) &&
+        nc_run_find_g7x_end(doc, line, &end_line)) {
+        if (!nc_run_start_stream(doc, line)) {
+            return false;
+        }
+        g_nc_run_stream_end_line = end_line;
+        return true;
+    }
+
+    nc_run_send_line(text);
+    g_nc_run_line = line + 1u;
+    g_nc_run_done = true;
+    g_nc_run_active = false;
+    return true;
+}
+
 static bool nc_run_stream_load_line(void)
 {
     char emit[NC_MAX_LINE_LEN];
@@ -169,6 +251,11 @@ static bool nc_run_stream_load_line(void)
     int n;
 
     if (!g_nc_run_stream_active || !g_nc_run_stream_doc) {
+        return false;
+    }
+    if (g_nc_run_line > g_nc_run_stream_end_line) {
+        grbl_stream_printf("[MSG:NC STREAM DONE %d]\r\n", (int)NC_RUN_STEP_COMPLETE);
+        nc_run_stream_clear();
         return false;
     }
 
@@ -209,6 +296,7 @@ bool nc_run_start_stream(const nc_document_t *doc, size_t line)
     g_nc_run_stream_active = true;
     g_nc_run_stream_pos = 0;
     g_nc_run_stream_len = 0;
+    g_nc_run_stream_end_line = (size_t)-1;
     g_nc_run_stream_line[0] = '\0';
     grbl_stream_printf("[MSG:NC STREAM START %lu]\r\n", (unsigned long)(line + 1u));
     grbl_stream_readonly(nc_run_stream_getc,

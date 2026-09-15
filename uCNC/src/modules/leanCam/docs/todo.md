@@ -1,4 +1,1126 @@
 # LeanCam / µCNC — Refactor + Real G-code Roadmap
+## 2026-06-06 pivot: new NC module, LeanCam becomes reference code
+
+Status: started.
+
+Decision:
+
+* Stop refactoring the LeanCam private language/editor one piece at a time.
+* Add a new small `src/modules/nc/` module named **NC**.
+* Treat LeanCam as prototype/reference code while NC becomes the boring file
+  editor path.
+
+NC owns only:
+
+* `.nc`, `.ngc`, and `.gcode` file open/save/list helpers.
+* plain text line storage and line cursor movement.
+* temporary one-line word parsing for field stepping/editing.
+* small vocabulary labels for display/help.
+* a display snapshot that renderers can draw without parsing.
+
+NC must not own:
+
+* G71/G72 roughing generation.
+* contour ownership or reusable contour rules.
+* SETUP blocks, pipe rows, brace values, or `.lcam` migration.
+* hidden stock/tool/program models.
+* rendering internals, execution pacing, or uCNC stream buffering.
+
+Milestone 1:
+
+* Open `.nc`.
+* Display preserved text lines.
+* Move cursor line up/down.
+* Edit the current line as text.
+* Step through words in the current line.
+* Change one word value.
+* Save file.
+* Show a vocabulary label for the selected word.
+* Reject `.lcam` and pipe syntax.
+
+Temporary NC mode key/footer milestone:
+
+* `A` is only a temporary mode access key.
+* Pressing `A` cycles `MANUAL -> PROGRAM -> SIM -> MDI -> RUN -> MANUAL`.
+* Header must visibly update the mode name.
+* Footer labels must change per mode.
+* Footer implementation must stay as static tables with `mode + key -> action`.
+* Copy the proven LeanCam footer drawing style into NC-local code, but do not
+  call LeanCam visual/menu/schema functions and do not reuse LeanCam's menu tree.
+* Copy LeanCam keypad convention where possible: `B/C` navigate, `D`
+  accept/edit/open, `#` finish/save/run, `*` delete/back, number keys for fixed
+  actions. `A` remains the temporary NC mode key until direct mode keys exist.
+* PROGRAM, SIM, and RUN should use the old split view idea where useful:
+  preview/stock context on one side, NC text/file rows on the other.
+* Preview must stay thin: draw stock/setup/path hints from visible NC text only.
+  Do not regenerate G-code, build a persistent semantic model, or pull renderer
+  work into file/runtime logic.
+* File manager is allowed again where a mode needs a file, but only as a small
+  fixed NC file list with static footer actions. Do not revive the deep
+  LeanCam browser/menu architecture inside NC.
+* Do not build a dynamic menu tree, nested page engine, generic UI framework,
+  callback maze, or runtime-created menus around this.
+* Replace `A` later with direct `MANUAL`, `PROGRAM`, `SIM`, `MDI`, and `RUN`
+  mode buttons when real keys exist.
+
+Progress:
+
+* Created the first standalone `src/modules/nc/` files.
+* Added fixed text-line storage, extension checks, pipe-syntax rejection,
+  current-line editing, one-line word parsing, field stepping, word-value
+  replacement, vocabulary lookup, snapshot fill, and simple stdio file IO.
+
+## NC hard rule: text is the program, parsers are disposable
+
+NC history matters here.
+
+Old NC was not designed as an in-memory object database. It came from
+block/word-address programs: a line/block contains words like
+`G1 X3 Z-10 F120`; NIST RS274/NGC defines a word as a letter followed by a
+number/expression, and LinuxCNC still describes G-code as lines/blocks of code
+collected in a file.
+
+Therefore the NC module must follow the old machine model:
+
+```text
+text line in
+scan words
+act/display/edit
+forget parse result
+```
+
+Not:
+
+```text
+text line in
+build structs
+own semantic model
+sync model back to text
+```
+
+Hard rule:
+
+Do not build persistent command structs.
+
+Forbidden persistent structures:
+
+```c
+typedef struct {
+    int gcode;
+    float x;
+    float z;
+    float feed;
+    float rough_depth;
+    float retract;
+    int contour_start;
+    int contour_end;
+} nc_command_t;
+```
+
+Forbidden arrays:
+
+```c
+nc_command_t program[NC_MAX_LINES];
+```
+
+Allowed persistent storage:
+
+```c
+char line[NC_MAX_LINE_LEN];
+```
+
+or:
+
+```c
+typedef struct {
+    char text[NC_MAX_LINE_LEN];
+} nc_line_t;
+```
+
+Temporary scanner only:
+
+Allowed temporary parse while editing one line:
+
+```c
+typedef struct {
+    char letter;
+    int start;
+    int end;
+} nc_word_span_t;
+```
+
+This exists only to find where `X50` or `F120` sits in the text.
+
+It must not become program storage.
+
+Editing rule:
+
+Editing a field edits text directly.
+
+Example:
+
+Input line:
+
+```gcode
+G71 U2 R1 X0.5 Z0.5 F120
+```
+
+Cursor selects `R1`.
+
+User enters `1.5`.
+
+Result line:
+
+```gcode
+G71 U2 R1.5 X0.5 Z0.5 F120
+```
+
+No command object is updated.
+
+No regeneration.
+
+No semantic model.
+
+Just replace text span.
+
+Vocabulary rule:
+
+Vocabulary is lookup-only.
+
+Example:
+
+```text
+Current command: G71
+Current word: R
+Label: Retract
+```
+
+This label is not stored.
+
+It is calculated from current text context.
+
+File rule:
+
+The file is the database.
+
+RAM holds only:
+
+* visible line window, or
+* small editable line buffer, or
+* fixed text lines if full file is small enough
+
+Do not mirror the file into semantic structs.
+
+Streaming rule:
+
+Running uses source text.
+
+Raw run:
+
+```text
+read next NC line
+send to uCNC
+```
+
+Generated G7x run:
+
+```text
+G7x scanner reads source text lines
+emits one generated NC text line
+send to uCNC
+```
+
+No full expanded object model.
+
+Acceptance test:
+
+Search the new NC module.
+
+Fail if it contains persistent fields named like:
+
+```text
+rough_depth
+finish_allowance
+contour_end
+stock_diameter
+stock_length
+command_type
+```
+
+Allowed only in:
+
+* comments
+* vocabulary labels
+* temporary local scanner variables
+* G7x private generator internals, not NC editor storage
+
+Philosophy:
+
+The NC module should work like an old tape reader with a small edit window.
+
+It reads text blocks.
+
+It scans words.
+
+It does not remember more than necessary.
+
+If a struct is not needed to draw/edit the current line, do not create it.
+
+## NC UI rule: fixed Heidenhain-style mode shell, not deep menus
+
+Goal:
+
+Build NC UI around a small fixed set of machine modes, not around a deep
+application menu.
+
+The UI should feel closer to old Heidenhain / CNC control logic:
+
+```text
+Manual Jog
+Programming
+Simulation
+MDI
+Run
+```
+
+Each mode has its own screen behavior, but all modes share the same selected NC
+file context where useful.
+
+Do not build a modern GUI framework.
+
+Do not build dynamic menu trees.
+
+Do not build generic screens.
+
+Use simple fixed modes and fixed key behavior.
+
+Core idea:
+
+Do not build the UI around a global mode system.
+
+Instead, provide dedicated physical buttons or fixed softkeys for the major
+machine functions:
+
+```text
+MANUAL
+PROGRAM
+SIMULATION
+MDI
+RUN
+```
+
+Each function owns its own screen, state, and file selection.
+
+Selecting a file in one function does not automatically select it in another.
+
+Example:
+
+```text
+Programming selects PART1.NC
+Simulation selects TEST.NC
+Run selects JOB42.NC
+```
+
+These selections are independent.
+
+A traditional Heidenhain-style MODE key is not required. On older controls it
+mainly returned to a previously selected operating area, but for this UI each
+major function is directly accessible through its own dedicated button.
+
+Manual remains primarily a DRO/jog screen and does not need to share file
+context with the other functions.
+
+Persistent top header:
+
+Create one persistent header visible in all NC modes.
+
+Header shows:
+
+```text
+MODE: PROGRAM / SIM / RUN / MDI / MANUAL
+FILE: selected file name
+TOOL: active tool if known
+POS: X / Z DRO if available
+STATE: idle / run / hold / alarm
+```
+
+Manual Jog may emphasize DRO more strongly, but it should not become a
+separate UI universe.
+
+File screen behavior:
+
+File selection is a mode-local screen/action, not a global menu system.
+
+Programming mode:
+
+```text
+show files in memory
+filter: NC / TOOL / ALL
+select file
+open for editing
+```
+
+Simulation mode:
+
+```text
+show files in memory
+filter: NC
+select file
+open for preview/sim
+```
+
+Run mode:
+
+```text
+show files in memory
+filter: NC
+select file
+prepare/run
+```
+
+Special file view may show split storage:
+
+```text
+left: internal memory
+right: external storage
+```
+
+But implement this only as a fixed file browser state, not a generic dual-pane
+framework.
+
+File type filters:
+
+Support fixed file filters:
+
+```text
+NC files:
+  .nc
+  .ngc
+  .gcode
+
+Tool files:
+  .tool
+  .tbl
+
+All supported:
+  NC + tool files
+```
+
+Do not add dynamic plugin filters.
+
+Do not scan unknown extensions as program files.
+
+Tool file loading:
+
+Any relevant mode may allow loading a tool file.
+
+Allowed:
+
+```text
+Programming -> load tool file
+Simulation  -> load tool file for preview labels
+Run         -> load tool file before execution
+Manual      -> load tool file if needed
+```
+
+Tool file is also plain text.
+
+Do not create hidden tool database first.
+
+If loaded, remember selected tool file path in NC runtime state.
+
+Programming mode:
+
+Programming mode is plain text NC editing.
+
+Responsibilities:
+
+```text
+open selected NC file
+display text lines
+move cursor
+edit current line
+step word fields
+show vocabulary hint for selected word
+save file
+```
+
+No deep menu.
+
+Use fixed footer keys:
+
+```text
+OPEN
+SAVE
+NEW
+FIELD
+INSERT
+DELETE
+SPECIAL
+```
+
+SPECIAL may contain rare actions like:
+
+```text
+insert G970
+insert G971
+insert G972
+insert G973
+load tool file
+renumber N blocks
+```
+
+Keep SPECIAL as one small fixed list.
+
+No nested tree unless absolutely needed.
+
+Simulation mode:
+
+Simulation mode reads selected NC file.
+
+It does not edit.
+
+Responsibilities:
+
+```text
+preview stock
+preview contour
+preview G7x if supported
+single-step simulation lines
+show generated path if requested
+```
+
+It may call G7x module.
+
+It must not parse NC inside renderer.
+
+It must not build persistent semantic program model.
+
+MDI mode:
+
+MDI mode is one-line command entry.
+
+Responsibilities:
+
+```text
+edit one NC line
+send line to uCNC
+keep small history if easy
+```
+
+No program model.
+
+No file save required.
+
+Optional later:
+
+```text
+copy MDI line into selected program
+```
+
+Not first milestone.
+
+Run mode:
+
+Run mode executes selected NC file.
+
+Responsibilities:
+
+```text
+show selected file
+show current line
+single block
+run from current line
+full run
+hold/stop status
+```
+
+Run mode streams source NC lines to uCNC.
+
+It does not create another scheduler.
+
+Generated G7x run uses G7x module as line generator.
+
+Manual Jog mode:
+
+Manual mode is mostly DRO + jog.
+
+Responsibilities:
+
+```text
+large X/Z position display
+jog keys
+feed/jog increment if available
+active tool display
+machine state/alarm display
+```
+
+It may show selected file in header only.
+
+Manual mode should stay simple.
+
+No editor.
+
+No preview.
+
+Special mode / MP-style actions:
+
+Add one fixed SPECIAL screen/action list accessible from Programming.
+
+Inspired by old controls where rare parameters live under special modes.
+
+Allowed actions:
+
+```text
+insert G970 graphics extents
+insert G971 raw stock
+insert G972 clamp length
+insert G973 graphics mode
+load tool file
+renumber N blocks
+file filter NC/TOOL/ALL
+toggle external storage pane
+```
+
+Do not make this a generic settings framework.
+
+Data model:
+
+Persistent state should be tiny:
+
+```c
+typedef enum {
+    NC_MODE_MANUAL,
+    NC_MODE_PROGRAM,
+    NC_MODE_SIM,
+    NC_MODE_MDI,
+    NC_MODE_RUN
+} nc_mode_t;
+
+typedef struct {
+    nc_mode_t mode;
+    char selected_nc_file[NC_PATH_MAX];
+    char selected_tool_file[NC_PATH_MAX];
+    int selected_line;
+    int file_filter;
+    bool external_pane_visible;
+} nc_state_t;
+```
+
+Do not add semantic program structs.
+
+NC source remains text file.
+
+Renderer rule:
+
+NC module prepares a simple snapshot.
+
+Renderer draws snapshot.
+
+Renderer does not own mode logic.
+
+Renderer does not parse NC.
+
+Renderer does not open files.
+
+First milestone:
+
+Implement shell only:
+
+1. Mode enum.
+2. Mode switching.
+3. Persistent header.
+4. File browser with NC/TOOL/ALL filter.
+5. Programming mode opens selected NC file as text.
+6. Manual mode shows DRO-style placeholder/header.
+7. MDI mode has one-line entry placeholder.
+8. Sim and Run modes show selected file context but may be stub screens.
+9. No deep menu tree.
+10. No semantic model.
+
+Acceptance criteria:
+
+A user can understand the UI as:
+
+```text
+choose mode
+choose file
+edit / simulate / run
+```
+
+Not:
+
+```text
+navigate application tree
+manage hidden project state
+convert LCAM to NC
+```
+
+Mode shell must stay fixed, visible, and boring.
+
+This is a machine control UI, not a desktop application.
+
+## 2026-06-07 audit: why LeanCam grew too large
+
+Status: done now / use this as a regression baseline.
+
+Task:
+
+Find why LeanCam grew too large.
+
+Compare old LeanCam and new NC module.
+
+Do not just count lines.
+
+Classify code by cause:
+
+1. real UI
+2. file IO
+3. editor mechanics
+4. renderer glue
+5. old LCAM compatibility
+6. semantic model / private language
+7. duplicate parser/generator paths
+8. stream/cache/pacing layers
+9. debug/recovery scaffolding
+10. abstractions/callback wrappers
+
+For each large function/file:
+
+* what problem did it solve?
+* is that problem still real in NC?
+* was it caused by duplicate state?
+* can it disappear if NC text is the only source of truth?
+
+Audit inputs checked now:
+
+* LeanCam biggest files:
+
+  * `visual/leancam_visual.c`: about 4327 lines.
+  * `leancam_bridge.c`: about 2809 lines.
+  * `leancam_gcode.c`: about 2783 lines.
+  * `leancam_editor.c`: about 699 lines.
+  * `leancam_files.c`: about 572 lines.
+  * `leancam_code.c`: about 561 lines.
+  * `leancam_menu.c`: about 527 lines.
+  * `leancam_tool_catalog.c`: about 387 lines.
+  * `leancam_nc_viewer.c`: about 369 lines.
+
+* NC biggest files now:
+
+  * `nc_visual.c`: about 2824 lines.
+  * `nc.c`: about 472 lines.
+  * `nc_files.c`: about 231 lines.
+  * `nc_mode.c`: about 141 lines.
+  * `nc_tools.c`: about 114 lines.
+  * `nc_vocab.c`: about 100 lines.
+
+Important current finding:
+
+NC avoided the largest LeanCam mistake, the private LCAM program language, but
+`nc_visual.c` is already becoming the new pressure point. It now owns:
+
+* mode-local file state
+* state save/load
+* run state
+* footer dispatch
+* tool table drawing
+* preview geometry
+* G7x-like contour scanning for display
+* rough area drawing
+* arc/chamfer/radius drawing math
+
+That is not yet the old LeanCam semantic model, but it is the same shape of
+growth starting in a different place. NC must not let the renderer become a
+second parser or a shadow CAM engine.
+
+### Top 10 growth sources
+
+1. Renderer doing preview/simulation geometry.
+
+   LeanCam:
+
+   * `visual/leancam_visual.c` grew by drawing normal screens, split previews,
+     fullscreen previews, live material removal, tool glyphs, roughing hatches,
+     arc/corner display, and renderer-side preview pacing.
+
+   NC now:
+
+   * `nc_visual.c` already contains preview structs, vector math, arc centers,
+     chamfer/radius construction, contour collection, rough-area hatching, and
+     G71/G72 context drawing.
+
+   Cause class:
+
+   * real UI
+   * renderer glue
+   * duplicate parser/generator paths
+   * stream/cache/pacing layers if allowed to continue
+
+   Is the problem still real in NC?
+
+   * Preview is real.
+   * Renderer-side geometry ownership is not.
+
+   Duplicate state?
+
+   * Yes. Preview is deriving temporary contour/stock/tool state from NC text
+     inside the visual file.
+
+   Can it disappear if NC text is source of truth?
+
+   * Partly. The visual can scan visible/current text for a thin preview, but
+     anything resembling G7x roughing, reusable contour ownership, or generated
+     path must move to G7x/preview helper code that returns simple draw
+     primitives or one generated NC line at a time.
+
+2. Bridge/controller becoming application kernel.
+
+   LeanCam:
+
+   * `leancam_bridge.c` owns modes, file browser state, edit state, tool catalog
+     sync, preview stepping, run dispatch, messages, snapshots, autosave, and
+     keypad routing.
+
+   NC now:
+
+   * `nc_visual.c` is starting to combine mode state, file state, run state,
+     footer dispatch, and rendering.
+
+   Cause class:
+
+   * real UI
+   * file IO
+   * editor mechanics
+   * abstractions/callback wrappers
+   * stream/cache/pacing layers
+
+   Is the problem still real in NC?
+
+   * A small mode shell is real.
+   * A central application kernel is not.
+
+   Duplicate state?
+
+   * Yes, when mode/file/run state lives apart from the file text and must be
+     synchronized back.
+
+   Can it disappear if NC text is source of truth?
+
+   * Mostly. Keep only tiny mode/file selection state. Program content remains
+     text. Run state should be line index plus uCNC stream status, not a
+     private controller.
+
+3. G-code generator mixed with UI dialect translation.
+
+   LeanCam:
+
+   * `leancam_gcode.c` contains direct motion emitters, old drill/tap/thread
+     helpers, G71/G72 roughing, G76 stepping, setup validation, tool context,
+     state snapshots, and stepper replay paths.
+
+   NC now:
+
+   * `nc_emit.c` is still small, but `nc_visual.c` preview scans G7x-looking
+     regions and draws generated-looking roughing context.
+
+   Cause class:
+
+   * semantic model / private language
+   * duplicate parser/generator paths
+   * stream/cache/pacing layers
+
+   Is the problem still real in NC?
+
+   * Raw line emission is real.
+   * G7x generation belongs outside NC editor/visual.
+
+   Duplicate state?
+
+   * Yes, if preview and run each invent their own G7x interpretation.
+
+   Can it disappear if NC text is source of truth?
+
+   * Yes. NC emits source text. G7x module scans source text and emits generated
+     text. Renderer draws only snapshots/draw primitives.
+
+4. Private LCAM compatibility and migration paths.
+
+   LeanCam:
+
+   * Pipe rows, braces, SETUP fields, TOOLCALL, old preset rows, and LCAM
+     command conversion created parsers, validators, template paths, and
+     compatibility shims.
+
+   NC now:
+
+   * Current NC rejects old pipe syntax in core text loading.
+
+   Cause class:
+
+   * old LCAM compatibility
+   * semantic model / private language
+
+   Is the problem still real in NC?
+
+   * No.
+
+   Duplicate state?
+
+   * Yes, LCAM made row text and semantic meaning separate.
+
+   Can it disappear if NC text is source of truth?
+
+   * Yes. Delete/bypass LCAM support instead of migrating it.
+
+5. Tool catalog policy becoming hidden database.
+
+   LeanCam:
+
+   * Tool rows, catalog file sync, default tools, validation policy, glyphs,
+     offsets, feeds, DOC, and active-tool lookup spread across bridge, visual,
+     generator, and catalog files.
+
+   NC now:
+
+   * `nc_tools.c/h` introduces `nc_tool_t`, active tool lookup, default tool
+     rows, and tool glyph drawing in `nc_visual.c`.
+
+   Cause class:
+
+   * real UI
+   * semantic model / private language
+   * duplicate parser/generator paths
+
+   Is the problem still real in NC?
+
+   * Tool display is real.
+   * Hidden tool database is not.
+
+   Duplicate state?
+
+   * Potentially. `nc_tool_t` is acceptable only as a temporary local parse
+     result, not persistent storage.
+
+   Can it disappear if NC text is source of truth?
+
+   * Mostly. Tool files should be plain text. Active tool data may be scanned
+     from text on demand and forgotten.
+
+6. File browser and storage state leaking into UI owner.
+
+   LeanCam:
+
+   * File list, prompt, duplicate, delete, refresh, retry/busy state, and
+     current path were wired into bridge/menu logic.
+
+   NC now:
+
+   * `nc_files.c` is reasonably small, but `nc_visual.c` also saves mode paths
+     and handles file open/delete/new/refresh.
+
+   Cause class:
+
+   * file IO
+   * real UI
+   * abstractions/callback wrappers
+
+   Is the problem still real in NC?
+
+   * Fixed file browser is real.
+   * Generic file manager behavior is not.
+
+   Duplicate state?
+
+   * Some. Mode path memory is state separate from file content, but acceptable
+     if it remains tiny.
+
+   Can it disappear if NC text is source of truth?
+
+   * File content state disappears; selected path state remains.
+
+7. Deep menu/action dispatch tables.
+
+   LeanCam:
+
+   * `leancam_menu.c/h`, schema/templates, bridge actions, draft state, and
+     callbacks created a general conversational UI engine.
+
+   NC now:
+
+   * `nc_mode.c/h` uses static footer tables. This is acceptable now, but the
+     action enum is already broad and includes stubs.
+
+   Cause class:
+
+   * real UI
+   * abstractions/callback wrappers
+
+   Is the problem still real in NC?
+
+   * Fixed footer keys are real.
+   * Dynamic/deep menus are not.
+
+   Duplicate state?
+
+   * Not yet, unless actions start carrying their own models.
+
+   Can it disappear if NC text is source of truth?
+
+   * Keep only mode + key -> action. Delete unused/stub actions quickly.
+
+8. Runtime stream/cache/pacing layers.
+
+   LeanCam:
+
+   * Old staged direct stream paths, step-stream pacing, preview ack stepping,
+     run view state, generated temp buffers, and execution-controller pacing
+     accumulated around uCNC's existing stream/planner.
+
+   NC now:
+
+   * `nc_visual_run_*` is a UI demo/run simulator that emits/skips source lines
+     for status. It must not become the real scheduler.
+
+   Cause class:
+
+   * stream/cache/pacing layers
+   * duplicate parser/generator paths
+
+   Is the problem still real in NC?
+
+   * Showing current line is real.
+   * Scheduling execution is not NC visual's job.
+
+   Duplicate state?
+
+   * Yes if NC tracks run truth apart from uCNC stream/planner state.
+
+   Can it disappear if NC text is source of truth?
+
+   * Yes. Raw run reads next source line only when uCNC asks.
+
+9. Debug/recovery scaffolding left in live files.
+
+   LeanCam:
+
+   * HSTX/PSRAM/debug/recovery/torture findings, serial messages, perf meters,
+     and watchdog scaffolding expanded live code paths.
+
+   NC now:
+
+   * `nc_module.c` has watchdog reboot logging; `nc_visual.c` serial-selected
+     line/file messages are useful bring-up aids.
+
+   Cause class:
+
+   * debug/recovery scaffolding
+
+   Is the problem still real in NC?
+
+   * Bring-up logging is real.
+   * Permanent debug UI is not.
+
+   Duplicate state?
+
+   * Usually no, but it clutters ownership.
+
+   Can it disappear if NC text is source of truth?
+
+   * Not directly. Keep debug in small optional blocks and remove once stable.
+
+10. Wrapper layers introduced before they paid rent.
+
+   LeanCam:
+
+   * Snapshot wrappers, resource gates, menu callbacks, schema helpers, multiple
+     command parsers, default resolvers, visual helper layers, and generator
+     callbacks each solved a real local problem but multiplied ownership
+     boundaries.
+
+   NC now:
+
+   * `nc_editor.c`, `nc_text`, `nc_emit`, `nc_presets`, `nc_tools`, `nc_mode`,
+     and `nc_files` are okay only if they stay direct.
+
+   Cause class:
+
+   * abstractions/callback wrappers
+   * editor mechanics
+   * file IO
+
+   Is the problem still real in NC?
+
+   * Small leaf helpers are real.
+   * Generic engines are not.
+
+   Duplicate state?
+
+   * Not by itself, but wrappers make duplicate state easier to hide.
+
+   Can it disappear if NC text is source of truth?
+
+   * Keep helper files leaf-only: parse a line, edit a span, list files, draw a
+     fixed screen. No helper owns program meaning.
+
+### Delete candidates
+
+LeanCam delete/bypass candidates after NC is usable:
+
+* `leancam_bridge.c` as live runtime owner.
+* `leancam_editor.c/h` and `leancam_program.c/h` private program editing path.
+* `leancam_code.c/h` private command/field parser once NC text helpers cover
+  visible editing.
+* `leancam_schema.c/h`, old menu/schema/template plumbing.
+* Pipe/braces/SETUP/TOOLCALL compatibility code in generator/editor/tests.
+* `leancam_tool_catalog.c/h` as hidden catalog policy; replace with plain text
+  tool files scanned on demand.
+* `leancam_nc_viewer.c/h` once NC mode screens own file viewing.
+* Renderer-side generated preview and live material-removal caches in
+  `visual/leancam_visual.c`.
+* Old run/cache/pacing paths that duplicate uCNC stream/planner ownership.
+* Debug/recovery scaffolding that is historical rather than live behavior.
+
+NC immediate cleanup candidates before it hardens:
+
+* Split `nc_visual.c` into fixed-screen drawing and thin preview drawing, or
+  move preview math into a leaf `nc_preview.c` that returns simple draw data.
+* Remove `rough_depth_x` / `rough_depth_z` field names from NC visual preview
+  structs; they violate the spirit of the text-only naming rule even if local.
+* Keep `nc_tool_t` strictly temporary. Do not store an array of tools.
+* Keep `nc_visual_run_*` as UI status only. Real run must stream source text
+  through uCNC.
+* Delete stubs/actions from `nc_mode` if they are not used soon.
+* Keep state file to selected paths/mode only. Do not store parsed stock,
+  contour, tool, or preview metadata.
+
+### Lessons to prevent NC from becoming LeanCam again
+
+* Text is the program. Parsed data is disposable.
+* Renderer may scan text for a thin current-view hint, but must not become a
+  G-code generator or contour owner.
+* G7x owns roughing generation and contour rules. NC editor does not.
+* Tool files are plain text. Any `nc_tool_t` is a temporary parse result only.
+* File browser state is path/index only. File contents remain text.
+* Mode shell is fixed. No dynamic menu tree.
+* Footer tables are static and small. Stub actions should be deleted or
+  implemented directly.
+* Run mode shows source lines and asks uCNC to consume source/generator text.
+  It does not schedule motion.
+* Debug code expires. Keep bring-up prints behind clear optional blocks or
+  remove them.
+* Every new struct must answer: does this draw/edit the current line, hold a
+  selected path, or produce one generated text line? If not, do not add it.
+
+Result now:
+
+* LeanCam's largest growth was not "UI" alone. It was duplicate ownership:
+  text plus semantic model, renderer plus preview generator, bridge plus
+  scheduler, tool rows plus catalog policy, file browser plus app kernel.
+* NC currently obeys the no-private-language rule in `nc.c` and line editing.
+* NC is already at risk in `nc_visual.c`; preview/geometry/run/tool logic must
+  be kept leaf-local or moved out before it becomes the new bridge/generator.
+
 ## 0 step: 
 
 µCNC project rule — dead simple first
@@ -236,7 +1358,7 @@ Standing rule:
 
 ## 0. NC is the primary file/editor format
 
-Status: mostly done / SETUP replacement still pending.
+Status: mostly done / SETUP replacement in progress.
 
 Decision update:
 
@@ -521,17 +1643,19 @@ Progress:
 * G71/G72 region ownership and generator dispatch now match `G71 ...`, `G72 ...`, `G1 ...`, `G2 ...`, `G3 ...` command rows.
 * Editor/default expression lookup now treats fields as plain text tokens before `{}`, not pipe records.
 * Snapshot display no longer pretty-prints pipe rows; it shows the stored row text directly.
-* SETUP, TOOL, TOOLCALL, and preset templates now create plain text rows.
+* SETUP is now rejected by generator/preflight with a clear obsolete-format message.
+* G970/G971/G972/G973 are accepted and validated as non-motion NC rows.
+* TOOL and preset templates create plain text rows; TOOLCALL generation is removed.
 * Tool catalog storage now writes `TOOL T{} R{} ...` rows instead of `TOOL|...`.
 * Shared plain text parser no longer accepts pipe-delimited rows or brace-wrapped saved values.
 * Tool catalog import rejects old pipe/brace tool rows instead of normalizing them.
 * Editor/expression field helpers no longer treat `|` as a draft field separator.
-* Active context checks now use plain command matching for SETUP/TOOL/TOOLCALL.
+* Active context checks use plain command matching for TOOL and G970-G973 rows.
 * Plain command/field parsing is centralized in `leancam_text.c/h` and shared by presets, regions, validation, tool catalog, editor/UI, and bridge wrappers.
 * G-code generator field lookup now uses the shared plain text parser instead of carrying a second pipe-era parser.
 * Draft commit/display no longer blocks or annotates rows with tool validation warnings.
 * Tool lookup uses static default rows for T0-T8 when the catalog/program has no single explicit match.
-* Tool validation is intentionally minimal: `TOOLCALL T` only needs to parse as a positive integer; tool metadata policy checks were removed for now.
+* Tool selection is by real `T` words on cycles or nearest real `TOOL` row/catalog entry.
 * Run/preflight no longer carries a fake tool validation callback that always passes.
 * Preset allowance fields now use real `X`/`Z` words instead of `X_ALLOW`/`Z_ALLOW`.
 * Generator dispatch no longer runs old private OD/ID/FACE/CUT/GROOVE/CHAMFER/RADIUS command rows.
@@ -539,14 +1663,15 @@ Progress:
 * Drill/tap/thread templates now dispatch as G-code-ish `G74`, `G84`, direct `G33`, and `G76` rows instead of relying only on private `DRILL`/`TAP`/`THREAD` commands.
 * Editor navigation now treats plain tokens like `T1`, `R_FEED120`, and `X50` as editable fields directly. Braces are only needed for preset/template placeholders.
 * G1 helper `AUTO` metadata is gone from active rows and host G71/G72 tests.
-* `TOOLCALL` draft/default resolution now links through the plain tool table/default rows, so `TOOL.R_FEED`/`TOOL.DOC` style defaults resolve from `TOOL T...` rows.
-* Preset insert resolves template defaults to plain words before expansion, so temporary `OD/ID/FACE/RECESS` rows do not leak into the saved program when expansion succeeds.
+* TOOLCALL draft/default resolution was removed; preset defaults resolve directly from `TOOL T...` rows.
+* Preset insert resolves template defaults to plain words and inserts the final NC region directly; `OD/ID/FACE/RECESS` rows are no longer stored even temporarily.
+* LVDS preview no longer contains a separate renderer for old private `OD/ID/FACE/DRILL/TAP/CUT/GROOVE/CHAMFER/RADIUS/THR_*` rows. Preview follows raw/grouped NC and current live G-code state.
 
 ---
 
 ## 5. OD/ID/FACE/RECESS are presets only
 
-Status: mostly done.
+Status: done for the live path.
 
 Do not store:
 
@@ -595,8 +1720,9 @@ Progress:
 * OD/ID/FACE/RECESS remain preset templates only.
 * Preset expansion writes G71/G72 plus visible G1 helper/user rows.
 * Presets now insert explicit `G80` after the generated contour region.
-* Failed preset expansion removes the temporary preset row instead of leaving `ID ...` / `OD ...` in the program.
-* Preset expansion reads setup stock fields directly from the current `SETUP` line instead of using a generic callback.
+* Presets insert the final NC rows directly; there is no temporary `ID ...` / `OD ...` program row to clean up.
+* Preset expansion reads stock from G971 words (`X` for OD, `I` for ID), not old `SETUP` fields.
+* Old private preset/cycle visual preview support was removed from the live renderer path. The UI may still label buttons as OD/ID/FACE/RECESS, but saved/run text is NC.
 
 ---
 
@@ -1252,76 +2378,899 @@ Current parked state:
 
 ---
 
-## 15.  Replace LeanCam SETUP block with Eltropilot-style setup/graphics G-codes
+15. Replace LeanCam SETUP block with Eltropilot-style setup/graphics G-codes
 
-Status: open / next real language cleanup.
+Status: in progress.
+
+Current implementation pass:
+
+* LeanCam no longer emits G20/G21 from runtime, program, or DXF-lite headers.
+* G20/G21 are documented as uCNC inch/mm modal words only, not setup metadata.
+* G970/G971/G972/G973 validate as normal non-motion NC rows, including N-numbered rows.
+* Old SETUP rows are rejected by generator/preflight with `SETUP is obsolete; use G970/G971/G972/G973`.
+* Program menu key `0` opens the tool catalog instead of inserting TOOLCALL.
+* TOOLCALL template/default resolution was removed from live code.
+* Preview stock derives its visual setup from G971/G972 when those NC rows are present.
+* Auto "setup first" draft insertion was removed; new files are plain empty NC programs.
+* SETUP.FIELD expression resolution was removed from live editor/template code.
+* Editor default resolution now only knows literal, `THIS.*`, and `TOOL.*`.
+* Preset expansion reads stock from G971 words (`X` for OD, `I` for ID), not SETUP fields.
+* NC viewer setup preview captures G971/G972 rows directly.
 
 Goal:
 Remove current non-G-code SETUP block completely and replace it with old Eltropilot-inspired CNC-looking setup commands.
 
 Remove completely:
-- SETUP block grammar
-- SETUP.FIELD references
-- key/value setup forms
-- exposed JSON/YAML-like metadata
-- non-G-code template setup syntax
+
+* SETUP block grammar
+* SETUP.FIELD references
+* key/value setup forms
+* exposed JSON/YAML-like metadata
+* non-G-code template setup syntax
+* any hidden editor-only setup state that is not backed by NC lines
 
 Allowed human-readable layer:
 Only parenthesized CNC-style comments.
 
 Comment behavior:
-- optional only
-- parser/simulation ignores fully
-- truncated in editor UI
-- no wrapping by default
-- full comment visible only when selected/opened
 
-Adopt Eltropilot-style setup commands:
+* optional only
+* parser/simulation ignores comments fully
+* comments are truncated in editor UI
+* no wrapping by default
+* full comment visible only when selected/opened
 
-N70 G970 X-10 X120 Z-150 Z30
-N71 G971 X80 Z125 E0
-N72 G972 C15
-N73 G973 P7
+Adopt LeanCam private Eltropilot-style setup commands:
+
+Example:
+
+N70 G970 X-10 U120 Z-150 W30   (GRAPHICS EXTENTS)
+N71 G971 X80 Z125 E0           (RAW STOCK)
+N72 G972 C15                   (CLAMP LENGTH)
+N73 G973 P7                    (GRAPHICS MODE)
 
 Meaning:
-- G970 = graphics/display extents
-- G971 = raw stock dimensions
-- G972 = clamping length
-- G973 = graphics mode/options
 
-Modern LeanCam implementation may use same idea with cleaned parameters:
+* G970 = graphics/display extents
+* G971 = raw stock dimensions
+* G972 = clamping length
+* G973 = graphics mode/options
 
-G970:
-- graphics extents / display limits
-- chuck/jaw display envelope
-- tailstock display envelope if enabled
+These are inspired by old Eltropilot/Pilot behavior, but LeanCam is not required to be byte-compatible with Eltropilot.
 
-G971:
-- raw stock dimensions
-- X = stock OD
-- Z = stock length
-- optional I = stock ID
-- optional E = extra/front allowance
+G970: graphics/display extents
 
-G972:
-- clamping length
-- C = length inside chuck / chuck-side held length
+* Non-motion command.
+* Defines preview/display envelope.
+* X = minimum X display value
+* U = maximum X display value
+* Z = minimum Z display value
+* W = maximum Z display value
+* Required: X, U, Z, W
+* Validation:
 
-G973:
-- graphics mode bitmask
-- 0 = axes only
-- 1 = stock
-- 3 = stock + chuck
-- 7 = stock + chuck + tailstock
+  * X < U
+  * Z < W
+* Updates preview extents only.
+* Does not move machine.
 
-Internal behavior:
-- these are not machining motion
-- they update setup/simulation/planning metadata
-- they are visible as CNC-like program commands
-- no separate SETUP block remains
+G971: raw stock dimensions
+
+* Non-motion command.
+* Defines current raw workpiece blank.
+* X = stock outside diameter
+* Z = stock length
+* I = stock inside diameter, optional, default 0
+* E = extra/front allowance in Z+ direction, optional, default 0
+* Required: X, Z
+* Validation:
+
+  * X > 0
+  * Z > 0
+  * I >= 0
+  * I < X
+  * E >= 0
+* Updates stock/simulation metadata only.
+* Does not move machine.
+
+G972: clamping length
+
+* Non-motion command.
+* Defines held length inside chuck or clamp.
+* C = clamping length
+* Required: C
+* Validation:
+
+  * C >= 0
+* Updates chuck/stock display metadata only.
+* Does not move machine.
+
+G973: graphics mode/options
+
+* Non-motion command.
+* Defines what preview shows.
+* P = graphics mode bitmask
+* Supported values:
+
+  * 0 = axes only
+  * 1 = stock
+  * 3 = stock + chuck
+  * 7 = stock + chuck + tailstock
+* Required: P
+* Validation:
+
+  * P must be one of 0, 1, 3, 7
+* Updates preview options only.
+* Does not move machine.
+
+Parser rules:
+
+* These are normal NC blocks.
+* Store them as normal words:
+
+  * G970
+  * X...
+  * U...
+  * Z...
+  * W...
+  * etc.
+* Do not create parser fields like STOCK_OD, STOCK_LEN, GRAPHICS_MIN_X.
+* Semantic meaning is resolved by command table for G970-G973.
+* Unknown 3-digit G-code is unsupported.
+* G20/G21 remain inch/mm only and must not be reused.
+
+Simulation behavior:
+
+* G970 updates visible extents / simulation viewport basis.
+* G971 creates or updates raw stock.
+* G972 updates clamping display length.
+* G973 selects visible graphics elements.
+* None of G970-G973 emit motion, planner moves, or spindle/feed changes.
+
+Editor behavior:
+
+* Editor displays these as normal NC lines.
+* Editor may show short labels:
+
+  * G970 GRAPHICS EXTENTS
+  * G971 RAW STOCK
+  * G972 CLAMP LENGTH
+  * G973 GRAPHICS MODE
+* Editor must not create a separate SETUP UI model that can diverge from the NC lines.
+* NC file is the source of truth.
+
+Round-trip behavior:
+
+* Loading and saving unchanged file must preserve these G970-G973 lines.
+* Field edits modify only backing word values.
+* Comments remain optional and ignored by simulation.
+
+Tests:
+
+1. Remove old SETUP block parser support.
+2. Parse:
+   N70 G970 X-10 U120 Z-150 W30
+   and identify command as GRAPHICS_EXTENTS.
+3. Parse:
+   N71 G971 X80 Z125 E0
+   and identify command as RAW_STOCK.
+4. Parse:
+   N72 G972 C15
+   and identify command as CLAMP_LENGTH.
+5. Parse:
+   N73 G973 P7
+   and identify command as GRAPHICS_MODE.
+6. G970 without X/U/Z/W is an error.
+7. G970 with X >= U is an error.
+8. G971 without X or Z is an error.
+9. G971 with I >= X is an error.
+10. G972 without C is an error.
+11. G973 with P2 is an error.
+12. G20/G21 still parse only as inch/mm.
+13. G970-G973 do not generate motion.
+14. Saving unchanged file preserves NC lines.
+15. Old SETUP block input is rejected with clear message.
 
 Design target:
-Old dead Eltropilot-style setup rebuilt with modern parser/editor/simulation.
+Old dead Eltropilot-style setup rebuilt as modern LeanCam NC commands. No hidden setup block. No JSON/YAML-like metadata. No editor-private source of truth.
+
+## 15.1
+
+LeanCam Task: Remove Semantic Words From Core And Build Strict Vocabulary Layer
+
+Status: architecture cleanup / language stabilization
+
+Background
+
+Current system started accumulating semantic fields such as:
+
+* R_FEED
+* R_DEPTH
+* Q_END
+* N_START
+* CONTOUR_END
+* FINISH_ALLOWANCE_X
+
+This creates a second language inside the controller.
+
+The goal is to eliminate this layer completely.
+
+The controller shall have exactly one machine language.
+
+Supported NC words are stored exactly as they appear in the program:
+
+* G
+* M
+* N
+* X
+* Z
+* U
+* W
+* I
+* K
+* R
+* P
+* Q
+* D
+* F
+* S
+* T
+* C
+* E
+
+Everything else is vocabulary-layer meaning only.
+
+The parser owns syntax.
+
+The vocabulary table owns meaning.
+
+The editor only displays and edits meaning.
+
+The NC file is the source of truth.
+
+---
+
+## RULE 1
+
+Parser owns syntax.
+
+Parser does not own meaning.
+
+Forbidden:
+
+```c
+block->contour_end
+block->rough_feed
+block->rough_depth
+block->thread_depth
+block->stock_diameter
+block->stock_length
+```
+
+Allowed:
+
+```c
+word('Q',200)
+word('F',0.2)
+word('R',1.0)
+word('X',80)
+word('Z',125)
+```
+
+Parser stores words only.
+
+---
+
+## RULE 2
+
+Vocabulary table owns meaning.
+
+Meaning depends on command context.
+
+Example:
+
+```gcode
+G71 P100 Q200
+```
+
+Vocabulary table:
+
+```text
+G71 P = contour start N block
+G71 Q = contour end N block
+```
+
+Editor displays:
+
+```text
+Contour Start = N100
+Contour End   = N200
+```
+
+Storage:
+
+```text
+P100
+Q200
+```
+
+Nothing else exists.
+
+---
+
+## RULE 3
+
+Same letter may mean different things.
+
+Never create a global semantic meaning.
+
+Examples:
+
+```gcode
+G71 R1.0
+```
+
+Vocabulary:
+
+```text
+Retract = 1.0
+```
+
+```gcode
+G02 X50 Z10 R5
+```
+
+Vocabulary:
+
+```text
+Arc Radius = 5
+```
+
+Storage:
+
+```text
+R5
+```
+
+Same letter.
+
+Different meaning.
+
+---
+
+## RULE 4
+
+Context determines vocabulary.
+
+Vocabulary lookup key:
+
+```text
+command
+word letter
+position
+```
+
+Example:
+
+G71 first line:
+
+```text
+U = depth/pass
+R = retract
+```
+
+G71 second line:
+
+```text
+U = finish allowance X
+W = finish allowance Z
+```
+
+Same letter.
+
+Different meaning.
+
+---
+
+## RULE 5
+
+No automatic dialect guessing.
+
+Forbidden:
+
+```text
+Looks like Haas
+Looks like Fanuc
+Maybe LinuxCNC
+Probably Siemens
+```
+
+Allowed:
+
+```text
+dialect = FANUC_HAAS_LATHE
+```
+
+or
+
+```text
+dialect = UNKNOWN
+```
+
+If dialect = UNKNOWN:
+
+```text
+mark unsupported
+preserve raw text if possible
+do not guess
+do not reinterpret
+do not auto-convert
+```
+
+---
+
+## RULE 6
+
+Editor field modification changes exactly one backing word.
+
+Example:
+
+Input:
+
+```gcode
+G71 P100 Q200 U0.5 W0.1
+```
+
+User changes:
+
+```text
+Contour End = 250
+```
+
+Result:
+
+```gcode
+G71 P100 Q250 U0.5 W0.1
+```
+
+Only Q changes.
+
+Nothing else.
+
+---
+
+## RULE 7
+
+Round-trip requirement.
+
+Input:
+
+```gcode
+G71 U2.0 R1.0
+G71 P100 Q200 U0.5 W0.1 F0.2
+```
+
+Load.
+
+Display.
+
+Save.
+
+Result must remain identical.
+
+Byte-for-byte if practical.
+
+Never regenerate formatting unnecessarily.
+
+Never reorder words unnecessarily.
+
+---
+
+## RULE 8
+
+Supported vocabulary set.
+
+Motion:
+
+```text
+G00
+G01
+G02
+G03
+```
+
+Lathe cycles:
+
+```text
+G70
+G71
+G72
+G73
+G80
+```
+
+LeanCam / Eltropilot-style setup graphics:
+
+```text
+G970
+G971
+G972
+G973
+```
+
+Everything else:
+
+```text
+UNSUPPORTED
+```
+
+Unsupported means:
+
+```text
+no semantic editing
+no conversion
+no guessed dialect
+preserve raw text if possible
+reject execution if unsafe
+```
+
+---
+
+## RULE 9
+
+Referenced contour mode.
+
+Example:
+
+```gcode
+G71 P100 Q200
+
+N100 G0 X40 Z2
+N110 G1 X30
+N120 G1 Z-20
+N200 G1 X50
+```
+
+Editor:
+
+```text
+Contour:
+N100 -> N200
+```
+
+Storage unchanged.
+
+---
+
+## RULE 10
+
+Inline contour mode.
+
+Example:
+
+```gcode
+G71 ...
+G0 X40 Z2
+G1 X30
+G1 Z-20
+G1 X50
+G80
+```
+
+Editor:
+
+```text
+Roughing Contour
+```
+
+Storage remains normal NC blocks.
+
+Forbidden:
+
+```text
+CONTOUR_BEGIN
+CONTOUR_END
+INLINE_CONTOUR
+```
+
+---
+
+## RULE 11
+
+Validation.
+
+Referenced contour mode:
+
+```text
+P block must exist
+Q block must exist
+P <= Q
+all referenced contour blocks must exist
+```
+
+Missing reference:
+
+```text
+ERROR
+```
+
+Not warning.
+
+---
+
+## RULE 12
+
+Vocabulary examples.
+
+G71 First Line
+
+Storage:
+
+```gcode
+G71 U2.0 R1.0
+```
+
+Editor:
+
+```text
+Depth per Pass = 2.0
+Retract = 1.0
+```
+
+---
+
+G71 Second Line
+
+Storage:
+
+```gcode
+G71 P100 Q200 U0.5 W0.1 F0.2
+```
+
+Editor:
+
+```text
+Contour Start = N100
+Contour End = N200
+Finish Allowance X = 0.5
+Finish Allowance Z = 0.1
+Feed = 0.2
+```
+
+---
+
+G70
+
+Storage:
+
+```gcode
+G70 P100 Q200
+```
+
+Editor:
+
+```text
+Finish Contour
+Start = N100
+End = N200
+```
+
+---
+
+G02
+
+Storage:
+
+```gcode
+G02 X50 Z20 R5
+```
+
+Editor:
+
+```text
+Arc Radius = 5
+```
+
+Not:
+
+```text
+Retract
+```
+
+---
+
+## RULE 13
+
+No editor-only source of truth.
+
+If something affects:
+
+* parser
+* preview
+* simulation
+* generated toolpath
+* execution planning
+
+it must exist as NC words in the program.
+
+Allowed:
+
+```gcode
+N71 G971 X80 Z125
+```
+
+Forbidden:
+
+```text
+hidden editor stock model
+JSON sidecar
+YAML sidecar
+SETUP.FIELD
+private metadata store
+```
+
+NC program remains authoritative.
+
+---
+
+## RULE 14
+
+LeanCam Eltropilot-style setup commands.
+
+G970 Graphics Extents
+
+Example:
+
+```gcode
+N70 G970 X-10 U120 Z-150 W30
+```
+
+Meaning:
+
+```text
+X = graphics minimum X
+U = graphics maximum X
+Z = graphics minimum Z
+W = graphics maximum Z
+```
+
+Required:
+
+```text
+X U Z W
+```
+
+Validation:
+
+```text
+X < U
+Z < W
+```
+
+Non-motion command.
+
+---
+
+G971 Raw Stock
+
+Example:
+
+```gcode
+N71 G971 X80 Z125 E0
+```
+
+Meaning:
+
+```text
+X = stock OD
+Z = stock length
+I = stock ID optional
+E = extra/front allowance optional
+```
+
+Required:
+
+```text
+X Z
+```
+
+Validation:
+
+```text
+X > 0
+Z > 0
+I >= 0
+I < X
+E >= 0
+```
+
+Non-motion command.
+
+---
+
+G972 Clamp Length
+
+Example:
+
+```gcode
+N72 G972 C15
+```
+
+Meaning:
+
+```text
+C = clamped length
+```
+
+Required:
+
+```text
+C
+```
+
+Validation:
+
+```text
+C >= 0
+```
+
+Non-motion command.
+
+---
+
+G973 Graphics Mode
+
+Example:
+
+```gcode
+N73 G973 P7
+```
+
+Meaning:
+
+```text
+P = graphics mode
+```
+
+Supported values:
+
+```text
+0 = axes only
+1 = stock
+3 = stock + chuck
+7 = stock + chuck + tailstock
+```
+
+Validation:
+
+```text
+P must be 0,1,3 or 7
+```
+
+Non-motion command.
+
+---
+
+## FINAL GOAL
+
+Parser becomes smaller.
+
+Generator becomes smaller.
+
+Simulation becomes table-driven.
+
+Editor becomes a thin display/edit layer.
+
+NC file remains standard LeanCam language.
+
+No private language.
+
+No semantic fields in controller core.
+
+No hidden setup state.
+
+Only NC words plus vocabulary tables.
+
 
 ## 15A Redesign LeanCam G71 roughing around Eltropilot/Heidenhain-style contour ownership - skip for now
 
@@ -1392,6 +3341,336 @@ simple CNC-looking text,
 G80 contour ownership available,
 optional reusable contour references,
 modern internals hidden underneath.
+
+## 15.2 Architecture Freeze Rules
+
+Status: active.
+
+Purpose:
+
+Prevent LeanCam from reintroducing a second language, hidden state, multiple contour ownership models, or editor-owned semantics.
+
+These rules override future convenience shortcuts.
+
+---
+
+### FREEZE 1
+
+NC file is the only source of truth.
+
+If a value affects:
+
+* simulation
+* preview
+* execution
+* toolpath generation
+* stock model
+* clamping model
+* graphics mode
+
+then it must exist as NC words in the program.
+
+Allowed:
+
+```gcode
+G971 X80 Z125
+G972 C15
+G973 P7
+```
+
+Forbidden:
+
+```text
+hidden stock structure
+runtime-only stock model
+editor-only setup object
+JSON sidecar
+YAML sidecar
+SETUP.FIELD
+```
+
+Runtime may cache values temporarily.
+
+Runtime cache must always be rebuildable from NC text.
+
+---
+
+### FREEZE 2
+
+Vocabulary owns meaning.
+
+Editor does not own meaning.
+
+Parser does not own meaning.
+
+Generator does not own meaning.
+
+Only vocabulary tables define:
+
+```text
+G71 R = retract
+G02 R = arc radius
+G971 X = stock diameter
+```
+
+Editor only displays vocabulary.
+
+Parser only stores words.
+
+Generator only consumes words.
+
+---
+
+### FREEZE 3
+
+No semantic fields in controller core.
+
+Forbidden:
+
+```c
+rough_feed
+rough_depth
+contour_end
+stock_diameter
+stock_length
+graphics_mode
+```
+
+Allowed:
+
+```c
+word('F',120)
+word('Q',200)
+word('X',80)
+word('P',7)
+```
+
+Core stores words.
+
+Vocabulary explains them.
+
+---
+
+### FREEZE 4
+
+G970-G979 reserved namespace.
+
+Reserved for:
+
+```text
+LeanCam system/setup/simulation commands
+```
+
+Current assignments:
+
+```text
+G970 graphics extents
+G971 raw stock
+G972 clamp length
+G973 graphics mode
+```
+
+Unassigned:
+
+```text
+G974
+G975
+G976
+G977
+G978
+G979
+```
+
+Reserved.
+
+Do not use for machining cycles.
+
+Do not use for roughing cycles.
+
+Do not use for contour operations.
+
+Future use only if clearly setup/simulation related.
+
+---
+
+### FREEZE 5
+
+Single contour ownership model for first stable release.
+
+Supported:
+
+```gcode
+G71
+...
+G80
+```
+
+and
+
+```gcode
+G72
+...
+G80
+```
+
+Only.
+
+G80 owns contour termination.
+
+No alternative contour ownership systems.
+
+---
+
+### FREEZE 6
+
+Deferred features.
+
+The following concepts are frozen and not part of first stable release:
+
+```text
+CTR
+ENDCTR
+C=N100
+named contours
+persistent contour objects
+reusable contour references
+P/Q contour ownership
+```
+
+These may return later.
+
+They are not active architecture.
+
+They must not influence current parser/editor/runtime decisions.
+
+---
+
+### FREEZE 7
+
+No dialect guessing.
+
+Forbidden:
+
+```text
+looks like Haas
+looks like Fanuc
+looks like LinuxCNC
+looks like Siemens
+```
+
+Allowed:
+
+```text
+supported
+unsupported
+```
+
+Unknown commands remain unknown.
+
+No automatic reinterpretation.
+
+---
+
+### FREEZE 8
+
+Semantic round-trip required.
+
+Requirement:
+
+```text
+Load
+Display
+Save
+```
+
+must preserve:
+
+* commands
+* words
+* values
+* behavior
+
+Formatting preservation is desirable.
+
+Formatting preservation is not a design goal.
+
+Semantic preservation is mandatory.
+
+Machine behavior preservation is mandatory.
+
+---
+
+### FREEZE 9
+
+No hidden contour model.
+
+Forbidden:
+
+```text
+anonymous contour database
+editor contour object
+secondary contour representation
+```
+
+Current contour exists as:
+
+```gcode
+G71
+...
+G1
+...
+G80
+```
+
+The NC lines themselves are the contour.
+
+---
+
+### FREEZE 10
+
+When in doubt:
+
+Prefer:
+
+```text
+visible NC line
+```
+
+over:
+
+```text
+hidden structure
+```
+
+Prefer:
+
+```text
+simple parser
+```
+
+over:
+
+```text
+clever architecture
+```
+
+Prefer:
+
+```text
+boring implementation
+```
+
+over:
+
+```text
+future-proof abstraction
+```
+
+Project rule remains:
+
+Less architecture.
+More visible behavior.
+
 
 
 ## 16. Renderer split
@@ -1970,3 +4249,28 @@ private CNC language
 ```
 
 That is the clean line.
+
+---
+
+## NC module wiring rule
+
+Status: active rule.
+
+Keep the direction bottom-up and boring:
+
+```text
+user actions
+-> controller/state
+-> nc_visual
+-> lvds renderer
+```
+
+Runtime facts and selected mode/action state belong to controller/state.
+
+Visual code consumes state and says how to draw it.
+
+LVDS code draws pixels.
+
+Emitter/run code is called from controller/state and may ask text/files for source lines, but it must not be reached sideways from visuals.
+
+Do not add tiny helper files for one screen strip or one small label table unless it removes a real dependency loop. Prefer existing state/menu/visual files over creating another island.

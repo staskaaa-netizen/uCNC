@@ -32,6 +32,8 @@ static const nc_footer_item_t g_nc_footer_sim[] = {
     { '1', "STEP", NC_FOOTER_ACTION_STEP },
     { '4', "STOCK", NC_FOOTER_ACTION_STOCK },
     { '5', "PATH", NC_FOOTER_ACTION_PATH },
+    { '6', "ROUGH", NC_FOOTER_ACTION_ROUGH },
+    { '7', "DIM", NC_FOOTER_ACTION_DIMS },
     { '#', "RESET", NC_FOOTER_ACTION_RESET }
 };
 
@@ -48,15 +50,18 @@ static const nc_footer_item_t g_nc_footer_files[] = {
 };
 
 static const nc_footer_item_t g_nc_footer_mdi[] = {
-    { 'B', "UP", NC_FOOTER_ACTION_BACK },
-    { 'C', "DOWN", NC_FOOTER_ACTION_STEP },
-    { 'D', "FIELD", NC_FOOTER_ACTION_FIELD },
-    { '0', "OPEN", NC_FOOTER_ACTION_OPEN },
-    { '1', "INS", NC_FOOTER_ACTION_INSERT },
-    { '2', "RUN", NC_FOOTER_ACTION_SINGLE },
-    { '#', "SEND", NC_FOOTER_ACTION_SEND },
-    { '*', "CLEAR", NC_FOOTER_ACTION_CLEAR },
-    { '9', "SAVE", NC_FOOTER_ACTION_SAVE }
+    { '0', "TOOL", NC_FOOTER_ACTION_TOOL },
+    { '1', "OD", NC_FOOTER_ACTION_PRESET_OD },
+    { '2', "ID", NC_FOOTER_ACTION_PRESET_ID },
+    { '3', "FACE", NC_FOOTER_ACTION_PRESET_FACE },
+    { '4', "LINE", NC_FOOTER_ACTION_PRESET_LINE },
+    { '5', "ARC", NC_FOOTER_ACTION_PRESET_ARC },
+    { '6', "SETUP", NC_FOOTER_ACTION_PRESET_SETUP },
+    { '7', "INS", NC_FOOTER_ACTION_INSERT },
+    { '8', "FILES", NC_FOOTER_ACTION_FILES },
+    { '9', "END", NC_FOOTER_ACTION_PRESET_END },
+    { '#', "RUN", NC_FOOTER_ACTION_SINGLE },
+    { '*', "DEL", NC_FOOTER_ACTION_DELETE }
 };
 
 static const nc_footer_item_t g_nc_footer_tools[] = {
@@ -79,6 +84,7 @@ static const nc_footer_item_t g_nc_footer_run[] = {
     { '3', "FULL", NC_FOOTER_ACTION_FULL },
     { '4', "HOLD", NC_FOOTER_ACTION_HOLD },
     { '5', "STOP", NC_FOOTER_ACTION_STOP },
+    { '6', "DIM", NC_FOOTER_ACTION_DIMS },
     { '#', "RUN", NC_FOOTER_ACTION_SINGLE },
     { '*', "RESET", NC_FOOTER_ACTION_RESET }
 };

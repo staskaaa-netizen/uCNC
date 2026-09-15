@@ -41,6 +41,28 @@ static uint8_t   g_cam_kb_raw[6];
 static cam_key_t g_cam_kb_key = CAM_KEY_NONE;
 static bool      g_cam_kb_changed = false;
 static bool      g_cam_kb_inited = false;
+static uint32_t  g_cam_kb_next_init_ms = 0;
+
+static void cam_keyboard_bus_recover(void)
+{
+    CAM_KB_I2C_PORT->sda(true);
+    CAM_KB_I2C_PORT->scl(true);
+    mcu_delay_us(10);
+
+    for (uint8_t i = 0; i < 9 && !CAM_KB_I2C_PORT->get_sda(); ++i) {
+        CAM_KB_I2C_PORT->scl(false);
+        mcu_delay_us(10);
+        CAM_KB_I2C_PORT->scl(true);
+        mcu_delay_us(10);
+    }
+
+    CAM_KB_I2C_PORT->sda(false);
+    mcu_delay_us(10);
+    CAM_KB_I2C_PORT->scl(true);
+    mcu_delay_us(10);
+    CAM_KB_I2C_PORT->sda(true);
+    mcu_delay_us(10);
+}
 
 static bool cam_keyboard_write_reg(uint8_t reg, uint8_t value)
 {
@@ -82,21 +104,28 @@ static void cam_keyboard_clear_raw(void)
 
 void cam_keyboard_init(void)
 {
+    bool ok = true;
+
     if (g_cam_kb_inited)
         return;
 
-    softi2c_config(CAM_KB_I2C_PORT, CAM_KB_I2C_FREQ);
+    if ((int32_t)(mcu_millis() - g_cam_kb_next_init_ms) < 0)
+        return;
 
-    (void)cam_keyboard_write_reg(TCA8418_REG_CFG, 0x01);
-    (void)cam_keyboard_write_reg(TCA8418_REG_KP_GPIO1, 0x0F);
-    (void)cam_keyboard_write_reg(TCA8418_REG_KP_GPIO2, 0x0F);
-    (void)cam_keyboard_write_reg(TCA8418_REG_KP_GPIO3, 0x00);
-    (void)cam_keyboard_write_reg(TCA8418_REG_INT_STAT, 0xFF);
+    softi2c_config(CAM_KB_I2C_PORT, CAM_KB_I2C_FREQ);
+    cam_keyboard_bus_recover();
+
+    ok = cam_keyboard_write_reg(TCA8418_REG_CFG, 0x01) && ok;
+    ok = cam_keyboard_write_reg(TCA8418_REG_KP_GPIO1, 0x0F) && ok;
+    ok = cam_keyboard_write_reg(TCA8418_REG_KP_GPIO2, 0x0F) && ok;
+    ok = cam_keyboard_write_reg(TCA8418_REG_KP_GPIO3, 0x00) && ok;
+    ok = cam_keyboard_write_reg(TCA8418_REG_INT_STAT, 0xFF) && ok;
 
     cam_keyboard_clear_raw();
     g_cam_kb_key = CAM_KEY_NONE;
     g_cam_kb_changed = false;
-    g_cam_kb_inited = true;
+    g_cam_kb_inited = ok;
+    g_cam_kb_next_init_ms = mcu_millis() + (ok ? 0u : 1000u);
 }
 
 cam_key_t cam_keyboard_decode_key(const uint8_t raw[6])
@@ -162,13 +191,18 @@ void cam_keyboard_update(void)
     uint8_t evt;
     bool got_press = false;
 
-    if (!g_cam_kb_inited)
+    if (!g_cam_kb_inited) {
+        cam_keyboard_init();
         return;
+    }
 
     g_cam_kb_changed = false;
 
-    if (!cam_keyboard_read_reg(TCA8418_REG_KEY_LCK_EC, &count))
+    if (!cam_keyboard_read_reg(TCA8418_REG_KEY_LCK_EC, &count)) {
+        g_cam_kb_inited = false;
+        g_cam_kb_next_init_ms = mcu_millis() + 1000u;
         return;
+    }
 
     count &= 0x0F;
     if (!count)

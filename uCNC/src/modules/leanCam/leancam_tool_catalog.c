@@ -7,6 +7,7 @@
 #include "leancam_tool_catalog.h"
 #include "leancam_resource.h"
 #include "leancam_code.h"
+#include "leancam_dictionary.h"
 #include "../file_system.h"
 
 #include <stdio.h>
@@ -35,7 +36,7 @@ static bool g_catalogs_loaded = false;
 
 static bool lc_tool_line_is_tool(const char *line)
 {
-    return lc_code_command_is(line, "TOOL");
+    return lc_code_tool_line_is(line);
 }
 
 static bool lc_tool_line_is_plain_storage(const char *line)
@@ -98,7 +99,7 @@ int lc_tool_line_t_value(const char *line)
 
     if (!lc_tool_line_is_tool(line))
         return -1;
-    if (!lc_code_get_field_text(line, "T", val, sizeof(val)))
+    if (!lc_code_get_field_text(line, LC_DICT_WORD_T, val, sizeof(val)))
         return -1;
     t = strtol(val, &endp, 10);
     if (!endp || *endp != 0)
@@ -151,11 +152,29 @@ static const char *lc_tool_catalog_default_line(int t)
     if (t == 0)
         snprintf(line,
                  sizeof(line),
-                 "TOOL T0 R0 ORIENT0 R_FEED0 FIN_FEED0 DOC0 FIN_DOC0 RPM800 XOFF0 ZOFF0");
+                 LC_DICT_WORD_T "0 "
+                 LC_DICT_WORD_R "0 "
+                 LC_DICT_WORD_O "0 "
+                 LC_DICT_WORD_F "0 "
+                 LC_DICT_WORD_FF "0 "
+                 LC_DICT_WORD_DOC "0 "
+                 LC_DICT_WORD_FDOC "0 "
+                 LC_DICT_WORD_S "800 "
+                 LC_DICT_WORD_XO "0 "
+                 LC_DICT_WORD_ZO "0");
     else
         snprintf(line,
                  sizeof(line),
-                 "TOOL T%d R0.8 ORIENT3 R_FEED120 FIN_FEED60 DOC2.0 FIN_DOC0.5 RPM800 XOFF0 ZOFF0",
+                 LC_DICT_WORD_T "%d "
+                 LC_DICT_WORD_R "0.8 "
+                 LC_DICT_WORD_O "3 "
+                 LC_DICT_WORD_F "120 "
+                 LC_DICT_WORD_FF "60 "
+                 LC_DICT_WORD_DOC "2.0 "
+                 LC_DICT_WORD_FDOC "0.5 "
+                 LC_DICT_WORD_S "800 "
+                 LC_DICT_WORD_XO "0 "
+                 LC_DICT_WORD_ZO "0",
                  t);
 
     return line;
@@ -185,20 +204,30 @@ bool lc_tool_catalog_add_raw(const char *line)
     if (lc_tool_catalog_has_t(lc_tool_line_t_value(line)))
         return false;
 
-    (void)lc_code_get_field_text(line, "T", t, sizeof(t));
-    (void)lc_code_get_field_text(line, "R", r, sizeof(r));
-    (void)lc_code_get_field_text(line, "ORIENT", orient, sizeof(orient));
-    (void)lc_code_get_field_text(line, "R_FEED", r_feed, sizeof(r_feed));
-    (void)lc_code_get_field_text(line, "FIN_FEED", fin_feed, sizeof(fin_feed));
-    (void)lc_code_get_field_text(line, "DOC", doc, sizeof(doc));
-    (void)lc_code_get_field_text(line, "FIN_DOC", fin_doc, sizeof(fin_doc));
-    (void)lc_code_get_field_text(line, "RPM", rpm, sizeof(rpm));
-    (void)lc_code_get_field_text(line, "XOFF", xoff, sizeof(xoff));
-    (void)lc_code_get_field_text(line, "ZOFF", zoff, sizeof(zoff));
+    if (!lc_code_get_field_text(line, LC_DICT_WORD_T, t, sizeof(t)) ||
+        !lc_code_get_field_text(line, LC_DICT_WORD_R, r, sizeof(r)) ||
+        !lc_code_get_field_text(line, LC_DICT_WORD_O, orient, sizeof(orient)) ||
+        !lc_code_get_field_text(line, LC_DICT_WORD_F, r_feed, sizeof(r_feed)) ||
+        !lc_code_get_field_text(line, LC_DICT_WORD_FF, fin_feed, sizeof(fin_feed)) ||
+        !lc_code_get_field_text(line, LC_DICT_WORD_DOC, doc, sizeof(doc)) ||
+        !lc_code_get_field_text(line, LC_DICT_WORD_FDOC, fin_doc, sizeof(fin_doc)) ||
+        !lc_code_get_field_text(line, LC_DICT_WORD_S, rpm, sizeof(rpm)) ||
+        !lc_code_get_field_text(line, LC_DICT_WORD_XO, xoff, sizeof(xoff)) ||
+        !lc_code_get_field_text(line, LC_DICT_WORD_ZO, zoff, sizeof(zoff)))
+        return false;
 
     snprintf(normalized,
              sizeof(normalized),
-             "TOOL T%.7s R%.7s ORIENT%.7s R_FEED%.7s FIN_FEED%.7s DOC%.7s FIN_DOC%.7s RPM%.7s XOFF%.7s ZOFF%.7s",
+             LC_DICT_WORD_T "%.7s "
+             LC_DICT_WORD_R "%.7s "
+             LC_DICT_WORD_O "%.7s "
+             LC_DICT_WORD_F "%.7s "
+             LC_DICT_WORD_FF "%.7s "
+             LC_DICT_WORD_DOC "%.7s "
+             LC_DICT_WORD_FDOC "%.7s "
+             LC_DICT_WORD_S "%.7s "
+             LC_DICT_WORD_XO "%.7s "
+             LC_DICT_WORD_ZO "%.7s",
              t, r, orient, r_feed, fin_feed, doc, fin_doc, rpm, xoff, zoff);
 
     strncpy(g_tools_catalog.lines[g_tools_catalog.count], normalized, MAX_LEN - 1);
@@ -390,7 +419,7 @@ const char *lc_tool_catalog_find_in_program_or_catalog(const program_t *prog, in
             const char *line = prog->lines[i];
             if (!lc_tool_line_is_tool(line))
                 continue;
-            if (lc_tool_line_get_float(line, "T", &tv) && (int)tv == t)
+            if (lc_tool_line_get_float(line, LC_DICT_WORD_T, &tv) && (int)tv == t)
                 return line;
         }
 
@@ -400,7 +429,7 @@ const char *lc_tool_catalog_find_in_program_or_catalog(const program_t *prog, in
             const char *line = prog->lines[i];
             if (!lc_tool_line_is_tool(line))
                 continue;
-            if (lc_tool_line_get_float(line, "T", &tv) && (int)tv == t)
+            if (lc_tool_line_get_float(line, LC_DICT_WORD_T, &tv) && (int)tv == t)
                 return line;
         }
     }
@@ -412,7 +441,7 @@ const char *lc_tool_catalog_find_in_program_or_catalog(const program_t *prog, in
         const char *line = g_tools_catalog.lines[i];
         if (!lc_tool_line_is_tool(line))
             continue;
-        if (lc_tool_line_get_float(line, "T", &tv) && (int)tv == t)
+        if (lc_tool_line_get_float(line, LC_DICT_WORD_T, &tv) && (int)tv == t)
         {
             if (!catalog_tool)
                 catalog_tool = line;

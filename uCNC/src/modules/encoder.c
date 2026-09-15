@@ -194,7 +194,7 @@ static uint16_t encoders_rpm[ENCODERS];
 #define ENC0_FREQ 400000
 #endif
 #ifndef ENC0_READ
-#define ENC0_READ read_encoder_mt6701_i2c(&enc0)
+#define ENC0_READ() read_encoder_mt6701_i2c(&enc0)
 #endif
 #elif ENC0_TYPE == ENC_TYPE_SSI
 #define ENC0_IO_MASK 0
@@ -202,12 +202,13 @@ static uint16_t encoders_rpm[ENCODERS];
 #define ENC0_FREQ 15000000
 #endif
 #ifndef ENC0_READ
-#define ENC0_READ read_encoder_mt6701_ssi(&enc0)
+#define ENC0_READ() read_encoder_mt6701_ssi(&enc0)
 #endif
 #elif ENC0_TYPE == ENC_TYPE_CUSTOM
 #define ENC0_IO_MASK 0
 #ifndef ENC0_READ
-#define ENC0_READ enc_custom_read(ENC0)
+extern int32_t enc_custom_read_enc0(void); // custom encoder read callback will be defined in by a user/custom module
+#define ENC0_READ() enc_custom_read_enc0()
 #endif
 #endif
 #endif
@@ -228,18 +229,19 @@ static uint16_t encoders_rpm[ENCODERS];
 #define ENC1_FREQ 400000
 #endif
 #ifndef ENC1_READ
-#define ENC1_READ read_encoder_mt6701_i2c(&enc1)
+#define ENC1_READ() read_encoder_mt6701_i2c(&enc1)
 #endif
 #elif ENC1_TYPE == ENC_TYPE_SSI
 #ifndef ENC1_FREQ
 #define ENC1_FREQ 15000000
 #endif
 #ifndef ENC1_READ
-#define ENC1_READ read_encoder_mt6701_ssi(&enc1)
+#define ENC1_READ() read_encoder_mt6701_ssi(&enc1)
 #endif
 #elif ENC1_TYPE == ENC_TYPE_CUSTOM
 #ifndef ENC1_READ
-#define ENC1_READ enc_custom_read(ENC1)
+extern int32_t enc_custom_read_enc1(void); // custom encoder read callback will be defined in by a user/custom module
+#define ENC1_READ() enc_custom_read_enc1()
 #endif
 #endif
 #endif
@@ -260,18 +262,19 @@ static uint16_t encoders_rpm[ENCODERS];
 #define ENC2_FREQ 400000
 #endif
 #ifndef ENC2_READ
-#define ENC2_READ read_encoder_mt6701_i2c(&enc2)
+#define ENC2_READ() read_encoder_mt6701_i2c(&enc2)
 #endif
 #elif ENC2_TYPE == ENC_TYPE_SSI
 #ifndef ENC2_FREQ
 #define ENC2_FREQ 15000000
 #endif
 #ifndef ENC2_READ
-#define ENC2_READ read_encoder_mt6701_ssi(&enc2)
+#define ENC2_READ() read_encoder_mt6701_ssi(&enc2)
 #endif
 #elif ENC2_TYPE == ENC_TYPE_CUSTOM
 #ifndef ENC2_READ
-#define ENC2_READ enc_custom_read(ENC2)
+extern int32_t enc_custom_read_enc2(void); // custom encoder read callback will be defined in by a user/custom module
+#define ENC2_READ() enc_custom_read_enc2()
 #endif
 #endif
 #endif
@@ -292,18 +295,19 @@ static uint16_t encoders_rpm[ENCODERS];
 #define ENC3_FREQ 400000
 #endif
 #ifndef ENC3_READ
-#define ENC3_READ read_encoder_mt6701_i2c(&enc3)
+#define ENC3_READ() read_encoder_mt6701_i2c(&enc3)
 #endif
 #elif ENC3_TYPE == ENC_TYPE_SSI
 #ifndef ENC3_FREQ
 #define ENC3_FREQ 15000000
 #endif
 #ifndef ENC3_READ
-#define ENC3_READ read_encoder_mt6701_ssi(&enc3)
+#define ENC3_READ() read_encoder_mt6701_ssi(&enc3)
 #endif
 #elif ENC3_TYPE == ENC_TYPE_CUSTOM
 #ifndef ENC3_READ
-#define ENC3_READ enc_custom_read(ENC3)
+extern int32_t enc_custom_read_enc3(void); // custom encoder read callback will be defined in by a user/custom module
+#define ENC3_READ() enc_custom_read_enc3()
 #endif
 #endif
 #endif
@@ -324,18 +328,19 @@ static uint16_t encoders_rpm[ENCODERS];
 #define ENC4_FREQ 400000
 #endif
 #ifndef ENC4_READ
-#define ENC4_READ read_encoder_mt6701_i2c(&enc4)
+#define ENC4_READ() read_encoder_mt6701_i2c(&enc4)
 #endif
 #elif ENC4_TYPE == ENC_TYPE_SSI
 #ifndef ENC4_FREQ
 #define ENC4_FREQ 15000000
 #endif
 #ifndef ENC4_READ
-#define ENC4_READ read_encoder_mt6701_ssi(&enc4)
+#define ENC4_READ() read_encoder_mt6701_ssi(&enc4)
 #endif
 #elif ENC4_TYPE == ENC_TYPE_CUSTOM
 #ifndef ENC4_READ
-#define ENC4_READ enc_custom_read(ENC4)
+extern int32_t enc_custom_read_enc4(void); // custom encoder read callback will be defined in by a user/custom module
+#define ENC4_READ() enc_custom_read_enc4()
 #endif
 #endif
 #endif
@@ -356,18 +361,19 @@ static uint16_t encoders_rpm[ENCODERS];
 #define ENC5_FREQ 400000
 #endif
 #ifndef ENC5_READ
-#define ENC5_READ read_encoder_mt6701_i2c(&enc5)
+#define ENC5_READ() read_encoder_mt6701_i2c(&enc5)
 #endif
 #elif ENC5_TYPE == ENC_TYPE_SSI
 #ifndef ENC5_FREQ
 #define ENC5_FREQ 15000000
 #endif
 #ifndef ENC5_READ
-#define ENC5_READ read_encoder_mt6701_ssi(&enc5)
+#define ENC5_READ() read_encoder_mt6701_ssi(&enc5)
 #endif
 #elif ENC5_TYPE == ENC_TYPE_CUSTOM
 #ifndef ENC5_READ
-#define ENC5_READ enc_custom_read(ENC5)
+extern int32_t enc_custom_read_enc5(void); // custom encoder read callback will be defined in by a user/custom module
+#define ENC5_READ() enc_custom_read_enc5()
 #endif
 #endif
 #endif
@@ -388,18 +394,19 @@ static uint16_t encoders_rpm[ENCODERS];
 #define ENC6_FREQ 400000
 #endif
 #ifndef ENC6_READ
-#define ENC6_READ read_encoder_mt6701_i2c(&enc6)
+#define ENC6_READ() read_encoder_mt6701_i2c(&enc6)
 #endif
 #elif ENC6_TYPE == ENC_TYPE_SSI
 #ifndef ENC6_FREQ
 #define ENC6_FREQ 15000000
 #endif
 #ifndef ENC6_READ
-#define ENC6_READ read_encoder_mt6701_ssi(&enc6)
+#define ENC6_READ() read_encoder_mt6701_ssi(&enc6)
 #endif
 #elif ENC6_TYPE == ENC_TYPE_CUSTOM
 #ifndef ENC6_READ
-#define ENC6_READ enc_custom_read(ENC6)
+extern int32_t enc_custom_read_enc6(void); // custom encoder read callback will be defined in by a user/custom module
+#define ENC6_READ() enc_custom_read_enc6()
 #endif
 #endif
 #endif
@@ -420,18 +427,19 @@ static uint16_t encoders_rpm[ENCODERS];
 #define ENC7_FREQ 400000
 #endif
 #ifndef ENC7_READ
-#define ENC7_READ read_encoder_mt6701_i2c(&enc7)
+#define ENC7_READ() read_encoder_mt6701_i2c(&enc7)
 #endif
 #elif ENC7_TYPE == ENC_TYPE_SSI
 #ifndef ENC7_FREQ
 #define ENC7_FREQ 15000000
 #endif
 #ifndef ENC7_READ
-#define ENC7_READ read_encoder_mt6701_ssi(&enc7)
+#define ENC7_READ() read_encoder_mt6701_ssi(&enc7)
 #endif
 #elif ENC7_TYPE == ENC_TYPE_CUSTOM
 #ifndef ENC7_READ
-#define ENC7_READ enc_custom_read(ENC7)
+extern int32_t enc_custom_read_enc7(void); // custom encoder read callback will be defined in by a user/custom module
+#define ENC7_READ() enc_custom_read_enc7()
 #endif
 #endif
 #endif
@@ -574,29 +582,36 @@ SOFTSPI(enc7, ENC7_FREQ, 0, UNDEF_PIN, ENC7_DIR, ENC7_PULSE);
 
 #if ENCODERS > 0 && (defined(ENC0_INDEX) || ENC0_VIRTUAL_INDEX)
 CREATE_HOOK(enc0_index);
+#define ENC0_INDEX_EVENT() HOOK_INVOKE(enc0_index)
 #endif
 #if ENCODERS > 1 && (defined(ENC1_INDEX) || ENC1_VIRTUAL_INDEX)
 CREATE_HOOK(enc1_index);
+#define ENC1_INDEX_EVENT() HOOK_INVOKE(enc1_index)
 #endif
 #if ENCODERS > 2 && (defined(ENC2_INDEX) || ENC2_VIRTUAL_INDEX)
 CREATE_HOOK(enc2_index);
+#define ENC2_INDEX_EVENT() HOOK_INVOKE(enc2_index)
 #endif
 #if ENCODERS > 3 && (defined(ENC3_INDEX) || ENC3_VIRTUAL_INDEX)
 CREATE_HOOK(enc3_index);
+#define ENC3_INDEX_EVENT() HOOK_INVOKE(enc3_index)
 #endif
 #if ENCODERS > 4 && (defined(ENC4_INDEX) || ENC4_VIRTUAL_INDEX)
 CREATE_HOOK(enc4_index);
+#define ENC4_INDEX_EVENT() HOOK_INVOKE(enc4_index)
 #endif
 #if ENCODERS > 5 && (defined(ENC5_INDEX) || ENC5_VIRTUAL_INDEX)
 CREATE_HOOK(enc5_index);
+#define ENC5_INDEX_EVENT() HOOK_INVOKE(enc5_index)
 #endif
 #if ENCODERS > 6 && (defined(ENC6_INDEX) || ENC6_VIRTUAL_INDEX)
 CREATE_HOOK(enc6_index);
+#define ENC6_INDEX_EVENT() HOOK_INVOKE(enc6_index)
 #endif
 #if ENCODERS > 7 && (defined(ENC7_INDEX) || ENC7_VIRTUAL_INDEX)
 CREATE_HOOK(enc7_index);
+#define ENC7_INDEX_EVENT() HOOK_INVOKE(enc7_index)
 #endif
-
 
 void __attribute__((weak)) enc0_pulse(void) {}
 void __attribute__((weak)) enc1_pulse(void) {}
@@ -607,12 +622,40 @@ void __attribute__((weak)) enc5_pulse(void) {}
 void __attribute__((weak)) enc6_pulse(void) {}
 void __attribute__((weak)) enc7_pulse(void) {}
 
+#ifndef ENC0_PULSE_EVENT
+#define ENC0_PULSE_EVENT() enc0_pulse()
+#endif
+#ifndef ENC1_PULSE_EVENT
+#define ENC1_PULSE_EVENT() enc1_pulse()
+#endif
+#ifndef ENC2_PULSE_EVENT
+#define ENC2_PULSE_EVENT() enc2_pulse()
+#endif
+#ifndef ENC3_PULSE_EVENT
+#define ENC3_PULSE_EVENT() enc3_pulse()
+#endif
+#ifndef ENC4_PULSE_EVENT
+#define ENC4_PULSE_EVENT() enc4_pulse()
+#endif
+#ifndef ENC5_PULSE_EVENT
+#define ENC5_PULSE_EVENT() enc5_pulse()
+#endif
+#ifndef ENC6_PULSE_EVENT
+#define ENC6_PULSE_EVENT() enc6_pulse()
+#endif
+#ifndef ENC7_PULSE_EVENT
+#define ENC7_PULSE_EVENT() enc7_pulse()
+#endif
+
+#define ENC_PULSE_EVENT(X) X##_PULSE_EVENT()
+#define ENC_INDEX_EVENT(X) X##_INDEX_EVENT()
+
 /**
  * Additional read functions for other types of encoders can be added later
  * For now support for the MT6701 is added
  */
 static int32_t encoder_last_read[ENCODERS] __attribute__((unused));
-//static uint16_t encoder_last_read[ENCODERS] __attribute__((unused));
+// static uint16_t encoder_last_read[ENCODERS] __attribute__((unused));
 static int32_t encoder_rpm_accum[ENCODERS] __attribute__((unused));
 static uint32_t encoder_rpm_tstamp[ENCODERS] __attribute__((unused));
 static uint8_t encoder_index_reset_done[ENCODERS] __attribute__((unused));
@@ -627,42 +670,42 @@ static void encoder_set_position_from_current_read(uint8_t i, int32_t position)
 	{
 #ifdef ENC0_READ
 	case ENC0:
-		encoder_read = ENC0_READ;
+		encoder_read = ENC0_READ();
 		break;
 #endif
 #ifdef ENC1_READ
 	case ENC1:
-		encoder_read = ENC1_READ;
+		encoder_read = ENC1_READ();
 		break;
 #endif
 #ifdef ENC2_READ
 	case ENC2:
-		encoder_read = ENC2_READ;
+		encoder_read = ENC2_READ();
 		break;
 #endif
 #ifdef ENC3_READ
 	case ENC3:
-		encoder_read = ENC3_READ;
+		encoder_read = ENC3_READ();
 		break;
 #endif
 #ifdef ENC4_READ
 	case ENC4:
-		encoder_read = ENC4_READ;
+		encoder_read = ENC4_READ();
 		break;
 #endif
 #ifdef ENC5_READ
 	case ENC5:
-		encoder_read = ENC5_READ;
+		encoder_read = ENC5_READ();
 		break;
 #endif
 #ifdef ENC6_READ
 	case ENC6:
-		encoder_read = ENC6_READ;
+		encoder_read = ENC6_READ();
 		break;
 #endif
 #ifdef ENC7_READ
 	case ENC7:
-		encoder_read = ENC7_READ;
+		encoder_read = ENC7_READ();
 		break;
 #endif
 	default:
@@ -1235,6 +1278,72 @@ bool encoder_get_index_debug_line(uint8_t i, char *line, uint32_t line_len, uint
 	return true;
 }
 
+#if ENC0_VIRTUAL_INDEX
+#undef ENC0_INDEX_EVENT
+#ifdef ENC0_INDEX_RESET_POSITION
+#define ENC0_INDEX_EVENT() encoder_set_position_from_current_read_once(ENC0, ENC0_INDEX_RESET_POSITION);encoder_record_index_reference(ENC0, encoder_get_position(ENC0))
+#else
+#define ENC0_INDEX_EVENT() encoder_record_index_reference(ENC0, encoder_get_position(ENC0))
+#endif
+#endif
+#if ENC1_VIRTUAL_INDEX
+#undef ENC1_INDEX_EVENT
+#ifdef ENC1_INDEX_RESET_POSITION
+#define ENC1_INDEX_EVENT() encoder_set_position_from_current_read_once(ENC1, ENC1_INDEX_RESET_POSITION);encoder_record_index_reference(ENC1, encoder_get_position(ENC1))
+#else
+#define ENC1_INDEX_EVENT() encoder_record_index_reference(ENC1, encoder_get_position(ENC1))
+#endif
+#endif
+#if ENC2_VIRTUAL_INDEX
+#undef ENC2_INDEX_EVENT
+#ifdef ENC2_INDEX_RESET_POSITION
+#define ENC2_INDEX_EVENT() encoder_set_position_from_current_read_once(ENC2, ENC2_INDEX_RESET_POSITION);encoder_record_index_reference(ENC2, encoder_get_position(ENC2))
+#else
+#define ENC2_INDEX_EVENT() encoder_record_index_reference(ENC2, encoder_get_position(ENC2))
+#endif
+#endif
+#if ENC3_VIRTUAL_INDEX
+#undef ENC3_INDEX_EVENT
+#ifdef ENC3_INDEX_RESET_POSITION
+#define ENC3_INDEX_EVENT() encoder_set_position_from_current_read_once(ENC3, ENC3_INDEX_RESET_POSITION);encoder_record_index_reference(ENC3, encoder_get_position(ENC3))
+#else
+#define ENC3_INDEX_EVENT() encoder_record_index_reference(ENC3, encoder_get_position(ENC3))
+#endif
+#endif
+#if ENC4_VIRTUAL_INDEX
+#undef ENC4_INDEX_EVENT
+#ifdef ENC4_INDEX_RESET_POSITION
+#define ENC4_INDEX_EVENT() encoder_set_position_from_current_read_once(ENC4, ENC4_INDEX_RESET_POSITION);encoder_record_index_reference(ENC4, encoder_get_position(ENC4))
+#else
+#define ENC4_INDEX_EVENT() encoder_record_index_reference(ENC4, encoder_get_position(ENC4))
+#endif
+#endif
+#if ENC5_VIRTUAL_INDEX
+#undef ENC5_INDEX_EVENT
+#ifdef ENC5_INDEX_RESET_POSITION
+#define ENC5_INDEX_EVENT() encoder_set_position_from_current_read_once(ENC5, ENC5_INDEX_RESET_POSITION);encoder_record_index_reference(ENC5, encoder_get_position(ENC5))
+#else
+#define ENC5_INDEX_EVENT() encoder_record_index_reference(ENC5, encoder_get_position(ENC5))
+#endif
+#endif
+#if ENC6_VIRTUAL_INDEX
+#undef ENC6_INDEX_EVENT
+#ifdef ENC6_INDEX_RESET_POSITION
+#define ENC6_INDEX_EVENT() encoder_set_position_from_current_read_once(ENC6, ENC6_INDEX_RESET_POSITION);encoder_record_index_reference(ENC6, encoder_get_position(ENC6))
+#else
+#define ENC6_INDEX_EVENT() encoder_record_index_reference(ENC6, encoder_get_position(ENC6))
+#endif
+#endif
+#if ENC7_VIRTUAL_INDEX
+#undef ENC7_INDEX_EVENT
+#ifdef ENC7_INDEX_RESET_POSITION
+#define ENC7_INDEX_EVENT() encoder_set_position_from_current_read_once(ENC7, ENC7_INDEX_RESET_POSITION);encoder_record_index_reference(ENC7, encoder_get_position(ENC7))
+#else
+#define ENC7_INDEX_EVENT() encoder_record_index_reference(ENC7, encoder_get_position(ENC7))
+#endif
+#endif
+
+
 #else
 
 void encoder_invoke_index(uint8_t i)
@@ -1386,24 +1495,18 @@ void encoders_update(uint8_t pulse, uint8_t diff)
 		encoders_tstamp[ENC0][1] = encoders_tstamp[ENC0][0];
 		encoders_tstamp[ENC0][0] = micros;
 #endif
-		enc0_pulse();
+		ENC0_PULSE_EVENT();
 #if (defined(ENC0_INDEX) && !ENC0_VIRTUAL_INDEX_ONLY && (ENC0_INDEX_IO_MASK == 0))
 		if (io_get_input(ENC0_INDEX))
 		{
-#ifdef ENC0_INDEX_RESET_POSITION
-			encoder_set_position_from_current_read_once(ENC0, ENC0_INDEX_RESET_POSITION);
-#endif
-			encoder_record_index_reference(ENC0, encoder_get_position(ENC0));
+			ENC0_INDEX_EVENT();
 		}
 #endif
 	}
 #if (defined(ENC0_INDEX) && !ENC0_VIRTUAL_INDEX_ONLY && (ENC0_INDEX_IO_MASK != 0))
 	if ((diff & ENC0_INDEX_IO_MASK))
 	{
-#ifdef ENC0_INDEX_RESET_POSITION
-		encoder_set_position_from_current_read_once(ENC0, ENC0_INDEX_RESET_POSITION);
-#endif
-		encoder_record_index_reference(ENC0, encoder_get_position(ENC0));
+		ENC0_INDEX_EVENT();
 	}
 #endif
 #endif
@@ -1417,18 +1520,18 @@ void encoders_update(uint8_t pulse, uint8_t diff)
 		encoders_tstamp[ENC1][1] = encoders_tstamp[ENC1][0];
 		encoders_tstamp[ENC1][0] = micros;
 #endif
-		enc1_pulse();
+		ENC1_PULSE_EVENT();
 #if (defined(ENC1_INDEX) && !ENC1_VIRTUAL_INDEX_ONLY && (ENC1_INDEX_IO_MASK == 0))
 		if (io_get_input(ENC1_INDEX))
 		{
-			encoder_record_index_reference(ENC1, encoder_get_position(ENC1));
+			ENC1_INDEX_EVENT();
 		}
 #endif
 	}
 #if (defined(ENC1_INDEX) && !ENC1_VIRTUAL_INDEX_ONLY && (ENC1_INDEX_IO_MASK != 0))
 	if ((diff & ENC1_INDEX_IO_MASK))
 	{
-		encoder_record_index_reference(ENC1, encoder_get_position(ENC1));
+		ENC1_INDEX_EVENT();
 	}
 #endif
 #endif
@@ -1442,18 +1545,18 @@ void encoders_update(uint8_t pulse, uint8_t diff)
 		encoders_tstamp[ENC2][1] = encoders_tstamp[ENC2][0];
 		encoders_tstamp[ENC2][0] = micros;
 #endif
-		enc2_pulse();
+		ENC2_PULSE_EVENT();
 #if (defined(ENC2_INDEX) && !ENC2_VIRTUAL_INDEX_ONLY && (ENC2_INDEX_IO_MASK == 0))
 		if (io_get_input(ENC2_INDEX))
 		{
-			encoder_record_index_reference(ENC2, encoder_get_position(ENC2));
+			ENC2_INDEX_EVENT();
 		}
 #endif
 	}
 #if (defined(ENC2_INDEX) && !ENC2_VIRTUAL_INDEX_ONLY && (ENC2_INDEX_IO_MASK != 0))
 	if ((diff & ENC2_INDEX_IO_MASK))
 	{
-		encoder_record_index_reference(ENC2, encoder_get_position(ENC2));
+		ENC2_INDEX_EVENT();
 	}
 #endif
 #endif
@@ -1467,18 +1570,18 @@ void encoders_update(uint8_t pulse, uint8_t diff)
 		encoders_tstamp[ENC3][1] = encoders_tstamp[ENC3][0];
 		encoders_tstamp[ENC3][0] = micros;
 #endif
-		enc3_pulse();
+		ENC3_PULSE_EVENT();
 #if (defined(ENC3_INDEX) && !ENC3_VIRTUAL_INDEX_ONLY && (ENC3_INDEX_IO_MASK == 0))
 		if (io_get_input(ENC3_INDEX))
 		{
-			encoder_record_index_reference(ENC3, encoder_get_position(ENC3));
+			ENC3_INDEX_EVENT();
 		}
 #endif
 	}
 #if (defined(ENC3_INDEX) && !ENC3_VIRTUAL_INDEX_ONLY && (ENC3_INDEX_IO_MASK != 0))
 	if ((diff & ENC3_INDEX_IO_MASK))
 	{
-		encoder_record_index_reference(ENC3, encoder_get_position(ENC3));
+		ENC3_INDEX_EVENT();
 	}
 #endif
 #endif
@@ -1492,18 +1595,18 @@ void encoders_update(uint8_t pulse, uint8_t diff)
 		encoders_tstamp[ENC4][1] = encoders_tstamp[ENC4][0];
 		encoders_tstamp[ENC4][0] = micros;
 #endif
-		enc4_pulse();
+		ENC4_PULSE_EVENT();
 #if (defined(ENC4_INDEX) && !ENC4_VIRTUAL_INDEX_ONLY && (ENC4_INDEX_IO_MASK == 0))
 		if (io_get_input(ENC4_INDEX))
 		{
-			encoder_record_index_reference(ENC4, encoder_get_position(ENC4));
+			ENC4_INDEX_EVENT();
 		}
 #endif
 	}
 #if (defined(ENC4_INDEX) && !ENC4_VIRTUAL_INDEX_ONLY && (ENC4_INDEX_IO_MASK != 0))
 	if ((diff & ENC4_INDEX_IO_MASK))
 	{
-		encoder_record_index_reference(ENC4, encoder_get_position(ENC4));
+		ENC4_INDEX_EVENT();
 	}
 #endif
 #endif
@@ -1517,18 +1620,18 @@ void encoders_update(uint8_t pulse, uint8_t diff)
 		encoders_tstamp[ENC5][1] = encoders_tstamp[ENC5][0];
 		encoders_tstamp[ENC5][0] = micros;
 #endif
-		enc5_pulse();
+		ENC5_PULSE_EVENT();
 #if (defined(ENC5_INDEX) && !ENC5_VIRTUAL_INDEX_ONLY && (ENC5_INDEX_IO_MASK == 0))
 		if (io_get_input(ENC5_INDEX))
 		{
-			encoder_record_index_reference(ENC5, encoder_get_position(ENC5));
+			ENC5_INDEX_EVENT();
 		}
 #endif
 	}
 #if (defined(ENC5_INDEX) && !ENC5_VIRTUAL_INDEX_ONLY && (ENC5_INDEX_IO_MASK != 0))
 	if ((diff & ENC5_INDEX_IO_MASK))
 	{
-		encoder_record_index_reference(ENC5, encoder_get_position(ENC5));
+		ENC5_INDEX_EVENT();
 	}
 #endif
 #endif
@@ -1542,18 +1645,18 @@ void encoders_update(uint8_t pulse, uint8_t diff)
 		encoders_tstamp[ENC6][1] = encoders_tstamp[ENC6][0];
 		encoders_tstamp[ENC6][0] = micros;
 #endif
-		enc6_pulse();
+		ENC6_PULSE_EVENT();
 #if (defined(ENC6_INDEX) && !ENC6_VIRTUAL_INDEX_ONLY && (ENC6_INDEX_IO_MASK == 0))
 		if (io_get_input(ENC6_INDEX))
 		{
-			encoder_record_index_reference(ENC6, encoder_get_position(ENC6));
+			ENC6_INDEX_EVENT();
 		}
 #endif
 	}
 #if (defined(ENC6_INDEX) && !ENC6_VIRTUAL_INDEX_ONLY && (ENC6_INDEX_IO_MASK != 0))
 	if ((diff & ENC6_INDEX_IO_MASK))
 	{
-		encoder_record_index_reference(ENC6, encoder_get_position(ENC6));
+		ENC6_INDEX_EVENT();
 	}
 #endif
 #endif
@@ -1567,22 +1670,21 @@ void encoders_update(uint8_t pulse, uint8_t diff)
 		encoders_tstamp[ENC7][1] = encoders_tstamp[ENC7][0];
 		encoders_tstamp[ENC7][0] = micros;
 #endif
-		enc7_pulse();
+		ENC7_PULSE_EVENT();
 #if (defined(ENC7_INDEX) && !ENC7_VIRTUAL_INDEX_ONLY && (ENC7_INDEX_IO_MASK == 0))
 		if (io_get_input(ENC7_INDEX))
 		{
-			encoder_record_index_reference(ENC7, encoder_get_position(ENC7));
+			ENC7_INDEX_EVENT();
 		}
 #endif
 	}
 #if (defined(ENC7_INDEX) && !ENC7_VIRTUAL_INDEX_ONLY && (ENC7_INDEX_IO_MASK != 0))
 	if ((diff & ENC7_INDEX_IO_MASK))
 	{
-		encoder_record_index_reference(ENC7, encoder_get_position(ENC7));
+		ENC7_INDEX_EVENT();
 	}
 #endif
 #endif
-
 }
 #else
 void encoders_update(uint8_t pulse, uint8_t diff) {}
@@ -1707,7 +1809,7 @@ static void encoder_update(uint8_t i)
 	{
 #ifdef ENC0_READ // enc0 has custom read
 	case ENC0:
-		encoder_read = ENC0_READ;
+		encoder_read = ENC0_READ();
 #ifdef ENC0_IS_INCREMENTAL
 		incremental = true;
 #endif
@@ -1715,7 +1817,7 @@ static void encoder_update(uint8_t i)
 #endif
 #ifdef ENC1_READ // enc1 has custom read
 	case ENC1:
-		encoder_read = ENC1_READ;
+		encoder_read = ENC1_READ();
 #ifdef ENC1_IS_INCREMENTAL
 		incremental = true;
 #endif
@@ -1723,7 +1825,7 @@ static void encoder_update(uint8_t i)
 #endif
 #ifdef ENC2_READ // enc2 has custom read
 	case ENC2:
-		encoder_read = ENC2_READ;
+		encoder_read = ENC2_READ();
 #ifdef ENC2_IS_INCREMENTAL
 		incremental = true;
 #endif
@@ -1731,7 +1833,7 @@ static void encoder_update(uint8_t i)
 #endif
 #ifdef ENC3_READ // enc3 has custom read
 	case ENC3:
-		encoder_read = ENC3_READ;
+		encoder_read = ENC3_READ();
 #ifdef ENC3_IS_INCREMENTAL
 		incremental = true;
 #endif
@@ -1739,7 +1841,7 @@ static void encoder_update(uint8_t i)
 #endif
 #ifdef ENC4_READ // enc4 has custom read
 	case ENC4:
-		encoder_read = ENC4_READ;
+		encoder_read = ENC4_READ();
 #ifdef ENC4_IS_INCREMENTAL
 		incremental = true;
 #endif
@@ -1747,7 +1849,7 @@ static void encoder_update(uint8_t i)
 #endif
 #ifdef ENC5_READ // enc5 has custom read
 	case ENC5:
-		encoder_read = ENC5_READ;
+		encoder_read = ENC5_READ();
 #ifdef ENC5_IS_INCREMENTAL
 		incremental = true;
 #endif
@@ -1755,7 +1857,7 @@ static void encoder_update(uint8_t i)
 #endif
 #ifdef ENC6_READ // enc6 has custom read
 	case ENC6:
-		encoder_read = ENC6_READ;
+		encoder_read = ENC6_READ();
 #ifdef ENC6_IS_INCREMENTAL
 		incremental = true;
 #endif
@@ -1763,7 +1865,7 @@ static void encoder_update(uint8_t i)
 #endif
 #ifdef ENC7_READ // enc7 has custom read
 	case ENC7:
-		encoder_read = ENC7_READ;
+		encoder_read = ENC7_READ();
 #ifdef ENC7_IS_INCREMENTAL
 		incremental = true;
 #endif
@@ -2017,7 +2119,69 @@ DECL_MODULE(encoder)
 #endif
 }
 
-// allow custom encoder implementations
-int32_t __attribute__((weak)) enc_custom_read(uint8_t i) { return 0; }
+
+/* Compatibility for hardware backends using the indexed custom-read hook.
+ * Upstream per-encoder callbacks can override these weak adapters directly. */
+int32_t __attribute__((weak)) enc_custom_read(uint8_t i)
+{
+	(void)i;
+	return 0;
+}
+
+#if ENCODERS > 0 && ENC0_TYPE == ENC_TYPE_CUSTOM
+int32_t __attribute__((weak)) enc_custom_read_enc0(void)
+{
+	return enc_custom_read(ENC0);
+}
+#endif
+
+#if ENCODERS > 1 && ENC1_TYPE == ENC_TYPE_CUSTOM
+int32_t __attribute__((weak)) enc_custom_read_enc1(void)
+{
+	return enc_custom_read(ENC1);
+}
+#endif
+
+#if ENCODERS > 2 && ENC2_TYPE == ENC_TYPE_CUSTOM
+int32_t __attribute__((weak)) enc_custom_read_enc2(void)
+{
+	return enc_custom_read(ENC2);
+}
+#endif
+
+#if ENCODERS > 3 && ENC3_TYPE == ENC_TYPE_CUSTOM
+int32_t __attribute__((weak)) enc_custom_read_enc3(void)
+{
+	return enc_custom_read(ENC3);
+}
+#endif
+
+#if ENCODERS > 4 && ENC4_TYPE == ENC_TYPE_CUSTOM
+int32_t __attribute__((weak)) enc_custom_read_enc4(void)
+{
+	return enc_custom_read(ENC4);
+}
+#endif
+
+#if ENCODERS > 5 && ENC5_TYPE == ENC_TYPE_CUSTOM
+int32_t __attribute__((weak)) enc_custom_read_enc5(void)
+{
+	return enc_custom_read(ENC5);
+}
+#endif
+
+#if ENCODERS > 6 && ENC6_TYPE == ENC_TYPE_CUSTOM
+int32_t __attribute__((weak)) enc_custom_read_enc6(void)
+{
+	return enc_custom_read(ENC6);
+}
+#endif
+
+#if ENCODERS > 7 && ENC7_TYPE == ENC_TYPE_CUSTOM
+int32_t __attribute__((weak)) enc_custom_read_enc7(void)
+{
+	return enc_custom_read(ENC7);
+}
+#endif
 
 #endif

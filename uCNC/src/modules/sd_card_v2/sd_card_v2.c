@@ -20,6 +20,7 @@
 #include "src/cnc.h"
 #include "src/modules/file_system.h"
 #include "sd_messages.h"
+#include "mmcsd.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -50,9 +51,17 @@
 #error "This module is not compatible with the current version of µCNC"
 #endif
 
-//#ifndef SD_CARD_DETECT_PIN
-//#define SD_CARD_DETECT_PIN DIN19
-//#endif
+#ifndef SD_CARD_DETECT_PIN
+#define SD_CARD_DETECT_PIN UNDEF_PIN
+#endif
+
+#ifndef SD_SPI_CS
+#if SD_CARD_INTERFACE == SD_CARD_HW_SPI2
+#define SD_SPI_CS SPI2_CS
+#else
+#define SD_SPI_CS SPI_CS
+#endif
+#endif
 
 #ifndef SD_CONTINUE_ON_GCODE_ERROR
 #define SD_STOP_ON_GCODE_ERROR
@@ -344,7 +353,8 @@ bool sd_fs_remove(const char *path)
 bool sd_fs_next_file(fs_file_t *fp, fs_file_info_t *finfo)
 {
 	FILINFO info;
-	if (sd_readdir(fp->file_ptr, &info) != FR_OK)
+	memset(&info, 0, sizeof(FILINFO));
+	if (!fp || !finfo || (sd_readdir(fp->file_ptr, &info) != FR_OK))
 	{
 		return false;
 	}
@@ -664,6 +674,11 @@ CREATE_EVENT_LISTENER_WITHLOCK(grbl_cmd, sd_card_cmd_parser, SD_CARD_BUS_LOCK);
 DECL_MODULE(sd_card_v2)
 {
 	LC_SD_INFO("SD:module enter interface=%d dma=%d detect=%d", SD_CARD_INTERFACE, SD_CARD_SPI_DMA ? 1 : 0, SD_CARD_DETECT_PIN);
+	// force pin configuration
+#ifndef SD_CARD_CUSTOM_HW_DRIVER
+	io_config_output(SD_SPI_CS);
+	io_set_output(SD_SPI_CS);
+#endif
 	// starts the file system and system commands
 	LOAD_MODULE(file_system);
 #ifndef SD_CARD_NO_SYSTEM_MENU

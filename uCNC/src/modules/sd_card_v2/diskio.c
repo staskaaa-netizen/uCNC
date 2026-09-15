@@ -94,10 +94,10 @@ HARDSPI(mmcsd_spi, 100000UL, 0, mcu_spi2_port);
 // #define SD_DEBUG
 #ifdef SD_DEBUG
 #define DEBUGSTR(x) serial_print_str(x "\r\n")
-#define DEBUGINT(x)    \
+#define DEBUGINT(x)      \
 	serial_print_int(x); \
 	serial_print_str("\r\n")
-#define DEBUGFFLT(x)   \
+#define DEBUGFFLT(x)     \
 	serial_print_flt(x); \
 	serial_print_str("\r\n")
 #else
@@ -185,6 +185,7 @@ bool mmcsd_message(const uint8_t *buff, uint16_t count, uint8_t token)
 
 		// sends data to buffer
 		softspi_bulk_xmit(SD_SPI_PORT, buff, NULL, 512);
+		buff += 512;
 
 		// CRC dummy
 		softspi_xmit(SD_SPI_PORT, 0xFF);
@@ -453,6 +454,8 @@ DSTATUS disk_initialize(BYTE pdrv)
 	mcu_config_output(SD_SPI_CS);
 	mcu_set_output(SD_SPI_CS);
 	LC_SD_INFO("SD:cs configured high");
+	mcu_clear_output(SD_SPI_CS);
+	cnc_delay_ms(10);
 
 	uint8_t resp[4], crc41;
 	uint32_t high_arg;
@@ -473,12 +476,15 @@ DSTATUS disk_initialize(BYTE pdrv)
 	{
 		LC_SD_INFO("SD:CMD0 attempt=%u", (uint32_t)(4 - j));
 		mcu_set_output(SD_SPI_CS);
+		cnc_delay_ms(10);
 		for (uint8_t i = 10; i != 0; i--)
 		{
 			softspi_xmit(SD_SPI_PORT, 0xFF);
 		}
 
 		mcu_clear_output(SD_SPI_CS);
+		cnc_delay_ms(10);
+		softspi_xmit(SD_SPI_PORT, 0xFF);
 		if (mmcsd_command(0, 0x00, 0x95) == 0x01)
 		{
 			mmcsd_card.detected = 1;
@@ -659,10 +665,10 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff)
 /*-----------------------------------------------------------------------*/
 
 DRESULT disk_readp(
-		BYTE *buff,		/* Pointer to the read buffer (NULL:Forward to the stream) */
-		DWORD sector, /* Sector number (LBA) */
-		UINT offset,	/* Byte offset to read from (0..511) */
-		UINT count		/* Number of bytes to read (ofs + cnt mus be <= 512) */
+	BYTE *buff,	  /* Pointer to the read buffer (NULL:Forward to the stream) */
+	DWORD sector, /* Sector number (LBA) */
+	UINT offset,  /* Byte offset to read from (0..511) */
+	UINT count	  /* Number of bytes to read (ofs + cnt mus be <= 512) */
 )
 {
 	uint8_t cleanup __attribute__((__cleanup__(mmcsd_release))) = 1;
@@ -740,8 +746,8 @@ DRESULT disk_readp(
 /*-----------------------------------------------------------------------*/
 
 DRESULT disk_writep(
-		const BYTE *buff, /* Pointer to the bytes to be written (NULL:Initiate/Finalize sector write) */
-		DWORD sector			/* Number of bytes to send, Sector number (LBA) or zero */
+	const BYTE *buff, /* Pointer to the bytes to be written (NULL:Initiate/Finalize sector write) */
+	DWORD sector	  /* Number of bytes to send, Sector number (LBA) or zero */
 )
 {
 	uint8_t error = RES_OK;

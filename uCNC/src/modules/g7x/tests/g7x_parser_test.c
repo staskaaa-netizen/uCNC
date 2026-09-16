@@ -3,6 +3,8 @@
 #include "src/cnc.h"
 #include "../g7x.h"
 #include "../../nc/nc_run.h"
+#include "../../nc/nc_feedback.h"
+#include <string.h>
 #include <stdio.h>
 #include <math.h>
 
@@ -63,6 +65,12 @@ static int command(const char *line, uint8_t want)
 int main(void)
 {
     int fails = 0;
+    if (!strstr(nc_feedback_lock(SETTINGS_READ_ERROR, EXEC_POSITION_MAYBE_LOST, false), "$RST=*")) fails++;
+    if (!strstr(nc_feedback_lock(SETTINGS_WRITE_ERROR, 0, false), "save failed")) fails++;
+    if (!strstr(nc_feedback_lock(0, EXEC_KILL | EXEC_HOLD, false), "alarm")) fails++;
+    if (!strstr(nc_feedback_lock(0, EXEC_POSITION_MAYBE_LOST, false), "$H")) fails++;
+    if (nc_feedback_lock(0, 0, false)[0]) fails++;
+    if (!strstr(nc_feedback_error(STATUS_BAD_NUMBER_FORMAT), "number")) fails++;
     cnc_init();
     cnc_unit_test_start();
     ADD_EVENT_LISTENER(gcode_exec, record_thread);
@@ -176,6 +184,9 @@ int main(void)
     if (cnc_parse_cmd() != STATUS_INVALID_STATEMENT || nc_run_active()) {
         puts("FAIL NC abort on contour error"); fails++;
     }
+    if (nc_run_error() != STATUS_INVALID_STATEMENT || nc_run_error_line() != 4) {
+        puts("FAIL NC source error location"); fails++;
+    }
     if (grbl_stream_available()) { puts("FAIL NC retained source after error"); fails++; }
 
     nc_document_init(&doc);
@@ -256,6 +267,19 @@ int main(void)
     }
     (void)grbl_stream_available();
     if (g7x_parser_busy()) { puts("FAIL complete NC collector cleanup"); fails++; }
+    nc_document_init(&doc);
+    nc_insert_line(&doc, 0, "G1 Xbad");
+    if (!nc_run_send_document_line(&doc, 0)) fails++;
+    if (cnc_parse_cmd() == STATUS_OK || !nc_run_error() || nc_run_error_line() != 0) {
+        puts("FAIL selected-line error notification"); fails++;
+    }
+    nc_document_init(&doc);
+    nc_insert_line(&doc, 0, "G0 X42");
+    if (!nc_run_send_document_line(&doc, 0)) fails++;
+    if (cnc_parse_cmd() != STATUS_OK || nc_run_error()) {
+        puts("FAIL selected-line retry"); fails++;
+    }
+    (void)grbl_stream_available();
     printf("Parser integration: %d failures\n", fails);
     return fails ? 1 : 0;
 }

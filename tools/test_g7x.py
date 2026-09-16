@@ -47,6 +47,7 @@ if __name__ == "__main__":
                     "uCNC/src/hal/mcus/virtual/virtual_windows.c",
                     "uCNC/src/modules/g7_g8/parser_g7_g8.c", *common,
                     "uCNC/src/modules/nc/nc.c", "uCNC/src/modules/nc/nc_run.c",
+                    "uCNC/src/modules/nc/nc_feedback.c",
                     f"{module}/tests/g7x_parser_test.c"]
         flags = ["-DPIO_UNIT_TESTING", "-DUCNC_IGNORE_BOARDMAP_OVERRIDES",
                  "-DUCNC_IGNORE_HAL_OVERRIDES", "-DENABLE_PARSER_MODULES",

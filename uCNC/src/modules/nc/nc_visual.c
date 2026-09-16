@@ -4,6 +4,7 @@
 #include "../../interface/grbl_stream.h"
 #include "nc.h"
 #include "nc_emit.h"
+#include "nc_feedback.h"
 #include "nc_files.h"
 #include "nc_menu.h"
 #include "nc_palette.h"
@@ -55,6 +56,41 @@ static bool g_nc_visual_in_draw;
 static nc_document_t g_nc_visual_doc;
 static char g_nc_visual_status[64];
 static bool g_nc_visual_dirty;
+static char g_nc_visual_command_error[96];
+static uint32_t g_nc_visual_notice_signature;
+
+static uint8_t nc_visual_settings_error(void)
+{
+#ifndef DISABLE_SAFE_SETTINGS
+    return g_settings_error;
+#else
+    return 0;
+#endif
+}
+
+static bool nc_visual_parse_error(void *args)
+{
+    uint8_t error = *(uint8_t *)args;
+    if (nc_run_error())
+        snprintf(g_nc_visual_command_error, sizeof(g_nc_visual_command_error),
+                 "Line %lu error %u: %s", (unsigned long)(nc_run_error_line() + 1),
+                 error, nc_feedback_error(error));
+    else
+        snprintf(g_nc_visual_command_error, sizeof(g_nc_visual_command_error),
+                 "Error %u: %s", error, nc_feedback_error(error));
+    g_nc_visual_dirty = true;
+    return EVENT_CONTINUE;
+}
+CREATE_EVENT_LISTENER(cnc_parse_cmd_error, nc_visual_parse_error);
+
+static bool nc_visual_parser_reset(void *args)
+{
+    (void)args;
+    g_nc_visual_command_error[0] = '\0';
+    g_nc_visual_dirty = true;
+    return EVENT_CONTINUE;
+}
+CREATE_EVENT_LISTENER(parser_reset, nc_visual_parser_reset);
 static bool g_nc_visual_sim_stock = true;
 static bool g_nc_visual_sim_path = true;
 static bool g_nc_visual_sim_rough = true;
@@ -2483,6 +2519,7 @@ static void nc_visual_run_arm(size_t line, const char *label)
 static void nc_visual_run_step(void)
 {
     size_t line = g_nc_visual_doc.cursor_line;
+    g_nc_visual_command_error[0] = '\0';
 
     if (cnc_get_exec_state(EXEC_GCODE_LOCKED) || cnc_has_alarm()) {
         snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "RUN locked: check controller status (?)");
@@ -2957,6 +2994,7 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
         break;
     case NC_FOOTER_ACTION_SEND:
         if (g_nc_visual_mode == NC_MODE_MDI) {
+            g_nc_visual_command_error[0] = '\0';
             size_t line = g_nc_visual_doc.cursor_line;
             if (nc_run_send_document_line(&g_nc_visual_doc, line)) {
                 snprintf(g_nc_visual_status,
@@ -3226,6 +3264,22 @@ static void nc_visual_draw_header(const nc_snapshot_t *s)
              (double)(runtime ? runtime->feed : 0.0f),
              runtime ? runtime->spindle : 0);
     lvds_draw_text(12, 10, buf, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+    const char *notice = nc_feedback_lock(nc_visual_settings_error(),
+                                         runtime ? runtime->exec_state : 0, cnc_has_alarm());
+    if (!notice[0]) notice = g_nc_visual_command_error;
+    if (!notice[0] && nc_run_error()) {
+        snprintf(buf, sizeof(buf), "Line %lu error %u: %s",
+                 (unsigned long)(nc_run_error_line() + 1), nc_run_error(),
+                 nc_feedback_error(nc_run_error()));
+        notice = buf;
+    }
+    if (notice[0]) {
+        lvds_draw_text(12, 31, notice, NC_VISUAL_ERROR, NC_VISUAL_HEADER, LVDS_FONT_SMALL);
+        return;
+    }
+#ifndef NC_UI_DEBUG_TIMING
+    return;
+#endif
     snprintf(fps,
              sizeof(fps),
              "%u S%u H%u V%u R%u F%u P%u T%u",
@@ -3490,6 +3544,8 @@ void nc_visual_init(void)
     nc_palette_init();
     nc_files_init();
     nc_run_init();
+    ADD_EVENT_LISTENER(cnc_parse_cmd_error, nc_visual_parse_error);
+    ADD_EVENT_LISTENER(parser_reset, nc_visual_parser_reset);
     nc_state_init();
     g_nc_visual_mode = nc_state_mode();
     if (g_nc_visual_mode < 0 || g_nc_visual_mode >= NC_MODE_COUNT) {
@@ -3617,6 +3673,15 @@ bool nc_visual_dirty(void)
 
 bool nc_visual_periodic_needed(void)
 {
+    uint32_t signature = cnc_get_exec_state(EXEC_ALLACTIVE) |
+                         ((uint32_t)nc_visual_settings_error() << 16) |
+                         ((uint32_t)cnc_has_alarm() << 24) |
+                         ((uint32_t)nc_run_error() << 25);
+    if (signature != g_nc_visual_notice_signature) {
+        g_nc_visual_notice_signature = signature;
+        g_nc_visual_dirty = true;
+        return true;
+    }
     return g_nc_visual_mode == NC_MODE_MANUAL ||
            (g_nc_visual_mode == NC_MODE_RUN &&
             (nc_run_active() ||

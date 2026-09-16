@@ -12,14 +12,19 @@ static bool g_nc_run_active;
 static bool g_nc_run_hold;
 static bool g_nc_run_done;
 static size_t g_nc_run_line;
+static uint8_t g_nc_run_error;
+static size_t g_nc_run_error_line;
+static size_t g_nc_run_last_sent_line;
 static char g_nc_run_stream_line[NC_MAX_LINE_LEN + 2];
 static size_t g_nc_run_stream_pos;
 static size_t g_nc_run_stream_len;
 static const nc_document_t *g_nc_run_stream_doc;
 static bool g_nc_run_stream_active;
+static bool g_nc_run_single_pending;
 static size_t g_nc_run_stream_end_line;
 
 static bool nc_run_stream_load_line(void);
+static void nc_run_stream_clear(void);
 static bool nc_run_failed(void *args);
 static bool nc_run_parser_reset(void *args);
 CREATE_EVENT_LISTENER(cnc_parse_cmd_error, nc_run_failed);
@@ -29,6 +34,10 @@ static uint8_t nc_run_stream_available(void)
 {
     if (g_nc_run_stream_pos < g_nc_run_stream_len) {
         return 1u;
+    }
+    if (g_nc_run_single_pending) {
+        nc_run_stream_clear();
+        return 0u;
     }
     return nc_run_stream_load_line() ? 1u : 0u;
 }
@@ -44,7 +53,8 @@ static uint8_t nc_run_stream_getc(void)
 
 static void nc_run_stream_clear(void)
 {
-    bool was_active = g_nc_run_stream_active;
+    bool was_active = g_nc_run_stream_active || g_nc_run_single_pending;
+    g_nc_run_single_pending = false;
 
     g_nc_run_stream_pos = 0;
     g_nc_run_stream_len = 0;
@@ -56,6 +66,8 @@ static void nc_run_stream_clear(void)
         g_nc_run_active = false;
         g_nc_run_done = !g7x_parser_busy();
         if (!g_nc_run_done) {
+            g_nc_run_error = STATUS_INVALID_STATEMENT;
+            g_nc_run_error_line = g_nc_run_last_sent_line;
             g7x_parser_cancel();
             grbl_stream_printf("[MSG:NC stopped: incomplete G7x cycle]\r\n");
         }
@@ -140,6 +152,8 @@ void nc_run_init(void)
 static bool nc_run_failed(void *args)
 {
     if (g_nc_run_stream_active || g_nc_run_active) {
+        g_nc_run_error = *(uint8_t *)args;
+        g_nc_run_error_line = g_nc_run_last_sent_line;
         grbl_stream_printf("[MSG:NC stopped on error %u]\r\n", (unsigned)*(uint8_t *)args);
         if (*(uint8_t *)args == STATUS_SYSTEM_GC_LOCK)
             grbl_stream_printf("[MSG:NC lock state=%u alarm=%u; check ?]\r\n",
@@ -155,7 +169,7 @@ static bool nc_run_failed(void *args)
 static bool nc_run_parser_reset(void *args)
 {
     (void)args;
-    if (g_nc_run_stream_active)
+    if (g_nc_run_stream_active || g_nc_run_single_pending)
         nc_run_stream_clear();
     nc_run_reset();
     return EVENT_CONTINUE;
@@ -171,6 +185,7 @@ bool nc_run_arm(const nc_document_t *doc, size_t line)
     }
 
     g_nc_run_line = line;
+    g_nc_run_error = STATUS_OK;
     g_nc_run_active = true;
     g_nc_run_hold = cnc_get_exec_state(EXEC_HOLD | EXEC_DOOR) != 0;
     g_nc_run_done = false;
@@ -179,6 +194,7 @@ bool nc_run_arm(const nc_document_t *doc, size_t line)
 
 void nc_run_reset(void)
 {
+    g_nc_run_error = STATUS_OK;
     g_nc_run_active = false;
     g_nc_run_hold = false;
     g_nc_run_done = false;
@@ -191,7 +207,7 @@ void nc_run_stop(void)
         cnc_set_exec_state(EXEC_CANCELING);
         g7x_parser_cancel();
     }
-    if (g_nc_run_stream_active)
+    if (g_nc_run_stream_active || g_nc_run_single_pending)
         nc_run_stream_clear();
     g_nc_run_active = false;
     g_nc_run_hold = false;
@@ -229,6 +245,9 @@ size_t nc_run_line(void)
 {
     return g_nc_run_line;
 }
+
+uint8_t nc_run_error(void) { return g_nc_run_error; }
+size_t nc_run_error_line(void) { return g_nc_run_error_line; }
 
 void nc_run_set_line(const nc_document_t *doc, size_t line)
 {
@@ -285,9 +304,12 @@ bool nc_run_send_document_line(const nc_document_t *doc, size_t line)
     }
 
     nc_run_send_line(text);
+    g_nc_run_single_pending = true;
+    g_nc_run_error = STATUS_OK;
+    g_nc_run_last_sent_line = line;
+    g_nc_run_active = true;
     g_nc_run_line = line + 1u;
     g_nc_run_done = true;
-    g_nc_run_active = false;
     return true;
 }
 
@@ -332,7 +354,7 @@ static bool nc_run_stream_load_line(void)
     g_nc_run_stream_pos = 0;
     g_nc_run_stream_len = (size_t)n;
     grbl_stream_printf("[MSG:NC SEND %.96s]\r\n", emit);
-    (void)emitted_line;
+    g_nc_run_last_sent_line = emitted_line;
     return true;
 }
 

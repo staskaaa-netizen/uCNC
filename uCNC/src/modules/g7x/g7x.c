@@ -299,7 +299,7 @@ static bool g7x_expand_corner(g7x_contour_element_t *prev,
     if (!g7x_corner_tangents(p0, p1, p2, amount, &t1, &t2, &center, &actual_amount, &ccw))
         return false;
 
-#if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
+#if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST) && defined(G7X_DEBUG_CORNERS)
     {
         float display_cx = x_is_radius ? center.x * 2.0f : center.x;
         float display_t1x = x_is_radius ? t1.x * 2.0f : t1.x;

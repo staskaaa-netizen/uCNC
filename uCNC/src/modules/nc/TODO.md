@@ -1,5 +1,44 @@
 # NC TODO
 
+## UI feedback completed (2026-09-16)
+
+- [x] Persistent settings-invalid banner with `$RST=*` guidance and explicit
+  notice that it resets settings/offsets; storage-write failure has its own
+  message. No automatic reset or unlock.
+- [x] Distinguish controller alarm, untrusted position, door and jog locks in
+  on-screen guidance; refresh when controller/settings state changes.
+- [x] Show readable command errors with numeric codes and source lines for NC
+  RUN/selected-line sends, including rejected parameters and missing G80.
+- [x] Hide UI timing counters by default (`NC_UI_DEBUG_TIMING` enables them).
+- [x] Stop repeated corner diagnostics during preview redraws
+  (`G7X_DEBUG_CORNERS` enables them).
+- [x] Preserve selection when switching screens that open the same file during
+  the current session; cursor persistence across reboot remains future work.
+- [ ] Bench-check banner readability, error recovery and screen selection on
+  the actual display. Software checks and firmware build do not validate layout.
+
+## Dedicated depth-per-pass control
+
+- [ ] Add a dedicated rotary encoder or potentiometer for the G71 U depth of
+  cut (material removed per pass, not the F feed-rate override).
+- [ ] EDIT: use the knob to set the selected cycle's U value and save it in the
+  program through the normal editing flow.
+- [ ] RUN: apply a live override relative to programmed U, approximately -80%
+  to +80% (20%–180% of the programmed depth). Show programmed U, requested
+  override and effective depth separately.
+- [ ] During an engaged cutting pass, allow only a decrease in depth. Defer any
+  requested increase until the G0/retract/return phase, then apply it to the
+  next pass. A later reduction must replace any pending higher request.
+- [ ] Define and test the safe transition for a decrease during engagement:
+  account for already queued motion, avoid abrupt tool movement, and maintain
+  contour, finish allowance and remaining-stock bookkeeping. Do not simply
+  change U on motion already queued in the planner.
+- [ ] Keep this in the shared G7x generator/runtime; NC provides knob input and
+  display. Identify the pass phase explicitly rather than treating every G0 as
+  permission to increase depth. Decide later how this maps to G72's W word.
+- [ ] Bench tests: knob limits/noise, decrease while cutting, deferred increase,
+  changed pending request, hold/resume, Stop/reset, and the final shallow pass.
+
 ## Completed software work (2026-09-16)
 
 - [x] Serialize generated G7x blocks before subsequent source commands; preserve

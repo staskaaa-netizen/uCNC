@@ -4,6 +4,15 @@ Use this as a short hardware pass list while NC is still pre-alpha.
 
 ## Boot and Stability
 
+- With invalid saved settings, every screen shows the settings/reset guidance
+  without requiring a serial terminal; ordinary navigation must not hide it.
+- After an intentional settings reset, the banner clears when the settings
+  error clears. No UI action should reset settings automatically.
+- Submit an invalid RUN/MDI parameter: check readable error, numeric code and
+  correct source line; correct/retry and confirm the old error clears.
+- A runtime alarm, door or untrusted-position lock updates the header even when
+  the current screen is otherwise idle.
+
 - Reflash, boot, and verify activity/status keeps updating.
 - Reboot with last EDIT/SIM/RUN/TOOLS files stored and verify paths reopen.
 - Switch modes with `A` through MANUAL, EDIT, SIM, MDI, RUN, TOOLS.

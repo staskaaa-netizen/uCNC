@@ -152,12 +152,9 @@ typedef struct {
 #define G7X_MAX_THREAD_PASSES 500
 #endif
 
+/* The generator is hardware independent. Native G76 additionally needs G33. */
 #ifndef G7X_ENABLE_G76
-#if defined(G33_ENCODER) || defined(G7X_HOST_TEST)
 #define G7X_ENABLE_G76 1
-#else
-#define G7X_ENABLE_G76 0
-#endif
 #endif
 
 typedef struct {
@@ -170,6 +167,8 @@ typedef struct {
     int finish_left;
     int tool_angle;
     int chamfer;
+    int pass_kind; /* 0 rough, 1 finish, 2 spring */
+    bool semantic_schedule;
     float d_start;
     float d_end;
     float depth;
@@ -232,6 +231,7 @@ g7x_step_result_t g7x_stream_next(g7x_stream_t *stream, char *out, size_t out_sz
 g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event);
 g7x_step_result_t g7x_stream_next_block(g7x_stream_t *stream, g7x_motion_block_t *block);
 bool g7x_parser_busy(void);
+void g7x_parser_cancel(void);
 
 void g7x_thread_reset(g7x_thread_stream_t *stream);
 g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,

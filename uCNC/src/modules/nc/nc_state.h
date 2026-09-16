@@ -14,7 +14,7 @@ extern "C" {
 #define NC_TOOL_PATH "tool.t"
 
 typedef struct {
-    uint8_t exec_state;
+    uint16_t exec_state;
     float x;
     float z;
     float feed;

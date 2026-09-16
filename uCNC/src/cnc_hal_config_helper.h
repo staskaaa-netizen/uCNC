@@ -53,7 +53,9 @@ extern "C"
 #include "hal/tools/tool.h" //configures the kinematics for the cnc machine
 // final HAL configurations
 #include "../cnc_hal_config.h"		//inicializes the HAL hardcoded connections
+#ifndef UCNC_IGNORE_HAL_OVERRIDES
 #include "../cnc_hal_overrides.h"	//config override file
+#endif
 #include "modules/shift_register.h" // io extender
 
 	/**

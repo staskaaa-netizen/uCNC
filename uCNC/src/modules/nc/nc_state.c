@@ -282,7 +282,7 @@ void nc_state_runtime(nc_runtime_state_t *state)
     }
 
     memset(state, 0, sizeof(*state));
-    state->exec_state = cnc_get_exec_state(0xff);
+    state->exec_state = cnc_get_exec_state(EXEC_ALLACTIVE);
     itp_get_rt_position(steppos);
     kinematics_steps_to_coordinates(steppos, axis);
     state->x = axis[AXIS_X];

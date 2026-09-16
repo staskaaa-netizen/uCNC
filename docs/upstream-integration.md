@@ -26,3 +26,13 @@ The RP2350 LVDS configuration and local module loading remain project-specific.
 Networking follows upstream's socket API. The common encoder implementation
 comes from upstream, with compatibility adapters for the local indexed hardware
 reader callbacks. No hardware is flashed by the integration/build checks.
+
+## Runtime follow-up (2026-09-16)
+
+The G7x runtime follow-up adds serialized generated-block submission, native
+single-line G76 and NC cancellation/error cleanup. Generator, NC emitter and
+virtual-MCU parser/planner suites pass with `python tools/test_g7x.py all`.
+RP2350-LEANCAM-LVDS and RP2350-G7X-MODULE compile successfully. Builds still
+report existing module-macro redefinition warnings. These checks validate
+software integration; spindle synchronization and machine operation remain
+unverified. See `uCNC/src/modules/g7x/README.md` and the NC hardware checklist.

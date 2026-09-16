@@ -1,5 +1,7 @@
 #include "nc.h"
+#ifndef NC_HOST_TEST
 #include "../file_system.h"
+#endif
 
 #include <ctype.h>
 #include <stdio.h>
@@ -158,6 +160,7 @@ bool nc_line_has_old_pipe_syntax(const char *line)
     return line && strchr(line, '|') != NULL;
 }
 
+#ifndef NC_HOST_TEST
 nc_result_t nc_load_file(nc_document_t *doc, const char *path)
 {
     fs_file_t *fp;
@@ -271,6 +274,8 @@ nc_result_t nc_save_file(nc_document_t *doc, const char *path)
     doc->dirty = false;
     return NC_OK;
 }
+
+#endif
 
 nc_result_t nc_set_line(nc_document_t *doc, size_t line_index, const char *text)
 {

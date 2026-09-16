@@ -91,12 +91,13 @@ bool g7x_get_field_text(const char *line, const char *key, char *out, size_t out
 bool g7x_get_field_float(const char *line, const char *key, float *out)
 {
     char text[32];
+    char *end;
 
     if (!out || !g7x_get_field_text(line, key, text, sizeof(text)) || !text[0] || text[0] == '(')
         return false;
 
-    *out = strtof(text, NULL);
-    return true;
+    *out = strtof(text, &end);
+    return end != text && *end == '\0' && isfinite(*out);
 }
 
 bool g7x_modal_apply_line(g7x_modal_t *modal, const char *line)
@@ -293,14 +294,21 @@ g7x_result_t g7x_thread_begin(g7x_thread_stream_t *stream,
         z1 = 0.0f;
     (void)g7x_get_field_float(line, "SCALE", &pq_scale);
     (void)g7x_field_float2(line, "MIN_Q", "QMIN", &min_cut);
-    (void)g7x_field_float2(line, "FINISH_R", "FINISH_ALLOW", &finish_allowance);
-    (void)g7x_field_float3(line, "D", "TAPER", "D_TAPER", &taper);
-    if (g7x_field_float2(line, "H", "SPRING", &spring_value) && spring_value > 0.0f)
-        spring_passes = (int)(spring_value + 0.5f);
+    (void)g7x_field_float3(line, "R", "FINISH_R", "FINISH_ALLOW", &finish_allowance);
+    if (g7x_get_field_float(line, "I", &taper))
+        taper *= 2.0f;
+    else
+        (void)g7x_field_float3(line, "D", "TAPER", "D_TAPER", &taper);
+    if (g7x_field_float3(line, "L", "H", "SPRING", &spring_value)) {
+        if (spring_value < 0.0f || spring_value > G7X_MAX_THREAD_PASSES ||
+            floorf(spring_value) != spring_value)
+            return G7X_BAD_FIELD;
+        spring_passes = (int)spring_value;
+    }
     if (pq_scale <= 0.0f)
         return G7X_BAD_FIELD;
     if (min_cut <= 0.0f)
-        min_cut = first_cut;
+        min_cut = first_cut * 0.25f;
 
     return g7x_thread_begin_semantic(stream,
                                      d_start,

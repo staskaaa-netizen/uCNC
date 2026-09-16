@@ -1546,6 +1546,12 @@ static void nc_visual_draw_emitted_preview(const nc_document_t *doc,
                                                       line,
                                                       sizeof(line),
                                                       &emitted_line);
+        if (result == NC_EMIT_ERROR) {
+            snprintf(g_nc_visual_status, sizeof(g_nc_visual_status),
+                     "Preview: %s at line %lu", g7x_result_text(stream.error),
+                     (unsigned long)(emitted_line + 1u));
+            break;
+        }
         if (result == NC_EMIT_LINE) {
             if (line[0] == '(') {
                 if (strstr(line, "rough")) {

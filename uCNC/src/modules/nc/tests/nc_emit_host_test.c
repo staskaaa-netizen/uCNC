@@ -69,6 +69,22 @@ static int expect_find_line_source(nc_emit_stream_t *stream, const char *want, s
     return 1;
 }
 
+static int expect_rejected(nc_emit_stream_t *stream)
+{
+    char out[96];
+    size_t source;
+    nc_emit_result_t r;
+    do {
+        r = nc_emit_stream_next(stream, out, sizeof(out), &source);
+    } while (r == NC_EMIT_SKIP && stream->active);
+    if (r != NC_EMIT_ERROR || stream->active || stream->error == G7X_OK) {
+        printf("FAIL invalid contour was not stopped: result=%d active=%d error=%d\n",
+               r, stream->active, stream->error);
+        return 1;
+    }
+    return 0;
+}
+
 static int test_g7_g8_passthrough(void)
 {
     nc_document_t doc;
@@ -97,7 +113,7 @@ static int test_g71_corner_rounding(void)
     (void)nc_insert_line(&doc, 5, "G80");
     nc_emit_stream_begin(&stream, &doc, 0);
 
-    return expect_line(&stream, "(G7x finish contour)") ||
+    return expect_find_line(&stream, "(G7x finish contour)") ||
            expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
            expect_line(&stream, "G1 X50.000 Z-9.000") ||
            expect_line(&stream, "G3 X48.000 Z-10.000 I-1.000 K0.000");
@@ -117,7 +133,7 @@ static int test_g71_corner_chamfer(void)
     (void)nc_insert_line(&doc, 5, "G80");
     nc_emit_stream_begin(&stream, &doc, 0);
 
-    return expect_line(&stream, "(G7x finish contour)") ||
+    return expect_find_line(&stream, "(G7x finish contour)") ||
            expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
            expect_line(&stream, "G1 X50.000 Z-9.000") ||
            expect_line(&stream, "G1 X48.000 Z-10.000");
@@ -160,9 +176,8 @@ static int test_g71_sample_features(void)
     (void)nc_insert_line(&doc, 10, "G80");
     nc_emit_stream_begin(&stream, &doc, 0);
 
-    return expect_find_line(&stream, "G1 X32.683 Z-14.634") ||
-           expect_find_line(&stream, "G2 X32.000 Z-16.000 I1.789 K-0.894") ||
-           expect_find_line(&stream, "G2 X42.000 Z-26.000 R4.000");
+    /* This profile reverses X and is outside the monotonic subset. */
+    return expect_rejected(&stream);
 }
 
 static int test_g72_basic(void)
@@ -178,8 +193,8 @@ static int test_g72_basic(void)
     (void)nc_insert_line(&doc, 4, "G80");
     nc_emit_stream_begin(&stream, &doc, 0);
 
-    return expect_find_line(&stream, "(G72 rough Z-2.000)") ||
-           expect_find_line(&stream, "G1 X10.000 Z-25.000") ||
+    return expect_find_line(&stream, "(G72 rough Z-23.000)") ||
+           expect_find_line(&stream, "G1 X10.000 Z-25.000 F120.000") ||
            expect_find_line(&stream, "G1 X40.000 Z-25.000") ||
            expect_find_line(&stream, "G1 X40.000 Z0.000");
 }
@@ -198,8 +213,7 @@ static int test_g72_rectangle(void)
     (void)nc_insert_line(&doc, 5, "G80");
     nc_emit_stream_begin(&stream, &doc, 0);
 
-    return expect_find_line(&stream, "G0 X51.000 Z-1.000") ||
-           expect_find_line(&stream, "G1 X5.500 F120.000");
+    return expect_rejected(&stream);
 }
 
 static int test_g72_arc_finish(void)
@@ -215,8 +229,8 @@ static int test_g72_arc_finish(void)
     (void)nc_insert_line(&doc, 4, "G80");
     nc_emit_stream_begin(&stream, &doc, 0);
 
-    return expect_find_line(&stream, "(G72 rough Z-2.000)") ||
-           expect_find_line(&stream, "G2 X40.000 Z-25.000 R20.000");
+    /* Equal endpoint Z hides an interior arc reversal. */
+    return expect_rejected(&stream);
 }
 
 static int test_g72_corner_rounding(void)
@@ -233,8 +247,7 @@ static int test_g72_corner_rounding(void)
     (void)nc_insert_line(&doc, 5, "G80");
     nc_emit_stream_begin(&stream, &doc, 0);
 
-    return expect_find_line(&stream, "(G72 rough Z1.000)") ||
-           expect_find_line(&stream, "(G7x finish contour)");
+    return expect_rejected(&stream);
 }
 
 int main(void)

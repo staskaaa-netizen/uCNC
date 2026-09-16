@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 typedef struct {
     char lines[256][96];
@@ -92,12 +93,11 @@ static int test_g71_basic(void)
     if (add_line(&stream, "G1 X50 Z0") ||
         add_line(&stream, "G1 X40 Z-10") ||
         add_line(&stream, "G1 X30 Z-25") ||
-        add_line(&stream, "G1 X50 Z-25") ||
         add_line(&stream, "G80"))
         return 1;
     if (collect_g7x(&stream, &sink))
         return 1;
-    if (!contains(&sink, "(G71 rough X48.000)") ||
+    if (!contains(&sink, "(G71 rough X23.000)") ||
         !contains(&sink, "(G7x finish contour)") ||
         !has_exact(&sink, "G1 X50.000 Z0.000 F120.000") ||
         !has_exact(&sink, "G1 X30.000 Z-25.000")) {
@@ -204,7 +204,7 @@ static int test_g76_taper_id(void)
     sink_t sink;
 
     if (g7x_thread_begin(&stream,
-                         "G76 START_X20 X24 Z10 Z1=0 P2 Q2 F2 D1 MIN_Q2",
+                         "G76 START_X20 X24 Z10 Z1=0 P2 Q1 F2 D1 MIN_Q1",
                          0.0f,
                          1.0f) != G7X_OK) {
         printf("FAIL G76 ID/taper begin\n");
@@ -212,7 +212,7 @@ static int test_g76_taper_id(void)
     }
     if (collect_g76(&stream, &sink))
         return 1;
-    if (!has_exact(&sink, "G0 X17.000 Z-2.000") ||
+    if (!has_exact(&sink, "G0 X19.000 Z-2.000") ||
         !contains(&sink, "(THREAD pass 2 X24.000 Z0.000)") ||
         !has_exact(&sink, "G33 X25.000 Z10.000 K2.000")) {
         printf("FAIL G76 ID/taper output\n");
@@ -260,6 +260,48 @@ static int test_g76_semantic_invalid_pitch_depth(void)
     return 0;
 }
 
+static int test_g76_decreasing_schedule(void)
+{
+    g7x_thread_stream_t stream;
+    sink_t sink;
+    if (g7x_thread_begin_semantic(&stream, 40, 36, 0, -20, 1.5f,
+                                 2, 1, .25f, .1f, 1, 0, 1, 0, 0) != G7X_OK ||
+        collect_g76(&stream, &sink)) return 1;
+    unsigned cuts = 0;
+    for (int i = 0; i < sink.count; i++)
+        if (strncmp(sink.lines[i], "G33 ", 4) == 0) cuts++;
+    if (cuts != 5 || !contains(&sink, "(THREAD pass 1 X38.000") ||
+        !contains(&sink, "(THREAD pass 2 X36.500") ||
+        !contains(&sink, "(THREAD pass 3 X36.200") ||
+        !contains(&sink, "(THREAD finish X36.000") ||
+        !contains(&sink, "(THREAD spring X36.000")) {
+        puts("FAIL first/decreasing/minimum/finish/spring schedule"); return 1;
+    }
+    return 0;
+}
+
+static int test_g76_invalid_contract(void)
+{
+    g7x_thread_stream_t stream;
+    const char *bad[] = {
+        "G76 START_X40 X36 Z-20 P1 Q1 F1.5", /* inconsistent height */
+        "G76 START_X40 X36 Z-20 P2 Q1 Fnan",
+        "G76 START_X40 X36 Z-20 P2 Q1 F1.5 MIN_Q2",
+        "G76 START_X40 X36 Z-20 P2 Q1 F1.5 L1.5",
+        "G76 START_X40 X36 Z-20 P2 Q1 F1.5 L501",
+        "G76 START_X40 X36 Z-20 P2 Q1 F1.5 I-30"
+    };
+    for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        if (g7x_thread_begin(&stream, bad[i], 0, 1) != G7X_BAD_FIELD) {
+            printf("FAIL accepted %s\n", bad[i]); return 1;
+        }
+    }
+    if (g7x_thread_begin_semantic(&stream, 40, 36, 0, -20, INFINITY,
+                                2, 1, .25f, 0, 1, 0, 0, 0, 0) != G7X_BAD_FIELD)
+        return 1;
+    return 0;
+}
+
 int main(void)
 {
     int fails = 0;
@@ -272,6 +314,8 @@ int main(void)
     fails += test_g76_taper_id();
     fails += test_g76_letters();
     fails += test_g76_semantic_invalid_pitch_depth();
+    fails += test_g76_decreasing_schedule();
+    fails += test_g76_invalid_contract();
 
     if (fails) {
         printf("FAILURES %d\n", fails);

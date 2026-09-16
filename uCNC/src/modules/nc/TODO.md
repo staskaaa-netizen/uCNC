@@ -1,5 +1,22 @@
 # NC TODO
 
+## Completed software work (2026-09-16)
+
+- [x] Serialize generated G7x blocks before subsequent source commands; preserve
+  G7/G8 conversion and propagate errors instead of accepting a failed G80.
+- [x] Clear cycle state on parse failure, reset and NC Stop; feed hold/resume
+  controls actual motion and remains available after the file reaches EOF.
+- [x] Enable native single-line G76 with radial first-cut/decreasing infeed,
+  G20/G21 scaling, work offsets, input validation and spring passes.
+- [x] Make NC preview return explicit errors for invalid/unsupported cycles.
+- [x] Add generator, preview and actual parser/planner regression suites:
+  `python tools/test_g7x.py all` (G33 motion is intercepted).
+- [ ] Machine-test spindle synchronization, physical hold/resume/Stop and reset.
+- [ ] Add G76 preview, G70 finishing replay and P/Q contour extraction.
+
+The remaining design backlog follows. Native G76's exact supported dialect is
+documented in `../g7x/README.md`; hardware validation is still required.
+
 - Later: from RUN, jump to EDIT with the same file and line marked.
 - Later: when EDIT and SIM are intentionally linked, entering SIM should reopen the edited file without making RUN share that file.
 - Tools: TOOLS mode owns the global `.t` table; RUN/SIM/EDIT link to it by `Tn`. Later G7x tool/preset choices should live in G7x commands, not by copying tool rows into programs.
@@ -26,6 +43,6 @@
   - Preserve current native inline `G71/G72 ... G80` mode as a serial-friendly fallback/regression path while adding P/Q extraction from loaded program or serial history.
   - Add `G70 P.. Q..` finish cycle that replays the stored/extracted contour using current finishing feed/tool/spindle, with no roughing offsets.
   - Keep current `G76` source semantics Fanuc-like by letters: `X/Z` end point, `P` thread height, `Q` first cut, `F` lead/pitch, optional `MIN_Q/QMIN`, optional finish allowance, optional taper, and optional spring passes. Two-line Fanuc packed `P(m)(r)(a)` can be added later only if it is a real parser feature, not unused scaffolding.
-  - G76 semantic gaps to handle later: spindle/threading mode availability, better first-cut/min-cut/decreasing infeed schedule, project unit scaling policy for controls that use thousandths-style `P/Q`, and optional packed two-line dialect if needed.
+  - Remaining G76 semantic gaps: hardware validation of spindle/threading availability, optional thousandths-style P/Q dialect and optional packed two-line dialect. Native P/Q use active length units; first-cut/min-cut/decreasing infeed is implemented.
   - G76 pitch/lead note: current code assumes one constant pitch and emits `G33 ... Kpitch`; final parser must leave room for special pitch/lead handling and related helpers later, but do not add those helpers until the base letter semantics are settled.
   - Tests to add from the attached task: G71 two-line, G71 one-line, G71 allowance direction signs, G71 non-monotonic rejection, G71 corner modifiers, G70 finish replay, G72 facing two-line, G76 invalid pitch/depth, serial P/Q regression, and native inline `G80` regression.

@@ -25,11 +25,26 @@ Use this as a short hardware pass list while NC is still pre-alpha.
 
 ## G7x Runtime
 
+Automated software checks: `python tools/test_g7x.py all` with MinGW GCC on
+PATH. The parser fixture intercepts G33; it does not validate spindle timing.
+The following machine checks remain open:
+
 - `G71/G72` collect contour until `G80`.
 - Source contour lines do not execute directly during RUN.
 - Generated rough and finish blocks execute through parser helper.
 - Finish ends at first contour point plus clearance in the opposite first-vector direction.
 - Bad contour/status paths return useful errors without locking the UI.
+- Queue a command after G80 and verify the whole generated cycle precedes it.
+- Inject a generated-motion failure and verify no later source line is consumed.
+- Hold/resume and Stop during a cycle, during normal motion, and after the last
+  source line has been read but motion remains queued. Check that Stop also
+  works immediately after resume, before motion restarts.
+- Reset during contour collection and threading; no stale cycle may resume.
+- Check G76 with G7/G8, G20/G21 and nonzero work offsets using the documented
+  native contract in `../g7x/README.md`.
+- Check spindle index/phase repeatability across all G76 passes, physical pitch,
+  lead-in/out clearance, spindle loss and G33 error handling before cutting.
+- G76 preview is currently unsupported and must show an explicit error.
 
 ## Tools
 

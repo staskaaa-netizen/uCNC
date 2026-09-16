@@ -384,6 +384,10 @@ extern "C"
 	// event_gcode_exec_modifier_handler
 	DECL_EVENT_HANDLER(gcode_exec_modifier);
 
+	/* Complete module-generated cycles before acknowledging the source block.
+	   Runs outside modifier callbacks so generated blocks visit every modifier. */
+	DECL_EVENT_HANDLER(gcode_execute_pending);
+
 	// event_gcode_before_motion_handler
 	DECL_EVENT_HANDLER(gcode_before_motion);
 

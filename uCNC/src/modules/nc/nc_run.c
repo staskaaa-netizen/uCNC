@@ -1,4 +1,5 @@
 #include "nc_run.h"
+#include "../../cnc.h"
 
 #include "../../interface/grbl_stream.h"
 #include "../g7x/g7x.h"
@@ -19,6 +20,10 @@ static bool g_nc_run_stream_active;
 static size_t g_nc_run_stream_end_line;
 
 static bool nc_run_stream_load_line(void);
+static bool nc_run_failed(void *args);
+static bool nc_run_parser_reset(void *args);
+CREATE_EVENT_LISTENER(cnc_parse_cmd_error, nc_run_failed);
+CREATE_EVENT_LISTENER(parser_reset, nc_run_parser_reset);
 
 static uint8_t nc_run_stream_available(void)
 {
@@ -49,7 +54,11 @@ static void nc_run_stream_clear(void)
     g_nc_run_stream_end_line = (size_t)-1;
     if (was_active) {
         g_nc_run_active = false;
-        g_nc_run_done = true;
+        g_nc_run_done = !g7x_parser_busy();
+        if (!g_nc_run_done) {
+            g7x_parser_cancel();
+            grbl_stream_printf("[MSG:NC stopped: incomplete G7x cycle]\r\n");
+        }
     }
     grbl_stream_change(NULL);
 }
@@ -119,7 +128,34 @@ static bool nc_run_line_sendable(const char *line)
 
 void nc_run_init(void)
 {
+    static bool registered;
+    if (!registered) {
+        ADD_EVENT_LISTENER(cnc_parse_cmd_error, nc_run_failed);
+        ADD_EVENT_LISTENER(parser_reset, nc_run_parser_reset);
+        registered = true;
+    }
     nc_run_reset();
+}
+
+static bool nc_run_failed(void *args)
+{
+    if (g_nc_run_stream_active || g_nc_run_active) {
+        grbl_stream_printf("[MSG:NC stopped on error %u]\r\n", (unsigned)*(uint8_t *)args);
+        nc_run_stream_clear();
+        g_nc_run_active = false;
+        g_nc_run_done = false;
+        g_nc_run_hold = false;
+    }
+    return EVENT_CONTINUE;
+}
+
+static bool nc_run_parser_reset(void *args)
+{
+    (void)args;
+    if (g_nc_run_stream_active)
+        nc_run_stream_clear();
+    nc_run_reset();
+    return EVENT_CONTINUE;
 }
 
 bool nc_run_arm(const nc_document_t *doc, size_t line)
@@ -133,7 +169,7 @@ bool nc_run_arm(const nc_document_t *doc, size_t line)
 
     g_nc_run_line = line;
     g_nc_run_active = true;
-    g_nc_run_hold = false;
+    g_nc_run_hold = cnc_get_exec_state(EXEC_HOLD | EXEC_DOOR) != 0;
     g_nc_run_done = false;
     return true;
 }
@@ -148,6 +184,12 @@ void nc_run_reset(void)
 
 void nc_run_stop(void)
 {
+    if (nc_run_active() || g_nc_run_stream_active) {
+        cnc_set_exec_state(EXEC_CANCELING);
+        g7x_parser_cancel();
+    }
+    if (g_nc_run_stream_active)
+        nc_run_stream_clear();
     g_nc_run_active = false;
     g_nc_run_hold = false;
     g_nc_run_done = false;
@@ -155,16 +197,19 @@ void nc_run_stop(void)
 
 bool nc_run_toggle_hold(void)
 {
-    if (!g_nc_run_active) {
+    if (!nc_run_active()) {
         return false;
     }
     g_nc_run_hold = !g_nc_run_hold;
+    cnc_call_rt_command(g_nc_run_hold ? CMD_CODE_FEED_HOLD : CMD_CODE_CYCLE_START);
     return true;
 }
 
 bool nc_run_active(void)
 {
-    return g_nc_run_active || g7x_parser_busy();
+    return g_nc_run_active || g7x_parser_busy() ||
+           (g_nc_run_done && (!planner_buffer_is_empty() || !itp_is_empty() ||
+                             cnc_get_exec_state(EXEC_RUNNING | EXEC_HOLD)));
 }
 
 bool nc_run_hold(void)
@@ -174,7 +219,7 @@ bool nc_run_hold(void)
 
 bool nc_run_done(void)
 {
-    return g_nc_run_done;
+    return g_nc_run_done && !nc_run_active();
 }
 
 size_t nc_run_line(void)
@@ -253,6 +298,8 @@ static bool nc_run_stream_load_line(void)
     if (!g_nc_run_stream_active || !g_nc_run_stream_doc) {
         return false;
     }
+    if (g_nc_run_hold)
+        return false;
     if (g_nc_run_line > g_nc_run_stream_end_line) {
         grbl_stream_printf("[MSG:NC STREAM DONE %d]\r\n", (int)NC_RUN_STEP_COMPLETE);
         nc_run_stream_clear();

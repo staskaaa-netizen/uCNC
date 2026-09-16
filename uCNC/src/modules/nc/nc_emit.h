@@ -13,7 +13,8 @@ extern "C" {
 
 typedef enum {
     NC_EMIT_SKIP = 0,
-    NC_EMIT_LINE
+    NC_EMIT_LINE,
+    NC_EMIT_ERROR
 } nc_emit_result_t;
 
 typedef struct {
@@ -22,6 +23,7 @@ typedef struct {
     bool active;
     bool log;
     bool g7x_collecting;
+    g7x_result_t error;
     g7x_stream_t g7x;
 } nc_emit_stream_t;
 

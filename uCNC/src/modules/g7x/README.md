@@ -1,4 +1,51 @@
-# G71/G72 Notes
+# G71/G72 and G76 Notes
+
+## Runtime status (2026-09-16)
+
+Native inline `G71/G72 ... G80` and single-line `G76` now run through the
+parser. Generated blocks finish being submitted before the next source command
+is consumed. A pending-execution event runs outside the modifier callback so
+nested blocks also receive G7/G8 conversion. Errors propagate to the source
+command and clear the collector/runner. This is software-tested, pre-alpha
+firmware; physical threading synchronization remains unverified.
+
+Native cycles require `G18 G90 G94`. Both `G7/G8` and `G20/G21` are supported.
+The conservative inline contour subset requires monotonic X and Z, including
+arc interiors. G71/G72 still include their existing finishing pass. `G70` and
+Fanuc/Haas P/Q contour lookup are not implemented.
+
+### Native G76 contract
+
+With `G7X_ENABLE_G76` enabled (default) and `G33_ENCODER` configured, G76 expands
+to ordinary G0 and G33 blocks. The G33 module must be loaded for execution.
+Start at the thread crest X and thread start Z in the active work coordinates.
+Required words are `X Z P Q F`: final thread X, end Z, radial thread height,
+radial first cut, and lead per revolution. P must match the crest-to-final-X
+height. Optional `R` is radial finishing allowance, `I` is radial taper, and
+`L` is the number of spring passes (integer 0–255). Lengths use the active
+G20/G21 units; P/Q/R/I remain radial in both G7 and G8.
+
+For example, after `G18 G90 G94 G21 G7` and positioning at `X40 Z0`,
+`G76 X36 Z-20 P2 Q1 F1.5 L1` generates three cutting passes and one spring pass.
+Subsequent roughing cuts decrease by a factor of 0.75 with a minimum of Q/4.
+At most 500 total passes are accepted. Clearance and lead-in/out need checking
+against the actual workholding before machine use.
+
+This is the project's single-line dialect. Packed two-line Fanuc parameters,
+tool-angle infeed and chamfer are unsupported. Extended source-library aliases
+such as `MIN_Q/QMIN`, `FINISH_R`, `D` taper and `H` spring passes are not native
+parser words; use the native contract above. NC preview does not expand G76
+yet and reports an explicit unsupported-cycle error.
+
+### Regression checks
+
+On Windows with MinGW GCC on PATH, run `python tools/test_g7x.py all`.
+The suites cover the generator, NC preview adapter, and real virtual-MCU
+parser/planner integration: ordering, G7/G8, inch/work-offset scaling, malformed
+contours, generated failures, G76 passes, and NC Stop/Hold including queued
+motion after source EOF. G33 is intercepted in the parser fixture; these tests
+do not measure physical spindle phase or pitch accuracy. See
+`../nc/TESTING.md` for the remaining machine checks.
 
 This directory owns the standalone uCNC G7x generator/parser module for
 `G71/G72` contour roughing and `G76` thread expansion. NC and LeanCam-style

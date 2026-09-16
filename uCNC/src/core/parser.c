@@ -112,6 +112,11 @@ WEAK_EVENT_HANDLER(gcode_exec_modifier)
 	DEFAULT_EVENT_HANDLER(gcode_exec_modifier);
 }
 
+WEAK_EVENT_HANDLER(gcode_execute_pending)
+{
+	DEFAULT_EVENT_HANDLER(gcode_execute_pending);
+}
+
 // event_gcode_before_motion_handler
 WEAK_EVENT_HANDLER(gcode_before_motion)
 {
@@ -2199,6 +2204,13 @@ static uint8_t parser_gcode_command(parser_cmd_explicit_t *cmd)
 #else
 	result = parser_exec_command(&next_state, &words, cmd);
 #endif
+#ifdef ENABLE_PARSER_MODULES
+	if (result == STATUS_OK && !cmd->dry_run && !cmd->is_jog)
+	{
+		gcode_exec_args_t pending = {&result, &next_state, &words, cmd, NULL, NULL};
+		EVENT_INVOKE(gcode_execute_pending, &pending);
+	}
+#endif
 	if (result != STATUS_OK)
 	{
 		DBGLOG("[PARSER] exec failed: %hu", result);
@@ -2835,6 +2847,10 @@ static uint8_t parser_letter_word(uint8_t c, float value, uint8_t mantissa, pars
 		break;
 	case 'L':
 		new_words |= GCODE_WORD_L;
+		if (!isfinite(value) || value < 0 || value > UINT8_MAX)
+		{
+			return STATUS_INVALID_STATEMENT;
+		}
 
 		if (mantissa)
 		{

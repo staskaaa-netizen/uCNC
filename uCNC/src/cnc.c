@@ -1228,7 +1228,10 @@ bool cnc_check_interlocking(void)
 #endif
 
 	// motion stopped
-	if (!cnc_get_exec_state(EXEC_RUNNING) && itp_is_empty() && cnc_get_exec_state(EXEC_SPECIAL_MOTIONS))
+	// Cancellation also owns a pending resume that has not started the stepper.
+	if (!cnc_get_exec_state(EXEC_RUN) &&
+		(!cnc_get_exec_state(EXEC_RESUMING) || cnc_get_exec_state(EXEC_CANCELING)) && itp_is_empty() &&
+		cnc_get_exec_state(EXEC_SPECIAL_MOTIONS | EXEC_CANCELING))
 	{
 		bool flush_motion = cnc_get_exec_state(EXEC_CANCELING);
 		if (flush_motion || planner_buffer_is_empty())
@@ -1247,7 +1250,7 @@ bool cnc_check_interlocking(void)
 				// flush all pending commands and motions
 				mc_flush_pending_motion();
 				// homing will be cleared inside homing cycle
-				cnc_clear_exec_state((EXEC_JOG | EXEC_HOMING | EXEC_PROBING));
+				cnc_clear_exec_state((EXEC_JOG | EXEC_HOMING | EXEC_PROBING | EXEC_RESUMING));
 			}
 			cnc_clear_exec_state(EXEC_JOG | EXEC_CANCELING);
 		}

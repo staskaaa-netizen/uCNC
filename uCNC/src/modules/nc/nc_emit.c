@@ -81,6 +81,7 @@ void nc_emit_stream_begin(nc_emit_stream_t *stream,
     stream->active = doc && start_line < doc->line_count;
     stream->log = true;
     stream->g7x_collecting = false;
+    stream->error = G7X_OK;
     g7x_stream_reset(&stream->g7x);
 }
 
@@ -118,7 +119,8 @@ static nc_emit_result_t nc_emit_g7x_next(nc_emit_stream_t *stream,
     if (step == G7X_STEP_ERROR) {
         stream->active = false;
         stream->g7x_collecting = false;
-        return NC_EMIT_SKIP;
+        stream->error = G7X_BAD_FIELD;
+        return NC_EMIT_ERROR;
     }
     if (stream->source_line >= stream->doc->line_count) {
         stream->active = false;
@@ -134,12 +136,14 @@ static bool nc_emit_feed_g7x(nc_emit_stream_t *stream)
 
         stream->source_line++;
         stream->g7x.pending_source_line = stream->source_line - 1u;
-        if (g7x_stream_add_line(&stream->g7x, line, &done) != G7X_OK) {
+        stream->error = g7x_stream_add_line(&stream->g7x, line, &done);
+        if (stream->error != G7X_OK) {
             if (stream->log) {
                 grbl_stream_printf("[MSG:NC G7X ADD FAIL %.96s]\r\n", line);
             }
             g7x_stream_reset(&stream->g7x);
             stream->g7x_collecting = false;
+            stream->active = false;
             return false;
         }
         if (done) {
@@ -154,6 +158,7 @@ static bool nc_emit_feed_g7x(nc_emit_stream_t *stream)
 
     stream->active = false;
     stream->g7x_collecting = false;
+    stream->error = G7X_BAD_FIELD; /* Unterminated contour. */
     g7x_stream_reset(&stream->g7x);
     return false;
 }
@@ -176,13 +181,21 @@ nc_emit_result_t nc_emit_stream_next(nc_emit_stream_t *stream,
     if (stream->g7x.active) {
         return nc_emit_g7x_next(stream, out, out_sz, source_line);
     }
-    if (stream->g7x_collecting && nc_emit_feed_g7x(stream)) {
-        return nc_emit_g7x_next(stream, out, out_sz, source_line);
+    if (stream->g7x_collecting) {
+        if (nc_emit_feed_g7x(stream))
+            return nc_emit_g7x_next(stream, out, out_sz, source_line);
+        return NC_EMIT_ERROR;
+    }
+
+    if (stream->source_line >= stream->doc->line_count) {
+        stream->active = false;
+        return NC_EMIT_SKIP;
     }
 
     line = nc_emit_trim(stream->doc->lines[stream->source_line].text);
     if (g7x_cycle_from_line(line) != G7X_CYCLE_NONE) {
-        if (g7x_stream_begin(&stream->g7x, line) == G7X_OK) {
+        stream->error = g7x_stream_begin(&stream->g7x, line);
+        if (stream->error == G7X_OK) {
             if (stream->log) {
                 grbl_stream_printf("[MSG:NC G7X BEGIN %.96s]\r\n", line);
             }
@@ -195,7 +208,8 @@ nc_emit_result_t nc_emit_stream_next(nc_emit_stream_t *stream,
         if (stream->log) {
             grbl_stream_printf("[MSG:NC G7X BEGIN/FEED FAIL %.96s]\r\n", line);
         }
-        return NC_EMIT_SKIP;
+        stream->active = false;
+        return NC_EMIT_ERROR;
     }
 
     result = nc_emit_source_line(stream->doc, stream->source_line, out, out_sz);

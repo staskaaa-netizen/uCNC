@@ -2486,7 +2486,7 @@ static void nc_visual_run_step(void)
 
     if (cnc_get_exec_state(EXEC_GCODE_LOCKED) || cnc_has_alarm()) {
         snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "RUN locked: check controller status (?)");
-        grbl_stream_printf("[MSG:NC RUN locked state=0x%04X alarm=%u; check ?]\r\n",
+        grbl_stream_printf("[MSG:NC RUN locked state=%u alarm=%u; check ?]\r\n",
                            cnc_get_exec_state(EXEC_ALLACTIVE), (unsigned)cnc_has_alarm());
         return;
     }

@@ -1,5 +1,21 @@
 # NC TODO
 
+## Next UI priorities (proposed; not implemented)
+
+- [ ] Storage status and explicit file-operation errors: distinguish not
+  mounted, open/read failure and save failure. Use filesystem state; there is
+  no wired card-detect input on the current board.
+- [ ] Keep the unsaved editor document available if autosave on screen change
+  fails; show retry/cancel instead of replacing it with another loaded file.
+- [ ] Enforce/explain short SD filenames in create/rename flows while
+  FF_USE_LFN=0. Keep the working SD driver/configuration unchanged.
+- [ ] Show active G18/G90/G94, G7/G8 and units near RUN so selected-cycle
+  execution prerequisites are visible before submitting a command.
+- [ ] Add preview zoom/pan with a visible anchor, then finish chuck/setup layers.
+
+Before changing storage behavior, read the history and bench checklist in
+[`docs/sd-card-history.md`](../../../../docs/sd-card-history.md).
+
 ## UI feedback completed (2026-09-16)
 
 - [x] Persistent settings-invalid banner with `$RST=*` guidance and explicit

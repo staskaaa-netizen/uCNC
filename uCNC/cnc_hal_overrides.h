@@ -57,6 +57,12 @@ extern "C"
 #define SD_CARD_DETECT_PIN 255
 #define SD_CARD_INTERFACE 0
 #define SD_CARD_SPI_DMA false
+/* Bench trial: upstream disk initialization without our boot/retry workaround.
+   Rollback reference: checkpoint/sd-working-20260916. */
+#define SD_CARD_BOOT_DELAY_MS 0
+#define SD_CARD_MOUNT_RETRIES 1
+#define SD_CARD_MOUNT_RETRY_DELAY_MS 0
+#define ENABLE_LEANCAM_SD_DEBUG
 #endif
 
 

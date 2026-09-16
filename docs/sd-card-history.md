@@ -1,5 +1,32 @@
 # Working SD-card integration: history and update constraints
 
+## Upstream initialization trial (2026-09-16)
+
+User authorized another bench trial with rollback if it fails. Baseline source:
+`checkpoint/sd-working-20260916` (commit `2e9f8ac0`). Previous built images were
+copied to `tmp/sd-working-20260916/firmware.uf2` and `firmware.elf` before build.
+
+Trial scope:
+
+- `diskio.c` taken verbatim from upstream modules `66063076`.
+- Local extra boot delay disabled; one mount attempt, no retry delay.
+- Module startup/mount diagnostics enabled.
+- Software SPI, pin routing, no-DMA profile, short filenames, CS definitions,
+  NC menu integration and local file metadata fixes retained.
+
+This tests whether upstream initialization now replaces our board bring-up
+workarounds; it is not a wholesale replacement of the filesystem adapter.
+Hardware result is pending. Flash the LVDS target, capture cold-start SD logs,
+then list/open and save/reopen a disposable file larger than 512 bytes. Repeat
+a cold start and check the file again. No card formatting or settings reset is
+part of this trial. Follow the checklist below before accepting it.
+
+To revert only the trial's runtime changes, restore `uCNC/cnc_hal_overrides.h`
+and `uCNC/src/modules/sd_card_v2/diskio.c` from the checkpoint and rebuild, or
+reflash the saved baseline UF2. Preserve unrelated later work.
+
+## Pre-trial audit
+
 Audited 2026-09-16 after fetching upstream core and modules master. Latest
 modules master remains `66063076` (2026-09-03), already integrated locally in
 `a84b783c`. This audit changes no driver, wiring or mount behavior. The current

@@ -1,5 +1,7 @@
 # G71/G72 and G76 Notes
 
+See [TODO.md](TODO.md) for the audited completion checklist and module ownership.
+
 ## Runtime status (2026-09-16)
 
 Native inline `G71/G72 ... G80` and single-line `G76` now run through the

@@ -51,7 +51,7 @@
 - [x] Add generator, preview and actual parser/planner regression suites:
   `python tools/test_g7x.py all` (G33 motion is intercepted).
 - [ ] Machine-test spindle synchronization, physical hold/resume/Stop and reset.
-- [ ] Add G76 preview, G70 finishing replay and P/Q contour extraction.
+- [ ] NC: G76 preview and document-source adapter. G7x: G70/PQ (see its checklist).
 
 The remaining design backlog follows. Native G76's exact supported dialect is
 documented in `../g7x/README.md`; hardware validation is still required.
@@ -65,23 +65,23 @@ documented in `../g7x/README.md`; hardware validation is still required.
   - `G970` is already used as stock/setup metadata (`X/U/Z/W`) through `nc_sim_collect_preview`, but the preview does not yet draw the setup region as its own explicit visual layer. Use it for stock origin, stock extents, and setup envelope instead of only fitting stock size.
   - Place small corner feature labels (`R2`, `C5`) by cut direction and operation: for normal G71 OD/x-minus cuts use the left/top side of the corner point; use the opposite side for boring/ID and other reversed directions.
   - Add preview zoom/pan. This needs a visible preview cursor/anchor so zoom has a center and users can inspect corners/clearance.
-  - Add a small test checklist for EDIT/SIM/RUN: mode switch, file persistence, G970 stock fit, G71/G72 contour labels, live stock removal, run cursor, and reboot recovery.
+  - [x] Added TESTING.md checklist for EDIT/SIM/RUN; bench verification remains open: mode switch, file persistence, G970 stock fit, G71/G72 contour labels, live stock removal, run cursor, and reboot recovery.
   - Keep preview-only line labels and UI helpers in NC, but keep all G71/G72 generator/roughing/finish logic in `g7x`.
-- G7x parser/runtime promotion:
-  - `g7x` is the owner and must work without the NC module loaded.
-  - NC may use G7x for preview/SIM and file streaming glue, but must not grow a second roughing/finish generator.
-  - Treat `G71/G72` as a modal parser-owned region, not as an NC UI feature.
-  - `G71/G72` opens the collector; parsed contour `G0/G1/G2/G3` rows are stored and suppressed; `G80` closes/prepares the region.
-  - Reuse the same `g7x_stream_t` contour/generator for parser RUN and NC SIM/preview.
-  - Generated rough/finish rows now execute as parsed blocks through the parser generated-block helper, like canned cycles.
-  - Next: machine-test bad contour, generated block failure, and modal cleanup paths; improve status mapping if needed.
-  - After that: remove or shrink `nc_emit` down to a preview-only adapter, then delete it if SIM can consume the shared G7x stream directly.
-- G7x lathe-cycle completion task:
-  - Final target: self-contained `g7x` interpreter module for `G71/G72` Type I roughing, `G70` finish replay, and `G76` threading. Main parser routes blocks; G7x collects/interprets contour or thread parameters; generated output returns as ordinary motion/threading blocks.
-  - Add Fanuc/Haas-style P/Q contour support for `G71/G72`: one-line and two-line headers, P first N-block, Q last N-block, first P block as approach only, profile `F/S/T` ignored, Type I monotonic validation, finish stock `U/W`, 45-degree retract, and direction from allowance signs.
-  - Preserve current native inline `G71/G72 ... G80` mode as a serial-friendly fallback/regression path while adding P/Q extraction from loaded program or serial history.
-  - Add `G70 P.. Q..` finish cycle that replays the stored/extracted contour using current finishing feed/tool/spindle, with no roughing offsets.
-  - Keep current `G76` source semantics Fanuc-like by letters: `X/Z` end point, `P` thread height, `Q` first cut, `F` lead/pitch, optional `MIN_Q/QMIN`, optional finish allowance, optional taper, and optional spring passes. Two-line Fanuc packed `P(m)(r)(a)` can be added later only if it is a real parser feature, not unused scaffolding.
-  - Remaining G76 semantic gaps: hardware validation of spindle/threading availability, optional thousandths-style P/Q dialect and optional packed two-line dialect. Native P/Q use active length units; first-cut/min-cut/decreasing infeed is implemented.
-  - G76 pitch/lead note: current code assumes one constant pitch and emits `G33 ... Kpitch`; final parser must leave room for special pitch/lead handling and related helpers later, but do not add those helpers until the base letter semantics are settled.
-  - Tests to add from the attached task: G71 two-line, G71 one-line, G71 allowance direction signs, G71 non-monotonic rejection, G71 corner modifiers, G70 finish replay, G72 facing two-line, G76 invalid pitch/depth, serial P/Q regression, and native inline `G80` regression.
+
+## Cycle implementation belongs to G7x
+
+The old mixed promotion/completion list is replaced by the audited
+[G7x checklist](../g7x/TODO.md). Completed foundations are checked there;
+P/Q, G70, allowance-aware approach and directional roughing remain open.
+NC supplies document access and UI, not a second cycle generator.
+
+## Remaining NC integration
+
+- [ ] Supply a document-source adapter for G7x numbered-block lookup.
+- [ ] Add G76 preview through the shared G7x threading generator.
+- [ ] Keep nc_emit as preview glue; assess removal only if SIM can consume the
+  shared stream directly without losing source-line/error information.
+- [ ] Implement the depth knob EDIT/RUN interaction described above; G7x owns
+  pass-phase enforcement and generated motion changes.
+- [ ] Persist cursor position across reboot; current preservation is in-session.
+- [x] Hardware checklist exists in TESTING.md; executing it remains open.

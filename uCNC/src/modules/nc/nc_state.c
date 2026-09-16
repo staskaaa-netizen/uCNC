@@ -19,6 +19,7 @@
 #define NC_STATE_TIMEOUT_MS 500u
 
 static char g_nc_state_path[NC_MODE_COUNT][NC_PATH_MAX];
+static size_t g_nc_state_cursor[NC_MODE_COUNT];
 static nc_mode_t g_nc_state_mode;
 
 bool nc_state_tool_path_supported(const char *path)
@@ -95,8 +96,26 @@ void nc_state_remember_path(nc_mode_t mode, const char *path)
     if (mode < 0 || mode >= NC_MODE_COUNT || !path) {
         return;
     }
+    if (strcmp(g_nc_state_path[mode], path) != 0) {
+        g_nc_state_cursor[mode] = 0;
+        for (int i = 0; i < NC_MODE_COUNT; i++) {
+            if (strcmp(g_nc_state_path[i], path) == 0) {
+                g_nc_state_cursor[mode] = g_nc_state_cursor[i];
+                break;
+            }
+        }
+    }
     strncpy(g_nc_state_path[mode], path, NC_PATH_MAX - 1);
     g_nc_state_path[mode][NC_PATH_MAX - 1] = '\0';
+}
+
+void nc_state_remember_cursor(const nc_document_t *doc)
+{
+    if (!doc || !doc->path[0]) return;
+    for (int i = 0; i < NC_MODE_COUNT; i++) {
+        if (strcmp(g_nc_state_path[i], doc->path) == 0)
+            g_nc_state_cursor[i] = doc->cursor_line;
+    }
 }
 
 const char *nc_state_path(nc_mode_t mode)
@@ -158,6 +177,7 @@ void nc_state_init(void)
     uint32_t start_ms;
 
     memset(g_nc_state_path, 0, sizeof(g_nc_state_path));
+    memset(g_nc_state_cursor, 0, sizeof(g_nc_state_cursor));
     g_nc_state_mode = NC_MODE_PROGRAM;
     strncpy(g_nc_state_path[NC_MODE_MDI], NC_MDI_PATH, NC_PATH_MAX - 1);
     strncpy(g_nc_state_path[NC_MODE_TOOLS], NC_TOOL_PATH, NC_PATH_MAX - 1);
@@ -244,6 +264,7 @@ bool nc_state_load_document(nc_mode_t mode, nc_document_t *doc)
     }
     if (path && path[0] && nc_load_file(doc, path) == NC_OK) {
         nc_state_remember_path(mode, path);
+        doc->cursor_line = doc->line_count ? MIN(g_nc_state_cursor[mode], doc->line_count - 1) : 0;
         return true;
     } else if (path && path[0] && mode != NC_MODE_MDI && mode != NC_MODE_TOOLS) {
         nc_state_remember_path(mode, "");

@@ -184,6 +184,7 @@ static void nc_visual_save_current_if_file(void)
     }
     if (nc_path_supported(g_nc_visual_doc.path)) {
         nc_state_remember_path(g_nc_visual_mode, g_nc_visual_doc.path);
+        nc_state_remember_cursor(&g_nc_visual_doc);
         nc_state_save();
     }
 }
@@ -2483,6 +2484,13 @@ static void nc_visual_run_step(void)
 {
     size_t line = g_nc_visual_doc.cursor_line;
 
+    if (cnc_get_exec_state(EXEC_GCODE_LOCKED) || cnc_has_alarm()) {
+        snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "RUN locked: check controller status (?)");
+        grbl_stream_printf("[MSG:NC RUN locked state=0x%04X alarm=%u; check ?]\r\n",
+                           cnc_get_exec_state(EXEC_ALLACTIVE), (unsigned)cnc_has_alarm());
+        return;
+    }
+
     if (!nc_run_send_document_line(&g_nc_visual_doc, line)) {
         strncpy(g_nc_visual_status, "RUN line skipped", sizeof(g_nc_visual_status) - 1);
         return;
@@ -2998,6 +3006,8 @@ static void nc_visual_cycle_mode(void)
         nc_files_set_active(false);
         nc_text_edit_clear(&g_nc_visual_edit);
         if (nc_state_load_document(g_nc_visual_mode, &g_nc_visual_doc)) {
+            if (g_nc_visual_mode == NC_MODE_RUN && !nc_run_active())
+                nc_run_set_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line);
             snprintf(g_nc_visual_status,
                      sizeof(g_nc_visual_status),
                      "%s: %.48s",
@@ -3186,20 +3196,16 @@ static void nc_visual_draw_tool_screen(void)
     }
 }
 
-static const char *nc_visual_exec_state_text(uint8_t state)
+static const char *nc_visual_exec_state_text(uint16_t state)
 {
-    switch (state) {
-    case EXEC_HOLD: return "HOLD";
-    case EXEC_HOMING: return "HOME";
-    case EXEC_JOG: return "JOG";
-    case EXEC_RUN: return "RUN";
-    case EXEC_LIMITS:
-    case EXEC_POSITION_MAYBE_LOST:
-    case EXEC_KILL:
-        return "ALARM";
-    default:
-        return "IDLE";
-    }
+    if ((state & EXEC_ALARM) || cnc_has_alarm()) return "ALARM";
+    if (state & EXEC_DOOR) return "DOOR";
+    if (state & EXEC_CANCELING) return "STOP";
+    if (state & EXEC_HOLD) return "HOLD";
+    if (state & EXEC_HOMING) return "HOME";
+    if (state & EXEC_JOG) return "JOG";
+    if (state & EXEC_RUNNING) return "RUN";
+    return "IDLE";
 }
 
 static void nc_visual_draw_header(const nc_snapshot_t *s)

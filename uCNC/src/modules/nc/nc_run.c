@@ -141,6 +141,9 @@ static bool nc_run_failed(void *args)
 {
     if (g_nc_run_stream_active || g_nc_run_active) {
         grbl_stream_printf("[MSG:NC stopped on error %u]\r\n", (unsigned)*(uint8_t *)args);
+        if (*(uint8_t *)args == STATUS_SYSTEM_GC_LOCK)
+            grbl_stream_printf("[MSG:NC lock state=0x%04X alarm=%u; check ?]\r\n",
+                               cnc_get_exec_state(EXEC_ALLACTIVE), (unsigned)cnc_has_alarm());
         nc_run_stream_clear();
         g_nc_run_active = false;
         g_nc_run_done = false;

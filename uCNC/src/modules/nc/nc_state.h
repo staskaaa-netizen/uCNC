@@ -39,6 +39,7 @@ void nc_state_init(void);
 void nc_state_set_mode(nc_mode_t mode);
 nc_mode_t nc_state_mode(void);
 void nc_state_remember_path(nc_mode_t mode, const char *path);
+void nc_state_remember_cursor(const nc_document_t *doc);
 const char *nc_state_path(nc_mode_t mode);
 bool nc_state_tool_path_supported(const char *path);
 void nc_state_save(void);

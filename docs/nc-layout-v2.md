@@ -83,6 +83,14 @@ Decided:
    one line per value (X, Z, F, S - and Y when the machine has it). The operator
    message keeps the same pane below the DRO, so a rejected edit or a message
    does not fight the numbers for horizontal space.
+4. **Edit messages do not move.** Rejected edits, field hints and word reasons
+   stay where they are today - on the message line associated with the code
+   editor, above/with the code rows. Only machine status and alarms belong to
+   the new bottom bar. So the split is: editing feedback stays with the code it
+   belongs to; machine state lives in the bottom pane.
+
+The message line in the bottom-left column is therefore for system/status
+messages (run state changes, controller notices), not for edit rejections.
 
 Still open:
 

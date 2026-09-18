@@ -92,6 +92,7 @@ with G7x extracted).
 | G71/G72/G76, P/Q, dialect | `uCNC/src/modules/g7x/README.md`, `g7x/TODO.md`, `g7x/TESTING.md` |
 | NC screens, files, editor, RUN | `uCNC/src/modules/nc/TODO.md`, `nc/TESTING.md` |
 | Spindle sync, encoders, G33/G76 | `uCNC/src/modules/g33/README.md`, `uCNC/src/modules/rp2350_pio_encoder/README.md` |
+| Cutter compensation, lathe mode | `docs/lathe-cutter-comp.md` |
 | Desktop tools | `docs/desktop-sender.md`, `tools/*/README.md` |
 | Why things are the way they are | `docs/history-project.md`, `docs/history-leancam-to-nc.md` |
 

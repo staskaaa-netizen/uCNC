@@ -26,6 +26,11 @@ software-tested, not physically validated on a machine.
 
 ## Required cycle work still open
 
+- [ ] Cutter radius compensation interaction (G40/G41/G42): today the core
+  parses the group and ignores it for linear/arc motion, and G7x does not look
+  at it at all. Stage 1 must refuse G71/G72/G76 with compensation active instead
+  of cutting an uncompensated path, then later accept a compensated contour for
+  G71/G72. Threading stays uncompensated. See `docs/lathe-cutter-comp.md`.
 - [x] Simple explicit approach with BOTH X and Z finish allowances plus R in
   the existing positive-allowance/outside-X subset. Separate X then Z clearance
   moves precede roughing/finishing; final retract uses the same clear point.

@@ -102,6 +102,11 @@ NC supplies document access and UI, not a second cycle generator.
   (action/toggle/mode), one meaning per key per context, state shown for state
   entries - then the instances (HOLD, RUN versus SINGLE, action highlight).
   Second P1: apply-the-draft-on-accept in the editor.
+- [ ] Layout v2 (`docs/nc-layout-v2.md`): remove header and footer, add a full
+  width bottom bar with DRO/status/message on the left and a dedicated 3x3 key
+  grid on the right, 14-16 code rows, tool description at the bottom of the
+  graphic pane, file name removed from the code pane. The 3x3 area is where the
+  key model from the review should land.
 - [ ] **Global editor note - steal the editor flow from Heidenhain TNC 415.**
   Field-by-field entry instead of prefilled lines: start a function, the control
   prompts the first required field (letter + description, no need to type the

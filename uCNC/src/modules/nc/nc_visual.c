@@ -3516,8 +3516,16 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
     t3 = mcu_micros();
 
     nc_visual_footer_text(footer_text, sizeof(footer_text));
-    nc_visual_draw_footer_status(g_nc_visual_status[0] ? g_nc_visual_status : "NC bring-up",
+    /* Operator messages (field hints, rejected edits, controller errors) reuse
+       the status line that is already drawn, so no new panel element appears
+       and nothing has to be dismissed. */
+    {
+        const char *status_text = g_nc_visual_status[0] ? g_nc_visual_status : "NC bring-up";
+        if (nc_message_kind() != NC_MSG_NONE && nc_message_text()[0])
+            status_text = nc_message_text();
+        nc_visual_draw_footer_status(status_text,
                                  footer_text);
+    }
     t4 = mcu_micros();
     g_nc_visual_frame_header_us += t1 - t0;
     g_nc_visual_frame_preview_us += t2 - t1;
@@ -3582,6 +3590,9 @@ void nc_visual_init(void)
 
 void nc_visual_handle_key(nc_visual_key_t key)
 {
+    /* A message is transient: the next key press hands the line back to the
+       normal status text, so nothing has to be dismissed. */
+    nc_message_clear();
     uint8_t footer_action;
 
     if (nc_visual_new_file_handle_key(key)) {

@@ -93,6 +93,19 @@ NC supplies document access and UI, not a second cycle generator.
 
 ## Remaining NC integration
 
+- [ ] **Global editor note - steal the editor flow from Heidenhain TNC 415.**
+  Field-by-field entry instead of prefilled lines: start a function, the control
+  prompts the first required field (letter + description, no need to type the
+  letter), Enter accepts and advances, Enter on an empty field skips it, the
+  function stays modal until committed. Includes the word validation reported
+  from the Windows editor: a `G` word may only be edited to a supported code
+  (the cycle family switches inside its own set, e.g. `G71`/`G72`), always
+  positive and integer, and unsigned words must reject a sign. Also: Up/Down on
+  a value adjusts and flips its sign so the pad's `-` key is unnecessary, End
+  and Del get a real job, `.` is used or removed, and the 3x3 becomes a two or
+  three level menu. Letter keys (`G`, `X`, `Y`, `Z`, `N`, `Q`, `U`, `R`, `F`)
+  are explicitly not planned until the field flow exists - they would only add
+  noise. Full spec: `docs/nc-editor-tnc415.md`.
 - [x] Desktop sender (`tools/nc_sender`): the NC document, emitter and G7x
   generators compile host-side and stream expanded programs to Grbl or uCNC,
   with a Grbl 1.1 protocol client, Win32 COM transport and host tests. The

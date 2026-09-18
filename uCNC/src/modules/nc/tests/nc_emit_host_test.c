@@ -3,6 +3,7 @@
 #include "../nc.h"
 #include "../nc_emit.h"
 #include "../nc_g7x.h"
+#include "../nc_visual.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -376,6 +377,86 @@ static int test_word_value_validation(void)
     return 0;
 }
 
+/* Keyboard map sanity.
+
+   The mapping is expected to grow (multi-level menus, field prompts, maybe
+   letter keys), so the point of this test is not the current table but the
+   obligation to extend it: every key the screen can receive must be classified
+   here, and the class counts pin the shape of the map. Adding a key without
+   classifying it fails this test. */
+typedef enum {
+    KEY_CLASS_INVALID = 0,
+    KEY_CLASS_NONE,
+    KEY_CLASS_DIGIT,
+    KEY_CLASS_CONTROL,
+    KEY_CLASS_NAV_LINE,
+    KEY_CLASS_NAV_WORD,
+    KEY_CLASS_NAV_FIELD
+} key_class_t;
+
+static key_class_t key_class_of(nc_visual_key_t key)
+{
+    switch (key) {
+    case NC_VISUAL_KEY_NONE: return KEY_CLASS_NONE;
+    case NC_VISUAL_KEY_DIGIT_0:
+    case NC_VISUAL_KEY_DIGIT_1:
+    case NC_VISUAL_KEY_DIGIT_2:
+    case NC_VISUAL_KEY_DIGIT_3:
+    case NC_VISUAL_KEY_DIGIT_4:
+    case NC_VISUAL_KEY_DIGIT_5:
+    case NC_VISUAL_KEY_DIGIT_6:
+    case NC_VISUAL_KEY_DIGIT_7:
+    case NC_VISUAL_KEY_DIGIT_8:
+    case NC_VISUAL_KEY_DIGIT_9: return KEY_CLASS_DIGIT;
+    case NC_VISUAL_KEY_BACKSPACE:
+    case NC_VISUAL_KEY_FINISH:
+    case NC_VISUAL_KEY_CANCEL:
+    case NC_VISUAL_KEY_ACCEPT:
+    case NC_VISUAL_KEY_MODE: return KEY_CLASS_CONTROL;
+    case NC_VISUAL_KEY_PREV:
+    case NC_VISUAL_KEY_NEXT: return KEY_CLASS_NAV_LINE;
+    case NC_VISUAL_KEY_WORD_PREV:
+    case NC_VISUAL_KEY_WORD_NEXT: return KEY_CLASS_NAV_WORD;
+    case NC_VISUAL_KEY_FIELD_PREV:
+    case NC_VISUAL_KEY_FIELD_NEXT: return KEY_CLASS_NAV_FIELD;
+    }
+    return KEY_CLASS_INVALID;
+}
+
+static int test_key_map_sanity(void)
+{
+    unsigned digits = 0u;
+    unsigned controls = 0u;
+    unsigned nav_line = 0u;
+    unsigned nav_word = 0u;
+    unsigned nav_field = 0u;
+    unsigned none = 0u;
+    int key;
+
+    for (key = 0; key <= (int)NC_VISUAL_KEY_FIELD_NEXT; key++) {
+        switch (key_class_of((nc_visual_key_t)key)) {
+        case KEY_CLASS_NONE: none++; break;
+        case KEY_CLASS_DIGIT: digits++; break;
+        case KEY_CLASS_CONTROL: controls++; break;
+        case KEY_CLASS_NAV_LINE: nav_line++; break;
+        case KEY_CLASS_NAV_WORD: nav_word++; break;
+        case KEY_CLASS_NAV_FIELD: nav_field++; break;
+        case KEY_CLASS_INVALID:
+        default:
+            printf("FAIL unclassified key %d - extend the key map table\n", key);
+            return 1;
+        }
+    }
+    if (digits != 10u || controls != 5u || nav_line != 2u ||
+        nav_word != 2u || nav_field != 2u || none != 1u) {
+        printf("FAIL key classes digits=%u controls=%u line=%u word=%u "
+               "field=%u none=%u\n",
+               digits, controls, nav_line, nav_word, nav_field, none);
+        return 1;
+    }
+    return 0;
+}
+
 /* NC supplies program text through the G7x source contract, not the other way
    around: the cursor returns numbered blocks in document order. */
 static int test_numbered_source_cursor(void)
@@ -585,6 +666,7 @@ int main(void)
 
     fails += test_word_value_validation();
     fails += test_same_field_navigation();
+    fails += test_key_map_sanity();
     fails += test_g7_g8_passthrough();
     fails += test_g71_corner_rounding();
     fails += test_g71_corner_chamfer();

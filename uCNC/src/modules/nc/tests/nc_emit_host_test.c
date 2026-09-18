@@ -290,6 +290,46 @@ static int test_g7x_block_scan(void)
    command (the cycle family switches inside itself), and unsigned words must
    never take a sign. This is the path both the machine UI and the desktop panel
    use, so the rules cannot be bypassed by a caller. */
+/* Up/Down walk between words with the same letter and never write a value. */
+static int test_same_field_navigation(void)
+{
+    nc_document_t doc;
+    nc_word_t word;
+
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G1 X50 Z0");
+    (void)nc_insert_line(&doc, 1, "G1 Z-10");
+    (void)nc_insert_line(&doc, 2, "G1 X40 Z-20");
+
+    doc.cursor_line = 0;
+    doc.selected_word = 1; /* X50 */
+    if (nc_get_selected_word(&doc, &word) != NC_OK || word.letter != 'X') {
+        puts("FAIL field navigation start");
+        return 1;
+    }
+    if (nc_select_same_word_next(&doc) != NC_OK || doc.cursor_line != 2u ||
+        nc_get_selected_word(&doc, &word) != NC_OK || word.letter != 'X') {
+        printf("FAIL next X line=%lu\n", (unsigned long)doc.cursor_line);
+        return 1;
+    }
+    if (nc_select_same_word_next(&doc) != NC_ERR_NO_WORD) {
+        puts("FAIL next X past the end");
+        return 1;
+    }
+    if (nc_select_same_word_prev(&doc) != NC_OK || doc.cursor_line != 0u) {
+        printf("FAIL previous X line=%lu\n", (unsigned long)doc.cursor_line);
+        return 1;
+    }
+    /* Navigation must not have touched the program text. */
+    if (strcmp(doc.lines[0].text, "G1 X50 Z0") != 0 ||
+        strcmp(doc.lines[1].text, "G1 Z-10") != 0 ||
+        strcmp(doc.lines[2].text, "G1 X40 Z-20") != 0) {
+        puts("FAIL field navigation wrote text");
+        return 1;
+    }
+    return 0;
+}
+
 static int test_word_value_validation(void)
 {
     nc_document_t doc;
@@ -544,6 +584,7 @@ int main(void)
     int fails = 0;
 
     fails += test_word_value_validation();
+    fails += test_same_field_navigation();
     fails += test_g7_g8_passthrough();
     fails += test_g71_corner_rounding();
     fails += test_g71_corner_chamfer();

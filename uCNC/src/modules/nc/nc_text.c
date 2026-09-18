@@ -166,15 +166,15 @@ static void nc_text_edit_apply(nc_document_t *doc, nc_text_edit_t *edit)
     if (edit->buf[0] == '\0') {
         return;
     }
-    if (strcmp(edit->buf, "-") == 0) {
-        strncpy(apply, "-0", sizeof(apply) - 1);
-    } else if (strcmp(edit->buf, ".") == 0) {
-        strncpy(apply, "0.", sizeof(apply) - 1);
-    } else if (strcmp(edit->buf, "-.") == 0) {
-        strncpy(apply, "-0.", sizeof(apply) - 1);
-    } else {
-        strncpy(apply, edit->buf, sizeof(apply) - 1);
+    /* A draft that is only a sign and/or a point is not a value yet: writing it
+       would put "-0" or "0." into the program the moment the key is pressed.
+       Nothing is written until the draft actually holds a digit. */
+    if (strcmp(edit->buf, "-") == 0 ||
+        strcmp(edit->buf, ".") == 0 ||
+        strcmp(edit->buf, "-.") == 0) {
+        return;
     }
+    strncpy(apply, edit->buf, sizeof(apply) - 1);
     apply[sizeof(apply) - 1] = '\0';
     (void)nc_set_selected_word_text(doc, apply);
 }

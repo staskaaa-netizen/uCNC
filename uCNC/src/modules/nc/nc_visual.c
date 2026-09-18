@@ -3613,6 +3613,7 @@ void nc_visual_handle_key(nc_visual_key_t key)
         bool forward = key == NC_VISUAL_KEY_FIELD_NEXT;
         nc_word_t word;
         nc_result_t result;
+        char letter = '?';
 
         /* Only code views walk fields. In the file list, a menu or the tool
            table these keys keep their existing step behaviour. */
@@ -3623,6 +3624,8 @@ void nc_visual_handle_key(nc_visual_key_t key)
         /* Arrows never edit: drop any draft instead of applying it, so a stray
            decimal point cannot be pushed into the program. */
         nc_text_edit_clear(&g_nc_visual_edit);
+        if (nc_get_selected_word(&g_nc_visual_doc, &word) == NC_OK)
+            letter = word.letter;
         result = forward ? nc_select_same_word_next(&g_nc_visual_doc) :
                            nc_select_same_word_prev(&g_nc_visual_doc);
         if (result == NC_OK &&
@@ -3633,8 +3636,14 @@ void nc_visual_handle_key(nc_visual_key_t key)
             g_nc_visual_dirty = true;
             return;
         }
-        /* No field of that kind left: fall back to plain line movement. */
-        nc_visual_handle_key(forward ? NC_VISUAL_KEY_NEXT : NC_VISUAL_KEY_PREV);
+        /* No field of that letter left: stay exactly where we are. Falling
+           back to the line keys is wrong here: while a word is selected those
+           letters mean sign (B), dot (C) and next word/accept (D) in the edit
+           dispatch, so an arrow at the end of the program started an edit and
+           re-applied the value. Field navigation must never edit. */
+        snprintf(g_nc_visual_status, sizeof(g_nc_visual_status),
+                 "No further %c field", letter);
+        g_nc_visual_dirty = true;
         return;
     }
 

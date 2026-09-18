@@ -26,7 +26,8 @@ FLAGS = ["-std=gnu11", "-O1", "-w",
          f"-I{SRC / 'modules' / 'g7x'}", f"-I{SRC / 'modules' / 'lvds_renderer'}",
          f"-I{TOOL}"]
 
-LDFLAGS = ["-mwindows", "-lgdi32", "-luser32", "-lcomdlg32"]
+# -static avoids a runtime dependency on libwinpthread-1.dll from the toolchain.
+LDFLAGS = ["-mwindows", "-static", "-lgdi32", "-luser32", "-lcomdlg32"]
 
 
 def core_sources():

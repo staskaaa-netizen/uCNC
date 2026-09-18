@@ -13,7 +13,9 @@ CFLAGS = -std=gnu11 -O2 -Wall -Wextra -Wno-unused-parameter \
          -I$(UCNC) -I$(SRC) -I$(SRC)/modules/nc -I$(SRC)/modules/g7x \
          -I$(SRC)/modules/lvds_renderer -I.
 
-LDFLAGS = -mwindows -lcomdlg32 -lgdi32 -luser32 -lcomctl32
+# -static keeps the MinGW runtime (libwinpthread) inside the exe so it runs
+# without the toolchain's bin directory on PATH.
+LDFLAGS = -mwindows -static -lcomdlg32 -lgdi32 -luser32 -lcomctl32
 
 CORE = $(SRC)/*.c $(SRC)/core/*.c $(SRC)/interface/*.c \
        $(SRC)/hal/kinematics/*.c $(SRC)/hal/tools/*.c \

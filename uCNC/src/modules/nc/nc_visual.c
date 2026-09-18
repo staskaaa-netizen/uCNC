@@ -3636,13 +3636,19 @@ void nc_visual_handle_key(nc_visual_key_t key)
             g_nc_visual_dirty = true;
             return;
         }
-        /* No field of that letter left: stay exactly where we are. Falling
-           back to the line keys is wrong here: while a word is selected those
-           letters mean sign (B), dot (C) and next word/accept (D) in the edit
-           dispatch, so an arrow at the end of the program started an edit and
-           re-applied the value. Field navigation must never edit. */
-        snprintf(g_nc_visual_status, sizeof(g_nc_visual_status),
-                 "No further %c field", letter);
+        /* No field of that letter to go to (including "no word selected at
+           all"): move one line directly. Going through the key dispatch here
+           is what caused the bug, because while a word is selected those
+           letters mean sign (B), dot (C) and next word/accept (D). Moving the
+           cursor ourselves cannot start an edit and cannot write a value. */
+        if (forward)
+            nc_cursor_down(&g_nc_visual_doc);
+        else
+            nc_cursor_up(&g_nc_visual_doc);
+        g_nc_visual_doc.selected_word = -1;
+        nc_text_edit_clear(&g_nc_visual_edit);
+        snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Line %lu",
+                 (unsigned long)(g_nc_visual_doc.cursor_line + 1u));
         g_nc_visual_dirty = true;
         return;
     }

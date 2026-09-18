@@ -2418,6 +2418,8 @@ static char nc_visual_key_char(nc_visual_key_t key)
     case NC_VISUAL_KEY_PREV: return 'B';
     case NC_VISUAL_KEY_NEXT: return 'C';
     case NC_VISUAL_KEY_ACCEPT: return 'D';
+    case NC_VISUAL_KEY_MINUS: return '-';
+    case NC_VISUAL_KEY_DOT: return '.';
     default: return '\0';
     }
 }

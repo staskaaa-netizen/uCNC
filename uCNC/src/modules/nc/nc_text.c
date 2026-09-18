@@ -261,9 +261,9 @@ bool nc_text_edit_handle_key(nc_document_t *doc,
 
     if (key >= '0' && key <= '9') {
         nc_text_edit_digit(doc, edit, key);
-    } else if (key == 'B') {
+    } else if (key == 'B' || key == '-') {
         nc_text_edit_toggle_sign(doc, edit);
-    } else if (key == 'C') {
+    } else if (key == 'C' || key == '.') {
         nc_text_edit_dot(doc, edit);
     } else if (key == '*') {
         nc_text_edit_backspace(doc, edit);

@@ -391,7 +391,8 @@ typedef enum {
     KEY_CLASS_CONTROL,
     KEY_CLASS_NAV_LINE,
     KEY_CLASS_NAV_WORD,
-    KEY_CLASS_NAV_FIELD
+    KEY_CLASS_NAV_FIELD,
+    KEY_CLASS_CHAR
 } key_class_t;
 
 static key_class_t key_class_of(nc_visual_key_t key)
@@ -419,6 +420,8 @@ static key_class_t key_class_of(nc_visual_key_t key)
     case NC_VISUAL_KEY_WORD_NEXT: return KEY_CLASS_NAV_WORD;
     case NC_VISUAL_KEY_FIELD_PREV:
     case NC_VISUAL_KEY_FIELD_NEXT: return KEY_CLASS_NAV_FIELD;
+    case NC_VISUAL_KEY_MINUS:
+    case NC_VISUAL_KEY_DOT: return KEY_CLASS_CHAR;
     }
     return KEY_CLASS_INVALID;
 }
@@ -430,10 +433,11 @@ static int test_key_map_sanity(void)
     unsigned nav_line = 0u;
     unsigned nav_word = 0u;
     unsigned nav_field = 0u;
+    unsigned chars = 0u;
     unsigned none = 0u;
     int key;
 
-    for (key = 0; key <= (int)NC_VISUAL_KEY_FIELD_NEXT; key++) {
+    for (key = 0; key <= (int)NC_VISUAL_KEY_DOT; key++) {
         switch (key_class_of((nc_visual_key_t)key)) {
         case KEY_CLASS_NONE: none++; break;
         case KEY_CLASS_DIGIT: digits++; break;
@@ -441,6 +445,7 @@ static int test_key_map_sanity(void)
         case KEY_CLASS_NAV_LINE: nav_line++; break;
         case KEY_CLASS_NAV_WORD: nav_word++; break;
         case KEY_CLASS_NAV_FIELD: nav_field++; break;
+        case KEY_CLASS_CHAR: chars++; break;
         case KEY_CLASS_INVALID:
         default:
             printf("FAIL unclassified key %d - extend the key map table\n", key);
@@ -448,10 +453,10 @@ static int test_key_map_sanity(void)
         }
     }
     if (digits != 10u || controls != 5u || nav_line != 2u ||
-        nav_word != 2u || nav_field != 2u || none != 1u) {
+        nav_word != 2u || nav_field != 2u || chars != 2u || none != 1u) {
         printf("FAIL key classes digits=%u controls=%u line=%u word=%u "
-               "field=%u none=%u\n",
-               digits, controls, nav_line, nav_word, nav_field, none);
+               "field=%u chars=%u none=%u\n",
+               digits, controls, nav_line, nav_word, nav_field, chars, none);
         return 1;
     }
     return 0;

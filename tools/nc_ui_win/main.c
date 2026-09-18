@@ -151,6 +151,12 @@ static nc_visual_key_t host_key_for_vk(WPARAM vk, bool *handled)
         return (nc_visual_key_t)(NC_VISUAL_KEY_DIGIT_0 + (int)(vk - '0'));
     if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD9)
         return (nc_visual_key_t)(NC_VISUAL_KEY_DIGIT_0 + (int)(vk - VK_NUMPAD0));
+    /* Dedicated sign and point, so value entry does not depend on the footer
+       letters (which the machine pad overloads as UP/DOWN). */
+    if (vk == VK_SUBTRACT || vk == VK_OEM_MINUS)
+        return NC_VISUAL_KEY_MINUS;
+    if (vk == VK_DECIMAL || vk == VK_OEM_PERIOD)
+        return NC_VISUAL_KEY_DOT;
     *handled = false;
     return NC_VISUAL_KEY_NONE;
 }

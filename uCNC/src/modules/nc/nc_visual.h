@@ -37,7 +37,11 @@ typedef enum
     /* Field-typed navigation: jump to the next/previous word with the same
        letter, like a control that steps between equal fields. Never edits. */
     NC_VISUAL_KEY_FIELD_PREV,
-    NC_VISUAL_KEY_FIELD_NEXT
+    NC_VISUAL_KEY_FIELD_NEXT,
+    /* Dedicated sign and decimal point. These exist so value entry does not
+       have to overload the footer letters (UP was sign, DOWN was the point). */
+    NC_VISUAL_KEY_MINUS,
+    NC_VISUAL_KEY_DOT
 } nc_visual_key_t;
 
 void nc_visual_init(void);

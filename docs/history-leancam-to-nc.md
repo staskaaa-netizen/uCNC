@@ -1,5 +1,9 @@
 # From LeanCamWin to the NC desktop tools: history and working rules
 
+This note covers the desktop tools. The whole project arc - ESP32/RA8876,
+PCNT/PIO encoders, G33/G76, the HDMI detour, LVDS, the NC module and the G7x
+extraction - is in [history-project.md](history-project.md).
+
 Two generations of "run the machine UI on a PC" exist in this repository. The
 first one is the LeanCam Windows app (May 2026). The second is the NC + G7x
 module split with its desktop tools (June 2026 onward, extended in September).

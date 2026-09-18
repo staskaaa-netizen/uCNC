@@ -1,7 +1,8 @@
 # Desktop NC sender
 
 See [history-leancam-to-nc.md](history-leancam-to-nc.md) for how this work grew
-out of the earlier LeanCamWin app, and the do/don't rules that came out of it.
+out of the earlier LeanCamWin app, and [history-project.md](history-project.md)
+for the full arc from the ESP32/RA8876 machine to the module split.
 
 The NC screen, the editor and the G7x cycles only ran on the RP2350 board with
 the LVDS display and the keypad. That hardware is capable but unusual: a normal

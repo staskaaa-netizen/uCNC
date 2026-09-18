@@ -3614,6 +3614,12 @@ void nc_visual_handle_key(nc_visual_key_t key)
         nc_word_t word;
         nc_result_t result;
 
+        /* Only code views walk fields. In the file list, a menu or the tool
+           table these keys keep their existing step behaviour. */
+        if (nc_files_active() || !nc_visual_is_code_view()) {
+            nc_visual_handle_key(forward ? NC_VISUAL_KEY_NEXT : NC_VISUAL_KEY_PREV);
+            return;
+        }
         /* Arrows never edit: drop any draft instead of applying it, so a stray
            decimal point cannot be pushed into the program. */
         nc_text_edit_clear(&g_nc_visual_edit);

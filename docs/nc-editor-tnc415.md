@@ -61,7 +61,12 @@ messages. That keeps one owner per domain (see `../AGENTS.md`).
 
 ## Keys
 
-- Up/Down: previous/next **line** (already implemented; `PREV`/`NEXT`).
+- Up/Down: previous/next **field of the same letter** (`NC_VISUAL_KEY_FIELD_PREV`
+  / `_NEXT`, implemented for both the desktop arrows and the RP2350 keypad): on
+  an `X` you land on the next `X`, and the footer names the field and line.
+  They never touch the value - an active draft is discarded, not applied. When
+  no field of that letter remains, the key falls back to line stepping, and in
+  the file list, menus or tool table it keeps the existing step behaviour.
 - Left/Right: previous/next **word** on the line (already implemented as
   `NC_VISUAL_KEY_WORD_PREV`/`_WORD_NEXT`).
 - While a field is being entered, Up/Down adjusts the value and flips its sign;

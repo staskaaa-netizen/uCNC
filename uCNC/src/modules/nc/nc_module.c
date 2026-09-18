@@ -25,8 +25,10 @@ static nc_visual_key_t nc_module_map_key(ui_key_t key)
     case UI_KEY_BACKSPACE: return NC_VISUAL_KEY_BACKSPACE;
     case UI_KEY_FINISH: return NC_VISUAL_KEY_FINISH;
     case UI_KEY_CANCEL: return NC_VISUAL_KEY_MODE;
-    case UI_KEY_PREV: return NC_VISUAL_KEY_PREV;
-    case UI_KEY_NEXT: return NC_VISUAL_KEY_NEXT;
+    /* Up/Down walk between words with the same letter (an X finds the next X)
+       and never edit; outside a code view the screen falls back to stepping. */
+    case UI_KEY_PREV: return NC_VISUAL_KEY_FIELD_PREV;
+    case UI_KEY_NEXT: return NC_VISUAL_KEY_FIELD_NEXT;
     case UI_KEY_ACCEPT: return NC_VISUAL_KEY_ACCEPT;
     default: return NC_VISUAL_KEY_NONE;
     }

@@ -1,5 +1,8 @@
 # Desktop NC sender
 
+See [history-leancam-to-nc.md](history-leancam-to-nc.md) for how this work grew
+out of the earlier LeanCamWin app, and the do/don't rules that came out of it.
+
 The NC screen, the editor and the G7x cycles only ran on the RP2350 board with
 the LVDS display and the keypad. That hardware is capable but unusual: a normal
 PC cannot use the NC workflow, and a Grbl controller cannot preview or expand

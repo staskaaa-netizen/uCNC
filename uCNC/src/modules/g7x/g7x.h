@@ -13,7 +13,9 @@ typedef enum {
     G7X_OK = 0,
     G7X_BAD_FIELD,
     G7X_UNSUPPORTED,
-    G7X_WRITE_FAILED
+    G7X_WRITE_FAILED,
+    G7X_RANGE_MISSING,    /* numbered range unavailable or evicted */
+    G7X_RANGE_AMBIGUOUS   /* duplicate block number or reversed range */
 } g7x_result_t;
 
 typedef enum {

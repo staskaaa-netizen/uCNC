@@ -1,5 +1,6 @@
 #include "g7x_contour.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,6 +101,71 @@ bool g7x_get_field_float(const char *line, const char *key, float *out)
     return end != text && *end == '\0' && isfinite(*out);
 }
 
+/* Find the N word anywhere in the row, including as the first token, and skip
+   parenthesized comments. The word must not continue another letter (so `XN1`
+   and `TN1` are not line numbers). */
+bool g7x_line_number(const char *line, uint32_t *out)
+{
+    const char *p = line;
+    unsigned depth = 0u;
+
+    if (!line || !out)
+        return false;
+
+    while (*p) {
+        if (*p == '(') {
+            depth++;
+            p++;
+            continue;
+        }
+        if (*p == ')') {
+            if (depth)
+                depth--;
+            p++;
+            continue;
+        }
+        if (depth) {
+            p++;
+            continue;
+        }
+        if (*p == ';')
+            break;
+        if ((*p == 'N' || *p == 'n') && p[1] >= '0' && p[1] <= '9' &&
+            (p == line || !isalpha((unsigned char)p[-1]))) {
+            char *end = NULL;
+            unsigned long value = strtoul(p + 1, &end, 10);
+
+            if (end == p + 1)
+                return false;
+            *out = (uint32_t)value;
+            return true;
+        }
+        p++;
+    }
+    return false;
+}
+
+const char *g7x_skip_line_number(const char *line)
+{
+    const char *p = line;
+    uint32_t number = 0u;
+
+    if (!line)
+        return "";
+    while (*p == ' ' || *p == '\t')
+        p++;
+    if (p[0] != 'N' && p[0] != 'n')
+        return line;
+    if (!g7x_line_number(p, &number))
+        return line;
+    p++;
+    while (*p && *p != ' ' && *p != '\t')
+        p++;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    return p;
+}
+
 bool g7x_modal_apply_line(g7x_modal_t *modal, const char *line)
 {
     bool changed = false;
@@ -128,6 +194,7 @@ bool g7x_modal_apply_line(g7x_modal_t *modal, const char *line)
 
 g7x_cycle_t g7x_cycle_from_line(const char *line)
 {
+    line = g7x_skip_line_number(line);
     if (g7x_command_is(line, "G71"))
         return G7X_CYCLE_G71;
     if (g7x_command_is(line, "G72"))
@@ -141,6 +208,7 @@ g7x_cycle_t g7x_cycle_from_line(const char *line)
 
 g7x_contour_cmd_t g7x_contour_cmd_from_line(const char *line)
 {
+    line = g7x_skip_line_number(line);
     if (g7x_command_is(line, "G80"))
         return G7X_CONTOUR_END;
     if (g7x_command_is(line, "G0"))

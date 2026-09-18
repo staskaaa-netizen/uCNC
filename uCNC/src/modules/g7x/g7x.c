@@ -11,6 +11,7 @@
 #endif
 #include "g7x.h"
 #include "g7x_contour.h"
+#include "g7x_source.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -30,6 +31,14 @@ static bool g7x_parser_thread_runner_active;
 #endif
 static g7x_cycle_t g7x_parser_pending_cycle;
 static g7x_stream_t g7x_parser_stream;
+/* P/Q numbered range: armed waits for the N(P) block, collecting follows it
+   until the N(Q) block closes the region. */
+static bool g7x_parser_pq_armed;
+static bool g7x_parser_pq_collecting;
+static uint32_t g7x_parser_pq_p;
+static uint32_t g7x_parser_pq_q;
+static uint32_t g7x_parser_pq_last;
+static g7x_history_t g7x_parser_history;
 #if G7X_ENABLE_G76 && defined(G33_ENCODER)
 static g7x_thread_stream_t g7x_parser_thread_stream;
 #endif
@@ -58,6 +67,11 @@ static void g7x_parser_clear_state(void)
 {
     g7x_parser_region_active = false;
     g7x_parser_runner_active = false;
+    g7x_parser_pq_armed = false;
+    g7x_parser_pq_collecting = false;
+    g7x_parser_pq_p = 0u;
+    g7x_parser_pq_q = 0u;
+    g7x_parser_pq_last = 0u;
 #if G7X_ENABLE_G76 && defined(G33_ENCODER)
     g7x_parser_thread_runner_active = false;
 #endif
@@ -77,13 +91,30 @@ static void g7x_parser_clear_state(void)
 bool g7x_parser_busy(void)
 {
 #if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
-    return g7x_parser_region_active || g7x_parser_runner_active
+    return g7x_parser_region_active || g7x_parser_runner_active ||
+           g7x_parser_pq_armed
 #if G7X_ENABLE_G76 && defined(G33_ENCODER)
            || g7x_parser_thread_runner_active
 #endif
            ;
 #else
     return false;
+#endif
+}
+
+const g7x_history_t *g7x_parser_numbered_history(void)
+{
+#if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
+    return &g7x_parser_history;
+#else
+    return NULL;
+#endif
+}
+
+void g7x_parser_numbered_history_reset(void)
+{
+#if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
+    g7x_history_reset(&g7x_parser_history);
 #endif
 }
 
@@ -1026,6 +1057,8 @@ const char *g7x_result_text(g7x_result_t result)
         case G7X_BAD_FIELD: return "bad field";
         case G7X_UNSUPPORTED: return "unsupported";
         case G7X_WRITE_FAILED: return "write failed";
+        case G7X_RANGE_MISSING: return "numbered range missing";
+        case G7X_RANGE_AMBIGUOUS: return "numbered range ambiguous";
         default: return "unknown";
     }
 }
@@ -1480,6 +1513,91 @@ static void g7x_parser_log_block(const g7x_motion_block_t *block)
     proto_info("%s", line);
 }
 
+static uint32_t g7x_parser_block_number(const parser_words_t *words)
+{
+#ifdef GCODE_PROCESS_LINE_NUMBERS
+    return words ? (uint32_t)words->n : 0u;
+#else
+    (void)words;
+    return 0u;
+#endif
+}
+
+/* P/Q block numbers are positive integers inside the parser's line range. */
+static bool g7x_parser_pq_number(float value, uint32_t *out)
+{
+    if (!out || !isfinite(value) || value < 1.0f ||
+        value > (float)MAX_LINE_NUMBER || floorf(value) != value)
+        return false;
+    *out = (uint32_t)value;
+    return true;
+}
+
+/* Retain the profile block in the generator's internal coordinates so a later
+   lookup can replay it without the original source text. */
+static void g7x_parser_retain_contour(uint32_t number,
+                                      uint8_t motion,
+                                      const parser_words_t *words,
+                                      const parser_cmd_explicit_t *cmd)
+{
+    char text[G7X_RETAINED_TEXT_LEN];
+    int len;
+
+    if (!number || !words || !cmd)
+        return;
+    len = snprintf(text, sizeof(text), "N%u G%c",
+                   (unsigned)number, g7x_parser_motion_letter(motion));
+    if (len > 0 && len < (int)sizeof(text) && CHECKFLAG(cmd->words, GCODE_WORD_X))
+        len += snprintf(text + len, sizeof(text) - (size_t)len,
+                        " X%.3f", words->xyzabc[AXIS_X]);
+    if (len > 0 && len < (int)sizeof(text) && CHECKFLAG(cmd->words, GCODE_WORD_Z))
+        len += snprintf(text + len, sizeof(text) - (size_t)len,
+                        " Z%.3f", words->xyzabc[AXIS_Z]);
+    if (len > 0 && len < (int)sizeof(text) && CHECKFLAG(cmd->words, GCODE_WORD_I))
+        len += snprintf(text + len, sizeof(text) - (size_t)len,
+                        " I%.3f", words->ijk[0]);
+    if (len > 0 && len < (int)sizeof(text) && CHECKFLAG(cmd->words, GCODE_WORD_K))
+        len += snprintf(text + len, sizeof(text) - (size_t)len,
+                        " K%.3f", words->ijk[2]);
+    if (len > 0 && len < (int)sizeof(text) && CHECKFLAG(cmd->words, GCODE_WORD_R))
+        (void)snprintf(text + len, sizeof(text) - (size_t)len,
+                       " R%.3f", words->r);
+    (void)g7x_history_add(&g7x_parser_history, number, text);
+}
+
+/* Close the active contour region and queue its generated blocks. Used by an
+   explicit G80 and by the N(Q) block of a P/Q numbered range. */
+static void g7x_parser_region_complete(gcode_exec_args_t *ptr)
+{
+    bool done = false;
+    g7x_result_t result = g7x_stream_add_parsed(&g7x_parser_stream,
+                                                G7X_CONTOUR_END,
+                                                0.0f, false,
+                                                0.0f, false,
+                                                0.0f, false,
+                                                0.0f, false,
+                                                0.0f, false,
+                                                G7X_CORNER_NONE,
+                                                0.0f,
+                                                &done);
+
+    g7x_parser_region_active = false;
+    g7x_parser_pq_collecting = false;
+    if (result != G7X_OK) {
+        proto_info("G7X parser collect failed: %s", g7x_result_text(result));
+        g7x_parser_clear_state();
+        *(ptr->error) = STATUS_INVALID_STATEMENT;
+    } else {
+        proto_info("G7X region ready count=%u", (unsigned)g7x_parser_stream.region.count);
+        memcpy(&g7x_parser_runner_state, ptr->new_state, sizeof(g7x_parser_runner_state));
+        g7x_parser_runner_active = true;
+        *(ptr->error) = STATUS_OK;
+    }
+    ptr->cmd->groups = 0;
+    ptr->cmd->words = 0;
+    memset(ptr->words, 0, sizeof(*ptr->words));
+}
+
 static uint8_t g7x_parser_exec_stream(parser_state_t *base_state, unsigned max_blocks, bool *done)
 {
     g7x_motion_block_t block;
@@ -1774,6 +1892,24 @@ bool g7x_exec_modifier(void *args)
 #endif
 
     if (ptr->cmd->group_extended == G7X_EXTENDED_CODE) {
+        /* Fanuc/Haas numbered range: P and Q select the profile blocks that
+           follow this header instead of an explicit G80 terminator. */
+        bool has_p = CHECKFLAG(ptr->cmd->words, GCODE_WORD_P);
+        bool has_q = CHECKFLAG(ptr->cmd->words, GCODE_WORD_Q);
+        bool numbered = false;
+        uint32_t pq_p = 0u;
+        uint32_t pq_q = 0u;
+
+        if (has_p || has_q) {
+            if (!has_p || !has_q ||
+                !g7x_parser_pq_number(ptr->words->p, &pq_p) ||
+                !g7x_parser_pq_number(ptr->words->d, &pq_q) ||
+                pq_q < pq_p) {
+                *(ptr->error) = STATUS_INVALID_STATEMENT;
+                return EVENT_HANDLED;
+            }
+            numbered = true;
+        }
         if (g7x_parser_busy() || ptr->cmd->groups ||
             ptr->new_state->groups.distance_mode != G90 ||
             ptr->new_state->groups.plane != G18 ||
@@ -1801,7 +1937,15 @@ bool g7x_exec_modifier(void *args)
             return EVENT_HANDLED;
         }
 
-        g7x_parser_region_active = true;
+        if (numbered) {
+            g7x_parser_pq_armed = true;
+            g7x_parser_pq_collecting = false;
+            g7x_parser_pq_p = pq_p;
+            g7x_parser_pq_q = pq_q;
+            g7x_parser_pq_last = 0u;
+        } else {
+            g7x_parser_region_active = true;
+        }
         ptr->new_state->feedrate = feed *
             (ptr->new_state->groups.units == G20 ? INCH_MM_MULT : 1.0f);
         ptr->new_state->groups.motion = G1;
@@ -1819,6 +1963,28 @@ bool g7x_exec_modifier(void *args)
         return EVENT_HANDLED;
     }
 
+    /* A numbered range stays armed until the N(P) block arrives. Blocks before
+       it are ordinary program text and must not be swallowed by the collector. */
+    if (g7x_parser_pq_armed && !g7x_parser_region_active) {
+        bool motion = CHECKFLAG(ptr->cmd->groups, GCODE_GROUP_MOTION) ||
+                      CHECKFLAG(ptr->cmd->words, GCODE_XZPLANE_AXIS);
+        if (!motion || g7x_parser_block_number(ptr->words) != g7x_parser_pq_p)
+            return EVENT_CONTINUE;
+        if (ptr->new_state->groups.motion != G0 &&
+            ptr->new_state->groups.motion != G1 &&
+            ptr->new_state->groups.motion != G2 &&
+            ptr->new_state->groups.motion != G3) {
+            /* The N(P) block must be a contour move. */
+            g7x_parser_clear_state();
+            *(ptr->error) = STATUS_INVALID_STATEMENT;
+            return EVENT_HANDLED;
+        }
+        g7x_parser_pq_armed = false;
+        g7x_parser_pq_collecting = true;
+        g7x_parser_region_active = true;
+        g7x_parser_pq_last = g7x_parser_pq_p - 1u;
+    }
+
     if (g7x_parser_region_active &&
         ((ptr->cmd->groups & ~GCODE_GROUP_MOTION) || ptr->cmd->group_extended ||
          (ptr->cmd->words & ~(GCODE_WORD_X | GCODE_WORD_Z | GCODE_WORD_F |
@@ -1831,31 +1997,13 @@ bool g7x_exec_modifier(void *args)
         (CHECKFLAG(ptr->cmd->groups, GCODE_GROUP_MOTION) ||
          CHECKFLAG(ptr->cmd->words, GCODE_XZPLANE_AXIS))) {
         if (ptr->new_state->groups.motion == G80) {
-            bool done = false;
-            g7x_result_t result = g7x_stream_add_parsed(&g7x_parser_stream,
-                                                        G7X_CONTOUR_END,
-                                                        0.0f, false,
-                                                        0.0f, false,
-                                                        0.0f, false,
-                                                        0.0f, false,
-                                                        0.0f, false,
-                                                        G7X_CORNER_NONE,
-                                                        0.0f,
-                                                        &done);
-            g7x_parser_region_active = false;
-            if (result != G7X_OK) {
-                proto_info("G7X parser collect failed: %s", g7x_result_text(result));
+            if (g7x_parser_pq_collecting) {
+                /* A numbered range ends at N(Q), never at G80. */
                 g7x_parser_clear_state();
                 *(ptr->error) = STATUS_INVALID_STATEMENT;
-            } else {
-                proto_info("G7X region ready count=%u", (unsigned)g7x_parser_stream.region.count);
-                memcpy(&g7x_parser_runner_state, ptr->new_state, sizeof(g7x_parser_runner_state));
-                g7x_parser_runner_active = true;
-                *(ptr->error) = STATUS_OK;
+                return EVENT_HANDLED;
             }
-            ptr->cmd->groups = 0;
-            ptr->cmd->words = 0;
-            memset(ptr->words, 0, sizeof(*ptr->words));
+            g7x_parser_region_complete(ptr);
         } else if (ptr->new_state->groups.motion == G0 ||
                    ptr->new_state->groups.motion == G1 ||
                    ptr->new_state->groups.motion == G2 ||
@@ -1864,6 +2012,20 @@ bool g7x_exec_modifier(void *args)
             bool has_r = CHECKFLAG(ptr->cmd->words, GCODE_WORD_R);
             bool has_i = CHECKFLAG(ptr->cmd->words, GCODE_WORD_I);
             bool has_k = CHECKFLAG(ptr->cmd->words, GCODE_WORD_K);
+            uint32_t number = g7x_parser_block_number(ptr->words);
+
+            if (g7x_parser_pq_collecting) {
+                /* Numbered profile blocks must increase and stay inside the
+                   range; unnumbered rows are ordinary contour rows. */
+                if (number != 0u &&
+                    (number <= g7x_parser_pq_last || number > g7x_parser_pq_q)) {
+                    g7x_parser_clear_state();
+                    *(ptr->error) = STATUS_INVALID_STATEMENT;
+                    return EVENT_HANDLED;
+                }
+                if (number != 0u)
+                    g7x_parser_pq_last = number;
+            }
 
             if (ptr->new_state->groups.motion == G0)
                 cmd = G7X_CONTOUR_RAPID;
@@ -1895,6 +2057,16 @@ bool g7x_exec_modifier(void *args)
                 proto_info("G7X parser collect failed: %s", g7x_result_text(result));
                 g7x_parser_clear_state();
                 *(ptr->error) = STATUS_INVALID_STATEMENT;
+            } else if (g7x_parser_pq_collecting) {
+                if (number != 0u) {
+                    g7x_parser_retain_contour(number, ptr->new_state->groups.motion,
+                                              ptr->words, ptr->cmd);
+                    if (number == g7x_parser_pq_q) {
+                        g7x_parser_region_complete(ptr);
+                        ptr->new_state->groups.motion_mantissa = 0;
+                        return EVENT_HANDLED;
+                    }
+                }
             }
             ptr->cmd->groups = 0;
             ptr->cmd->words = 0;
@@ -1963,6 +2135,7 @@ bool g7x_parse_error(void *args)
 bool g7x_reset(void *args)
 {
     (void)args;
+    g7x_parser_numbered_history_reset();
     g7x_parser_clear_state();
     return EVENT_CONTINUE;
 }

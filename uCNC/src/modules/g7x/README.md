@@ -15,7 +15,49 @@ firmware; physical threading synchronization remains unverified.
 Native cycles require `G18 G90 G94`. Both `G7/G8` and `G20/G21` are supported.
 The conservative inline contour subset requires monotonic X and Z, including
 arc interiors. G71/G72 still include their existing finishing pass. `G70` and
-Fanuc/Haas P/Q contour lookup are not implemented.
+the two-line Fanuc/Haas cycle headers are not implemented; the one-line P/Q
+range is described below.
+
+### Numbered P/Q ranges
+
+The one-line Fanuc/Haas form selects the profile by block number instead of an
+explicit `G80`:
+
+```text
+G71 U1 R1 P100 Q200 X0.5 Z0.5 F120
+N100 G0 X50 Z0
+G1 Z-30
+N200 X40
+```
+
+Rules implemented by both the parser run path and the NC preview:
+
+- The range starts at the block carrying `N(P)`. Earlier blocks are ordinary
+  program text and still execute; they are not swallowed by the cycle.
+- Unnumbered rows inside the range are contour rows, so only the first and last
+  profile blocks need numbers.
+- Numbered rows must increase and stay inside `[P, Q]`. The block carrying
+  `N(Q)` is the last profile row and closes the range in place of `G80`.
+- `G80` inside a numbered range, a repeated or decreasing number, a number
+  above `Q`, an incomplete `P`/`Q` pair and `Q < P` all fail the source command
+  and clear collection.
+
+Numbered profile rows are retained in a bounded ring
+(`G7X_MAX_RETAINED_BLOCKS`, `G7X_RETAINED_TEXT_LEN` in
+`g7x_source.h`). `g7x_parser_numbered_history()` exposes it for diagnostics and
+later replay. `g7x_history_visit_range()` walks a retained `[P, Q]` range and
+reports `G7X_RANGE_MISSING` for a block that is absent or was evicted and
+`G7X_RANGE_AMBIGUOUS` for duplicate numbers or a reversed range; it never
+guesses a profile.
+
+Callers that own program text can supply it through the `g7x_source_t` cursor
+contract in `g7x_source.h`. NC implements it for its own documents with
+`nc_emit_numbered_source()`, so G7x stays independent of NC storage while NC
+keeps ownership of the file text.
+
+Not implemented yet: two-line Fanuc/Haas headers, `G70 P/Q` replay from the
+retained range, treating the first `P` block as approach-only, and `S`/`T`
+words on profile rows (they currently reject the row).
 
 ### Native G76 contract
 

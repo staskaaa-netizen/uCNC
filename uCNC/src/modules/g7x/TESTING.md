@@ -12,7 +12,9 @@ python tools/test_g7x.py all
 
 `standalone` links the actual core parser/planner, virtual MCU, G7/G8 and G7x;
 no NC source file is linked or initialized. It tests inline collection,
-execution ordering, failure cleanup, G76 word ordering, units and work offsets.
+execution ordering, failure cleanup, G76 word ordering, units, work offsets and
+one-line P/Q numbered ranges (start block, unnumbered profile rows, `N(Q)`
+terminator, retention and error cleanup).
 G33 is intercepted to inspect targets/pitch; this does not validate spindle
 synchronization. `all` also tests the NC adapter and NC stream integration.
 
@@ -40,7 +42,12 @@ for the LVDS machine. It does not configure the real G33 spindle feedback.
    return an error and clear collection. Send an explicit G0 afterwards to
    verify that no stale contour captures it. Do not send the whole invalid
    test blindly: raw serial senders must stop on errors themselves.
-6. `g76.nc` requires the configured G33 encoder/spindle setup. Expected cut
+6. Numbered range: send `G71 U1 R1 P100 Q200 X0.5 Z0.5 F120` followed by
+   `N100 G0 X50 Z0`, an unnumbered contour row and `N200 X40`. The cycle must
+   run when the `N200` block is accepted, without a `G80`. Then repeat with a
+   `G80` inside the range and with a row numbered beyond `Q`; both must return
+   an error and leave no pending cycle.
+7. `g76.nc` requires the configured G33 encoder/spindle setup. Expected cut
    diameters are 38, 36.5, 36, then a spring pass at 36; lead is 1.5 mm/rev.
    Check actual phase/pitch separately before treating threading as validated.
 

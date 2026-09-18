@@ -85,6 +85,115 @@ static int expect_rejected(nc_emit_stream_t *stream)
     return 0;
 }
 
+static int expect_rejected_with(nc_emit_stream_t *stream, g7x_result_t want)
+{
+    char out[96];
+    size_t source;
+    nc_emit_result_t r;
+    do {
+        r = nc_emit_stream_next(stream, out, sizeof(out), &source);
+    } while (r == NC_EMIT_SKIP && stream->active);
+    if (r != NC_EMIT_ERROR || stream->active || stream->error != want) {
+        printf("FAIL expected error %d, got result=%d error=%d active=%d\n",
+               (int)want, r, (int)stream->error, stream->active);
+        return 1;
+    }
+    return 0;
+}
+
+/* Fanuc/Haas numbered range in preview: N(P)..N(Q) supplies the contour and
+   the source continues with the line after N(Q). */
+static int test_g71_numbered_range(void)
+{
+    nc_document_t doc;
+    nc_emit_stream_t stream;
+
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U1 R1 P100 Q200 X0.5 Z0.5 F120");
+    (void)nc_insert_line(&doc, 1, "N100 G1 X50 Z0");
+    (void)nc_insert_line(&doc, 2, "G1 X50 Z-10");
+    (void)nc_insert_line(&doc, 3, "N200 G1 X40 Z-10");
+    (void)nc_insert_line(&doc, 4, "G0 X80 Z0");
+    nc_emit_stream_begin(&stream, &doc, 0);
+
+    return expect_find_line(&stream, "(G7x finish contour)") ||
+           expect_line(&stream, "G0 X52.500") ||
+           expect_line(&stream, "G0 Z1.500") ||
+           expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
+           expect_line(&stream, "G1 X50.000 Z-10.000") ||
+           expect_line(&stream, "G1 X40.000 Z-10.000") ||
+           expect_line(&stream, "G0 X52.500") ||
+           expect_line(&stream, "G0 Z1.500") ||
+           expect_line(&stream, "G0 X80 Z0");
+}
+
+static int test_g71_numbered_range_errors(void)
+{
+    nc_document_t doc;
+    nc_emit_stream_t stream;
+    int fails = 0;
+
+    /* N(Q) is never reached. */
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U1 R1 P100 Q200 X0.5 Z0.5 F120");
+    (void)nc_insert_line(&doc, 1, "N100 G1 X50 Z0");
+    (void)nc_insert_line(&doc, 2, "G1 X50 Z-10");
+    nc_emit_stream_begin(&stream, &doc, 0);
+    fails += expect_rejected_with(&stream, G7X_RANGE_MISSING);
+
+    /* Profile numbering runs backwards inside the range. */
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U1 R1 P100 Q200 X0.5 Z0.5 F120");
+    (void)nc_insert_line(&doc, 1, "N100 G1 X50 Z0");
+    (void)nc_insert_line(&doc, 2, "N150 G1 Z-10");
+    (void)nc_insert_line(&doc, 3, "N120 G1 X40 Z-10");
+    nc_emit_stream_begin(&stream, &doc, 0);
+    fails += expect_rejected_with(&stream, G7X_RANGE_AMBIGUOUS);
+
+    /* Incomplete P/Q header is rejected before any contour is collected. */
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U1 R1 P100 X0.5 Z0.5 F120");
+    (void)nc_insert_line(&doc, 1, "N100 G1 X50 Z0");
+    nc_emit_stream_begin(&stream, &doc, 0);
+    fails += expect_rejected_with(&stream, G7X_BAD_FIELD);
+
+    return fails;
+}
+
+/* NC supplies program text through the G7x source contract, not the other way
+   around: the cursor returns numbered blocks in document order. */
+static int test_numbered_source_cursor(void)
+{
+    nc_document_t doc;
+    nc_numbered_source_t holder;
+    g7x_source_t source;
+    g7x_source_pos_t pos = { 0u, 0u };
+    g7x_source_pos_t found = { 0u, 0u };
+    char text[96];
+    const uint32_t want[3] = { 100u, 150u, 200u };
+    unsigned i;
+
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "(profile)");
+    (void)nc_insert_line(&doc, 1, "N100 G1 X50 Z0");
+    (void)nc_insert_line(&doc, 2, "G1 X50 Z-10");
+    (void)nc_insert_line(&doc, 3, "N150 G1 X45");
+    (void)nc_insert_line(&doc, 4, "N200 G1 X40");
+    source = nc_emit_numbered_source(&holder, &doc);
+
+    for (i = 0; i < 3u; i++) {
+        if (g7x_source_next(&source, &pos, &found, text, sizeof(text)) != G7X_SOURCE_OK ||
+            found.number != want[i] || !strstr(text, "G1"))
+            return 1;
+        pos = found;
+    }
+    if (g7x_source_next(&source, &pos, &found, text, sizeof(text)) != G7X_SOURCE_MISSING)
+        return 1;
+    if (g7x_source_next(NULL, &pos, &found, text, sizeof(text)) != G7X_SOURCE_ERROR)
+        return 1;
+    return 0;
+}
+
 static int test_g7_g8_passthrough(void)
 {
     nc_document_t doc;
@@ -263,6 +372,9 @@ int main(void)
     fails += test_g71_corner_chamfer();
     fails += test_g71_corner_chamfer_source_line();
     fails += test_g71_sample_features();
+    fails += test_g71_numbered_range();
+    fails += test_g71_numbered_range_errors();
+    fails += test_numbered_source_cursor();
     fails += test_g72_basic();
     fails += test_g72_rectangle();
     fails += test_g72_arc_finish();

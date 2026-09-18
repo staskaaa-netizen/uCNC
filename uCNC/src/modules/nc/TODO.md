@@ -93,7 +93,9 @@ NC supplies document access and UI, not a second cycle generator.
 
 ## Remaining NC integration
 
-- [ ] Supply a document-source adapter for G7x numbered-block lookup.
+- [x] Supply a document-source adapter for G7x numbered-block lookup
+  (`nc_emit_numbered_source`) and preview one-line `G71/G72 ... P Q` ranges from
+  the document, with missing/ambiguous range errors surfaced as preview errors.
 - [ ] Add G76 preview through the shared G7x threading generator.
 - [ ] Keep nc_emit as preview glue; assess removal only if SIM can consume the
   shared stream directly without losing source-line/error information.

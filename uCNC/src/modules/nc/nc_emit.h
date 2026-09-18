@@ -3,6 +3,7 @@
 
 #include "nc.h"
 #include "../g7x/g7x_contour.h"
+#include "../g7x/g7x_source.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -26,6 +27,16 @@ typedef struct {
     g7x_result_t error;
     g7x_stream_t g7x;
 } nc_emit_stream_t;
+
+/* Document-backed numbered-block source. G7x owns the lookup contract; NC only
+   supplies the program text it already holds. `holder` must outlive the
+   returned source. */
+typedef struct {
+    const nc_document_t *doc;
+} nc_numbered_source_t;
+
+g7x_source_t nc_emit_numbered_source(nc_numbered_source_t *holder,
+                                     const nc_document_t *doc);
 
 nc_emit_result_t nc_emit_source_line(const nc_document_t *doc,
                                      size_t line_index,

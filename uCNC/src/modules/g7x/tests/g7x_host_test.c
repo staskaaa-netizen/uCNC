@@ -1,4 +1,5 @@
 #include "../g7x_contour.h"
+#include "../g7x_source.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -342,6 +343,168 @@ static int test_g76_invalid_contract(void)
     return 0;
 }
 
+typedef struct {
+    uint32_t numbers[4];
+    const char *texts[4];
+    unsigned count;
+} fake_source_t;
+
+static g7x_source_status_t fake_source_next(void *user,
+                                            const g7x_source_pos_t *from,
+                                            g7x_source_pos_t *out,
+                                            char *text,
+                                            size_t text_sz)
+{
+    const fake_source_t *source = user;
+    unsigned i;
+
+    for (i = (unsigned)from->line_index; i < source->count; i++) {
+        if (source->numbers[i] < from->number)
+            continue;
+        snprintf(text, text_sz, "%s", source->texts[i]);
+        out->number = source->numbers[i];
+        out->line_index = (size_t)i + 1u;
+        return G7X_SOURCE_OK;
+    }
+    return G7X_SOURCE_MISSING;
+}
+
+typedef struct {
+    uint32_t seen[8];
+    unsigned count;
+} range_log_t;
+
+static void log_range_block(void *user, uint32_t number, const char *text)
+{
+    range_log_t *log = user;
+
+    (void)text;
+    if (log->count < 8)
+        log->seen[log->count] = number;
+    log->count++;
+}
+
+/* Bounded serial retention: lookup by number, ordered range walk, and explicit
+   failures for missing, ambiguous and evicted blocks. */
+static int test_numbered_history(void)
+{
+    g7x_history_t history;
+    range_log_t log;
+    char long_text[G7X_RETAINED_TEXT_LEN + 8];
+    unsigned visited = 0;
+    unsigned i;
+
+    g7x_history_reset(&history);
+    if (g7x_history_find(&history, 100) ||
+        g7x_history_visit_range(&history, 100, 200, log_range_block, &log,
+                                &visited) != G7X_RANGE_MISSING ||
+        g7x_history_add(NULL, 1, "x") != G7X_BAD_FIELD ||
+        g7x_history_add(&history, 1, "") != G7X_BAD_FIELD)
+        return 1;
+
+    memset(long_text, 'G', sizeof(long_text) - 1u);
+    long_text[sizeof(long_text) - 1u] = '\0';
+    if (g7x_history_add(&history, 99, long_text) != G7X_WRITE_FAILED)
+        return 1;
+
+    if (g7x_history_add(&history, 100, "N100 G0 X50 Z0") != G7X_OK ||
+        g7x_history_add(&history, 150, "N150 G1 Z-10") != G7X_OK ||
+        g7x_history_add(&history, 200, "N200 G1 X40") != G7X_OK)
+        return 1;
+    if (!g7x_history_find(&history, 100) ||
+        !g7x_history_find(&history, 200) || g7x_history_find(&history, 300) ||
+        strcmp(g7x_history_find(&history, 150), "N150 G1 Z-10"))
+        return 1;
+
+    memset(&log, 0, sizeof(log));
+    if (g7x_history_visit_range(&history, 100, 200, log_range_block, &log,
+                                &visited) != G7X_OK ||
+        visited != 3 || log.count != 3 || log.seen[0] != 100 ||
+        log.seen[1] != 150 || log.seen[2] != 200) {
+        printf("FAIL history range walk visited=%u\n", visited);
+        return 1;
+    }
+    if (g7x_history_visit_range(&history, 100, 300, log_range_block, &log,
+                                &visited) != G7X_RANGE_MISSING ||
+        g7x_history_visit_range(&history, 200, 100, log_range_block, &log,
+                                &visited) != G7X_RANGE_AMBIGUOUS ||
+        g7x_history_visit_range(&history, 100, 200, NULL, &log,
+                                &visited) != G7X_BAD_FIELD)
+        return 1;
+
+    /* A repeated number inside the range is ambiguous, not "the last one". */
+    g7x_history_reset(&history);
+    if (g7x_history_add(&history, 100, "N100 G0 X50 Z0") != G7X_OK ||
+        g7x_history_add(&history, 150, "N150 G1 Z-10") != G7X_OK ||
+        g7x_history_add(&history, 175, "N175 G1 X45") != G7X_OK ||
+        g7x_history_add(&history, 150, "N150 G1 Z-12") != G7X_OK ||
+        g7x_history_add(&history, 200, "N200 G1 X40") != G7X_OK ||
+        g7x_history_visit_range(&history, 100, 200, log_range_block, &log,
+                                &visited) != G7X_RANGE_AMBIGUOUS)
+        return 1;
+    /* A repeated number after the Q block is outside the range and allowed. */
+    g7x_history_reset(&history);
+    if (g7x_history_add(&history, 100, "N100 G0 X50 Z0") != G7X_OK ||
+        g7x_history_add(&history, 150, "N150 G1 Z-10") != G7X_OK ||
+        g7x_history_add(&history, 200, "N200 G1 X40") != G7X_OK ||
+        g7x_history_add(&history, 150, "N150 G1 Z-12") != G7X_OK ||
+        g7x_history_visit_range(&history, 100, 200, log_range_block, &log,
+                                &visited) != G7X_OK || visited != 3)
+        return 1;
+
+    /* Eviction is bounded and must not resolve dropped blocks by accident. */
+    g7x_history_reset(&history);
+    for (i = 0; i < G7X_MAX_RETAINED_BLOCKS + 2u; i++) {
+        char text[G7X_RETAINED_TEXT_LEN];
+        snprintf(text, sizeof(text), "N%u G1 X1", 1000u + i);
+        if (g7x_history_add(&history, 1000u + i, text) != G7X_OK)
+            return 1;
+    }
+    if (!g7x_history_evicted(&history) ||
+        g7x_history_find(&history, 1000) ||
+        !g7x_history_find(&history, 1000u + G7X_MAX_RETAINED_BLOCKS + 1u) ||
+        g7x_history_visit_range(&history, 1000, 1000u + G7X_MAX_RETAINED_BLOCKS + 1u,
+                                log_range_block, &log, &visited) != G7X_RANGE_MISSING)
+        return 1;
+    return 0;
+}
+
+/* The caller-supplied cursor is the only random-access path into program text;
+   G7x itself must report a missing source instead of guessing. */
+static int test_numbered_source(void)
+{
+    fake_source_t source = {
+        { 100u, 150u, 200u },
+        { "N100 G0 X50 Z0", "N150 G1 Z-10", "N200 G1 X40" },
+        3u
+    };
+    g7x_source_t cursor = { fake_source_next, &source };
+    g7x_source_pos_t pos = { 0u, 0u };
+    g7x_source_pos_t found = { 0u, 0u };
+    char text[48];
+    const uint32_t want[3] = { 100u, 150u, 200u };
+    unsigned i;
+
+    if (g7x_source_next(NULL, &pos, &found, text, sizeof(text)) != G7X_SOURCE_ERROR)
+        return 1;
+    for (i = 0; i < 3u; i++) {
+        if (g7x_source_next(&cursor, &pos, &found, text, sizeof(text)) != G7X_SOURCE_OK ||
+            found.number != want[i] || strcmp(text, source.texts[i]))
+            return 1;
+        pos = found;
+    }
+    if (g7x_source_next(&cursor, &pos, &found, text, sizeof(text)) != G7X_SOURCE_MISSING)
+        return 1;
+
+    /* Starting mid-document resumes at the requested line index. */
+    pos.number = 0u;
+    pos.line_index = 1u;
+    if (g7x_source_next(&cursor, &pos, &found, text, sizeof(text)) != G7X_SOURCE_OK ||
+        found.number != 150u)
+        return 1;
+    return 0;
+}
+
 int main(void)
 {
     int fails = 0;
@@ -357,6 +520,8 @@ int main(void)
     fails += test_g76_semantic_invalid_pitch_depth();
     fails += test_g76_decreasing_schedule();
     fails += test_g76_invalid_contract();
+    fails += test_numbered_history();
+    fails += test_numbered_source();
 
     if (fails) {
         printf("FAILURES %d\n", fails);

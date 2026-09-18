@@ -31,12 +31,15 @@ software-tested, not physically validated on a machine.
   moves precede roughing/finishing; final retract uses the same clear point.
   No inferred stock shape or automatic avoidance. Starting-path clearance
   remains the caller's responsibility; see TESTING.md. Bench validation open.
-- [ ] P/Q numbered-block lookup through a source interface independent of NC.
-  NC supplies document access; define bounded serial-history behavior and
-  errors for unavailable/ambiguous ranges. Existing inline collection is not
-  retained P/Q lookup or replay storage.
+- [x] One-line `G71/G72 ... P Q` numbered-range lookup. The parser starts the
+  range at `N(P)`, treats unnumbered rows inside as contour rows and closes on
+  `N(Q)`; NC preview uses the same rule. G7x owns `g7x_source_t` plus a bounded
+  serial history, and reports missing/evicted or ambiguous ranges instead of
+  guessing. Two-line headers and `G70` replay from the retained range stay open
+  below.
 - [ ] Fanuc/Haas one-line and two-line G71/G72 headers and their word meanings.
-- [ ] First P block as approach only; profile F/S/T ignored for roughing.
+- [ ] First P block as approach only; profile F/S/T accepted and ignored for
+  roughing (they currently reject the profile row).
 - [ ] Finish stock U/W, direction from allowance signs and 45-degree retract.
   Native inline X/Z allowances and U/W depth words are a different contract;
   negative inline allowances currently fail validation.
@@ -60,7 +63,9 @@ software-tested, not physically validated on a machine.
 - [x] Native G80 sequencing, generated failure/cleanup, units and work offsets.
 - [x] G76 invalid pitch/depth, decreasing schedule, taper/ID library cases,
   native spring passes and generated G33 failure propagation.
-- [ ] P/Q G71 one-/two-line, G72 two-line and serial range regressions.
+- [x] P/Q G71 one-line parser and preview regressions, including missing,
+  ambiguous and out-of-range numbering.
+- [ ] P/Q G71 two-line, G72 two-line and `G70` replay regressions.
 - [x] Both-axis approach/finish/return clearance for G71/G72, both Z directions.
 - [x] Real parser test target linking no NC sources: `test_g7x.py standalone`.
 - [ ] Allowance signs and 45-degree retract.

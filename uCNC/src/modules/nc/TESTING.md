@@ -30,6 +30,10 @@ Use this as a short hardware pass list while NC is still pre-alpha.
 - Chuck/stock holder is visible and does not cover the working contour.
 - Contour labels `C1`, `C2`, ... stay readable and follow corners.
 - Rapid lines are dashed and visible; feed/finish lines are distinct.
+- A `G71 ... P100 Q200` range draws the same contour as the equivalent
+  `G80`-terminated program and leaves the cursor on the line after `N200`.
+- A numbered range whose `N(Q)` block is missing, repeated or out of order
+  shows the preview error instead of drawing a partial contour.
 - Future: zoom/pan has a visible cursor/anchor.
 
 ## G7x Runtime

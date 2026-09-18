@@ -14,7 +14,7 @@ OUT.mkdir(parents=True, exist_ok=True)
 os.chdir(ROOT)
 gcc = os.environ.get("CC", "gcc")
 module = "uCNC/src/modules/g7x"
-common = [f"{module}/g7x.c", f"{module}/g7x_contour.c"]
+common = [f"{module}/g7x.c", f"{module}/g7x_contour.c", f"{module}/g7x_source.c"]
 
 def run(name, sources, flags):
     exe = OUT / (name + ".exe")

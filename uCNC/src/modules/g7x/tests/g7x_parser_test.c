@@ -2,6 +2,7 @@
    This verifies generated G33 targets, not physical spindle synchronization. */
 #include "src/cnc.h"
 #include "../g7x.h"
+#include "../g7x_source.h"
 #ifndef G7X_STANDALONE_TEST
 #include "../../nc/nc_run.h"
 #include "../../nc/nc_feedback.h"
@@ -64,6 +65,13 @@ static int command(const char *line, uint8_t want)
         return 1;
     }
     return 0;
+}
+
+static void ignore_history_block(void *user, uint32_t number, const char *text)
+{
+    (void)user;
+    (void)number;
+    (void)text;
 }
 
 int main(void)
@@ -186,6 +194,52 @@ int main(void)
     fails += command("G1 X30 Z-10", STATUS_OK);
     fails += command("G80", STATUS_OK);
     if (g7x_parser_busy()) { puts("FAIL G72 parser cleanup"); fails++; }
+
+    /* Fanuc/Haas numbered range: N(P)..N(Q) replaces the G80 terminator. */
+    fails += command("G0 X54 Z2", STATUS_OK);
+    before = motion_count;
+    fails += command("G71 U1 R1 P100 Q200 X0.1 Z0.1 F300", STATUS_OK);
+    if (!g7x_parser_busy()) { puts("FAIL P/Q range not armed"); fails++; }
+    /* Blocks between the header and N(P) are ordinary program text. */
+    fails += command("G0 X60 Z2", STATUS_OK);
+    if (motion_count != before + 1) { puts("FAIL pre-P block suppressed"); fails++; }
+    fails += command("N100 G1 X50 Z0", STATUS_OK);
+    fails += command("N150 Z-5", STATUS_OK);
+    fails += command("N200 X40", STATUS_OK);
+    if (g7x_parser_busy()) { puts("FAIL P/Q range cleanup"); fails++; }
+    if (motion_count <= before + 1) { puts("FAIL P/Q cycle did not run"); fails++; }
+    const g7x_history_t *history = g7x_parser_numbered_history();
+    unsigned visited = 0;
+    if (!history || !g7x_history_find(history, 150) ||
+        g7x_history_visit_range(history, 100, 200, ignore_history_block, NULL,
+                                &visited) != G7X_OK || visited != 3) {
+        printf("FAIL P/Q retention: visited=%u\n", visited);
+        fails++;
+    }
+    if (g7x_history_visit_range(history, 100, 300, ignore_history_block, NULL,
+                                &visited) != G7X_RANGE_MISSING) {
+        puts("FAIL P/Q missing range not reported"); fails++;
+    }
+
+    /* P/Q error paths: incomplete header, reversed range, G80 terminator and a
+       profile block without a number must all fail and clear collection. */
+    fails += command("G71 U1 R1 P100 X0.1 F300", STATUS_INVALID_STATEMENT);
+    fails += command("G71 U1 R1 P200 Q100 X0.1 F300", STATUS_INVALID_STATEMENT);
+    fails += command("G71 U1 R1 P100 Q200 X0.1 Z0.1 F300", STATUS_OK);
+    fails += command("N100 G1 X50 Z0", STATUS_OK);
+    fails += command("G80", STATUS_INVALID_STATEMENT);
+    if (g7x_parser_busy()) { puts("FAIL P/Q G80 cleanup"); fails++; }
+    /* Unnumbered rows inside the range are ordinary contour rows. */
+    fails += command("G71 U1 R1 P100 Q200 X0.1 Z0.1 F300", STATUS_OK);
+    fails += command("N100 G1 X50 Z0", STATUS_OK);
+    fails += command("G1 X45 Z-2", STATUS_OK);
+    fails += command("N200 G1 X40 Z-10", STATUS_OK);
+    if (g7x_parser_busy()) { puts("FAIL P/Q unnumbered range cleanup"); fails++; }
+    /* A number beyond Q cannot belong to the range. */
+    fails += command("G71 U1 R1 P100 Q200 X0.1 Z0.1 F300", STATUS_OK);
+    fails += command("N100 G1 X50 Z0", STATUS_OK);
+    fails += command("N300 G1 X40 Z-10", STATUS_INVALID_STATEMENT);
+    if (g7x_parser_busy()) { puts("FAIL P/Q out-of-range cleanup"); fails++; }
 #ifndef G7X_STANDALONE_TEST
     static nc_document_t doc;
     nc_document_init(&doc);
@@ -283,6 +337,23 @@ int main(void)
     }
     (void)grbl_stream_available();
     if (g7x_parser_busy()) { puts("FAIL complete NC collector cleanup"); fails++; }
+
+    /* A numbered range that never reaches N(Q) is an incomplete cycle. */
+    nc_document_init(&doc);
+    nc_insert_line(&doc, 0, "G71 U1 R1 P100 Q200 X0.1 Z0.1 F300");
+    nc_insert_line(&doc, 1, "N100 G1 X50 Z0");
+    nc_insert_line(&doc, 2, "G1 X45 Z-5");
+    nc_run_start_stream(&doc, 0);
+    if (cnc_parse_cmd() != STATUS_OK || cnc_parse_cmd() != STATUS_OK ||
+        cnc_parse_cmd() != STATUS_OK) fails++;
+    (void)grbl_stream_available();
+    if (g7x_parser_busy() || nc_run_active() || nc_run_done()) {
+        puts("FAIL unterminated NC numbered range"); fails++;
+    }
+    before = motion_count;
+    fails += command("G0 X42", STATUS_OK);
+    if (motion_count != before + 1) { puts("FAIL stale numbered range"); fails++; }
+
     nc_document_init(&doc);
     nc_insert_line(&doc, 0, "G1 Xbad");
     if (!nc_run_send_document_line(&doc, 0)) fails++;

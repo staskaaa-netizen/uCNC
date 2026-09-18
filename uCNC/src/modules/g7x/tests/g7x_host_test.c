@@ -83,6 +83,46 @@ static int add_line(g7x_stream_t *stream, const char *line)
     return 0;
 }
 
+static int test_allowance_approach(void)
+{
+    /* Diameter source coordinates: X allowance 0.5 and radial R1 produce
+       X52.5 clearance. Z allowance 0.5 plus R1 produces +/-1.5 clearance. */
+    for (int cycle = 71; cycle <= 72; cycle++) {
+        for (int direction = -1; direction <= 1; direction += 2) {
+            g7x_stream_t stream;
+            sink_t sink;
+            const char *header = cycle == 71 ? "G71 U2 R1 X0.5 Z0.5 F120" :
+                                                "G72 W2 R1 X0.5 Z0.5 F120";
+            if (g7x_stream_begin(&stream, header) != G7X_OK ||
+                add_line(&stream, "G1 X50 Z0") ||
+                add_line(&stream, direction < 0 ? "G1 X30 Z-10" : "G1 X30 Z10") ||
+                add_line(&stream, "G80") || collect_g7x(&stream, &sink)) return 1;
+            const char *zclear = direction < 0 ? "G0 Z1.500" : "G0 Z-1.500";
+            if (sink.count < 5 || strcmp(sink.lines[2], "G0 X52.500") ||
+                strcmp(sink.lines[3], zclear)) {
+                printf("FAIL G%d approach direction %d\n", cycle, direction); return 1;
+            }
+            for (int i = 0; i < sink.count; i++) {
+                if (!strncmp(sink.lines[i], "G0 ", 3) &&
+                    strchr(sink.lines[i], 'X') && strchr(sink.lines[i], 'Z')) {
+                    puts("FAIL diagonal rapid in cycle"); return 1;
+                }
+                if (!strcmp(sink.lines[i], "(G7x finish contour)")) {
+                    if (i + 2 >= sink.count || strcmp(sink.lines[i+1], "G0 X52.500") ||
+                        strcmp(sink.lines[i+2], zclear)) {
+                        puts("FAIL finish approach clearance"); return 1;
+                    }
+                }
+            }
+            if (strcmp(sink.lines[sink.count-2], "G0 X52.500") ||
+                strcmp(sink.lines[sink.count-1], zclear)) {
+                puts("FAIL final allowance clearance"); return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 static int test_g71_basic(void)
 {
     g7x_stream_t stream;
@@ -307,6 +347,7 @@ int main(void)
     int fails = 0;
 
     fails += test_g71_basic();
+    fails += test_allowance_approach();
     fails += test_g72_basic();
     fails += test_g71_corner_radius();
     fails += test_bad_contour_rejected();

@@ -1,6 +1,7 @@
 # G71/G72 and G76 Notes
 
 See [TODO.md](TODO.md) for the audited completion checklist and module ownership.
+See [TESTING.md](TESTING.md) for NC-independent tests and serial bench programs.
 
 ## Runtime status (2026-09-16)
 

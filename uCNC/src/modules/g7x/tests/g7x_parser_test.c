@@ -2,8 +2,10 @@
    This verifies generated G33 targets, not physical spindle synchronization. */
 #include "src/cnc.h"
 #include "../g7x.h"
+#ifndef G7X_STANDALONE_TEST
 #include "../../nc/nc_run.h"
 #include "../../nc/nc_feedback.h"
+#endif
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -20,8 +22,10 @@ static bool observe_motion(void *args)
     gcode_exec_args_t *p = args;
     if (p->cmd->words & GCODE_ALL_AXIS) {
         motion_count++;
+#ifndef G7X_STANDALONE_TEST
         if (stop_motion_at && motion_count == stop_motion_at)
             nc_run_stop();
+#endif
         if (fail_motion_at && motion_count == fail_motion_at) {
             *p->error = STATUS_SOFT_LIMIT_ERROR;
             return EVENT_HANDLED;
@@ -65,17 +69,21 @@ static int command(const char *line, uint8_t want)
 int main(void)
 {
     int fails = 0;
+#ifndef G7X_STANDALONE_TEST
     if (!strstr(nc_feedback_lock(SETTINGS_READ_ERROR, EXEC_POSITION_MAYBE_LOST, false), "$RST=*")) fails++;
     if (!strstr(nc_feedback_lock(SETTINGS_WRITE_ERROR, 0, false), "save failed")) fails++;
     if (!strstr(nc_feedback_lock(0, EXEC_KILL | EXEC_HOLD, false), "alarm")) fails++;
     if (!strstr(nc_feedback_lock(0, EXEC_POSITION_MAYBE_LOST, false), "$H")) fails++;
     if (nc_feedback_lock(0, 0, false)[0]) fails++;
     if (!strstr(nc_feedback_error(STATUS_BAD_NUMBER_FORMAT), "number")) fails++;
+#endif
     cnc_init();
     cnc_unit_test_start();
     ADD_EVENT_LISTENER(gcode_exec, record_thread);
     ADD_EVENT_LISTENER(gcode_exec_modifier, observe_motion);
+#ifndef G7X_STANDALONE_TEST
     nc_run_init();
+#endif
     fails += command("$X", STATUS_OK);
     fails += command("G18 G90 G21", STATUS_OK);
     fails += command("G7", STATUS_OK);
@@ -171,6 +179,14 @@ int main(void)
     fails += command("G21", STATUS_OK);
 
     /* Test the actual NC source stream and its new error listener. */
+    /* Facing also executes through the real parser with no NC dependency. */
+    fails += command("G0 X54 Z2", STATUS_OK);
+    fails += command("G72 W2 R1 X0.5 Z0.5 F120", STATUS_OK);
+    fails += command("G1 X50 Z0", STATUS_OK);
+    fails += command("G1 X30 Z-10", STATUS_OK);
+    fails += command("G80", STATUS_OK);
+    if (g7x_parser_busy()) { puts("FAIL G72 parser cleanup"); fails++; }
+#ifndef G7X_STANDALONE_TEST
     static nc_document_t doc;
     nc_document_init(&doc);
     nc_insert_line(&doc, 0, "G71 U1 F300");
@@ -280,6 +296,7 @@ int main(void)
         puts("FAIL selected-line retry"); fails++;
     }
     (void)grbl_stream_available();
+#endif
     printf("Parser integration: %d failures\n", fails);
     return fails ? 1 : 0;
 }

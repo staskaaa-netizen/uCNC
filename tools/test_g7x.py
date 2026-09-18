@@ -29,6 +29,8 @@ def run(name, sources, flags):
 
 if __name__ == "__main__":
     suite = sys.argv[1] if len(sys.argv) > 1 else "all"
+    if suite not in ("all", "generator", "nc", "parser", "standalone"):
+        sys.exit("Choose all, generator, nc, parser or standalone")
     failed = 0
     if suite in ("all", "generator"):
         failed |= run("generator", common + [f"{module}/tests/g7x_host_test.c"],
@@ -38,7 +40,7 @@ if __name__ == "__main__":
                       "uCNC/src/modules/nc/nc_emit.c",
                       "uCNC/src/modules/nc/tests/nc_emit_host_test.c"],
                       ["-DG7X_HOST_TEST", "-DNC_HOST_TEST"])
-    if suite in ("all", "parser"):
+    if suite in ("all", "parser", "standalone"):
         sources = []
         for directory in ("", "core", "interface", "hal/kinematics", "hal/tools", "hal/tools/tools", "modules"):
             sources += [str(p) for p in (Path("uCNC/src") / directory).glob("*.c")]
@@ -55,5 +57,9 @@ if __name__ == "__main__":
                  '-DBOARDMAP="src/modules/g7x/tests/virtual_board.h"',
                  "-DDISABLE_SAFE_SETTINGS", "-DDISABLE_ENDPROGRAM_LOCK",
                  "-DEMULATE_GRBL_STARTUP=3", "-pthread"]
-        failed |= run("parser", sources, flags)
+        if suite in ("all", "parser"):
+            failed |= run("parser", sources, flags)
+        if suite in ("all", "standalone"):
+            independent = [s for s in sources if "modules/nc/" not in s.replace("\\", "/")]
+            failed |= run("standalone", independent, flags + ["-DG7X_STANDALONE_TEST"])
     sys.exit(bool(failed))

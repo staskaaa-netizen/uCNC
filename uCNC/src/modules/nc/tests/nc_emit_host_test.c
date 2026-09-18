@@ -114,6 +114,8 @@ static int test_g71_corner_rounding(void)
     nc_emit_stream_begin(&stream, &doc, 0);
 
     return expect_find_line(&stream, "(G7x finish contour)") ||
+           expect_line(&stream, "G0 X52.500") ||
+           expect_line(&stream, "G0 Z1.500") ||
            expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
            expect_line(&stream, "G1 X50.000 Z-9.000") ||
            expect_line(&stream, "G3 X48.000 Z-10.000 I-1.000 K0.000");
@@ -134,6 +136,8 @@ static int test_g71_corner_chamfer(void)
     nc_emit_stream_begin(&stream, &doc, 0);
 
     return expect_find_line(&stream, "(G7x finish contour)") ||
+           expect_line(&stream, "G0 X52.500") ||
+           expect_line(&stream, "G0 Z1.500") ||
            expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
            expect_line(&stream, "G1 X50.000 Z-9.000") ||
            expect_line(&stream, "G1 X48.000 Z-10.000");

@@ -26,12 +26,11 @@ software-tested, not physically validated on a machine.
 
 ## Required cycle work still open
 
-- [ ] Simple explicit approach with BOTH X and Z finish allowances plus
-  clearance. Current roughing endpoints use allowances, but the approach does
-  not implement this complete rule: G71 starts at start_z and pass+retract;
-  G72 starts at max_x+retract and the current Z pass.
-  Keep the approach separate from profile cutting. No inferred stock shape,
-  automatic entry selection or avoidance planning; reject unsupported cases.
+- [x] Simple explicit approach with BOTH X and Z finish allowances plus R in
+  the existing positive-allowance/outside-X subset. Separate X then Z clearance
+  moves precede roughing/finishing; final retract uses the same clear point.
+  No inferred stock shape or automatic avoidance. Starting-path clearance
+  remains the caller's responsibility; see TESTING.md. Bench validation open.
 - [ ] P/Q numbered-block lookup through a source interface independent of NC.
   NC supplies document access; define bounded serial-history behavior and
   errors for unavailable/ambiguous ranges. Existing inline collection is not
@@ -62,7 +61,9 @@ software-tested, not physically validated on a machine.
 - [x] G76 invalid pitch/depth, decreasing schedule, taper/ID library cases,
   native spring passes and generated G33 failure propagation.
 - [ ] P/Q G71 one-/two-line, G72 two-line and serial range regressions.
-- [ ] Both-axis approach clearance, allowance signs and 45-degree retract.
+- [x] Both-axis approach/finish/return clearance for G71/G72, both Z directions.
+- [x] Real parser test target linking no NC sources: `test_g7x.py standalone`.
+- [ ] Allowance signs and 45-degree retract.
 - [ ] G70 replay and complete corner-modifier/direction matrix.
 - [ ] Machine validation; virtual tests intercept G33 and do not test timing.
 

@@ -785,6 +785,12 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
     if (!stream || !stream->active || !event)
         return G7X_STEP_ERROR;
 
+    /* Explicit OD clearance, in the stream's coordinate convention. No stock
+       inference: the caller must provide a clear outward-X approach. */
+    const float clear_x = stream->max_x + stream->region.x_allow + stream->region.retract;
+    const float clear_z = stream->start_z - stream->dir *
+                          (stream->region.z_allow + stream->region.retract);
+
     if (!stream->started) {
         stream->started = true;
         g7x_event_comment(event,
@@ -807,15 +813,21 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
                     g7x_event_comment(event, "G72 rough Z%.3f", stream->pass);
                     return G7X_STEP_LINE;
                 case 1:
-                    g7x_event_motion(event, 0, true, stream->max_x + stream->region.retract, true, stream->pass, false, 0.0f);
+                    g7x_event_motion(event, 0, true, clear_x, false, 0.0f, false, 0.0f);
                     return G7X_STEP_LINE;
                 case 2:
+                    g7x_event_motion(event, 0, false, 0.0f, true, clear_z, false, 0.0f);
+                    return G7X_STEP_LINE;
+                case 3:
+                    g7x_event_motion(event, 1, false, 0.0f, true, stream->pass, true, stream->feed);
+                    return G7X_STEP_LINE;
+                case 4:
                     g7x_event_motion(event, 1, true, x_hit + stream->region.x_allow, false, 0.0f, true, stream->feed);
                     return G7X_STEP_LINE;
                 default:
                     stream->stage = 0;
                     stream->pass += (float)stream->dir * stream->doc;
-                    g7x_event_motion(event, 0, true, stream->max_x + stream->region.retract, false, 0.0f, false, 0.0f);
+                    g7x_event_motion(event, 0, true, clear_x, false, 0.0f, false, 0.0f);
                     return G7X_STEP_LINE;
                 }
             }
@@ -831,21 +843,24 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
                     g7x_event_comment(event, "G71 rough X%.3f", stream->pass);
                     return G7X_STEP_LINE;
                 case 1:
-                    g7x_event_motion(event, 0, true, stream->pass + stream->region.retract, true, stream->start_z, false, 0.0f);
+                    g7x_event_motion(event, 0, true, clear_x, false, 0.0f, false, 0.0f);
                     return G7X_STEP_LINE;
                 case 2:
-                    g7x_event_motion(event, 1, true, stream->pass, false, 0.0f, true, stream->feed);
+                    g7x_event_motion(event, 0, false, 0.0f, true, clear_z, false, 0.0f);
                     return G7X_STEP_LINE;
                 case 3:
-                    g7x_event_motion(event, 1, false, 0.0f, true, z_hit - ((float)stream->dir * stream->region.z_allow), true, stream->feed);
+                    g7x_event_motion(event, 1, true, stream->pass, false, 0.0f, true, stream->feed);
                     return G7X_STEP_LINE;
                 case 4:
-                    g7x_event_motion(event, 0, true, stream->pass + stream->region.retract, false, 0.0f, false, 0.0f);
+                    g7x_event_motion(event, 1, false, 0.0f, true, z_hit - ((float)stream->dir * stream->region.z_allow), true, stream->feed);
+                    return G7X_STEP_LINE;
+                case 5:
+                    g7x_event_motion(event, 0, true, clear_x, false, 0.0f, false, 0.0f);
                     return G7X_STEP_LINE;
                 default:
                     stream->stage = 0;
                     stream->pass -= stream->doc;
-                    g7x_event_motion(event, 0, false, 0.0f, true, stream->start_z, false, 0.0f);
+                    g7x_event_motion(event, 0, false, 0.0f, true, clear_z, false, 0.0f);
                     return G7X_STEP_LINE;
                 }
             }
@@ -857,14 +872,19 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
         g7x_event_comment(event, "G7x finish contour");
         return G7X_STEP_LINE;
     }
-    if (stream->finish_i <= stream->region.count) {
-        const g7x_contour_element_t *el = &stream->region.elements[stream->finish_i - 1u];
+    if (stream->finish_i == 1 || stream->finish_i == 2) {
+        bool move_x = stream->finish_i++ == 1;
+        g7x_event_motion(event, 0, move_x, clear_x, !move_x, clear_z, false, 0.0f);
+        return G7X_STEP_LINE;
+    }
+    if (stream->finish_i <= stream->region.count + 2u) {
+        const g7x_contour_element_t *el = &stream->region.elements[stream->finish_i - 3u];
         stream->finish_i++;
         memset(event, 0, sizeof(*event));
         event->type = G7X_EVENT_MOTION;
         event->motion.motion = el->kind == G7X_SEGMENT_ARC ? (el->gcode_cw ? 2u : 3u) : 1u;
         event->motion.source_line = el->source_line;
-        event->motion.has_f = stream->finish_i == 2u;
+        event->motion.has_f = stream->finish_i == 4u;
         event->motion.f = stream->feed;
         event->motion.has_x = true;
         event->motion.has_z = true;
@@ -881,7 +901,7 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
         }
         return G7X_STEP_LINE;
     }
-    if (stream->finish_i == stream->region.count + 1u) {
+    if (stream->finish_i == stream->region.count + 3u) {
         float x;
         float z;
         stream->finish_i++;
@@ -889,7 +909,7 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
         g7x_event_motion(event, 0, true, x, false, 0.0f, false, 0.0f);
         return G7X_STEP_LINE;
     }
-    if (stream->finish_i == stream->region.count + 2u) {
+    if (stream->finish_i == stream->region.count + 4u) {
         float x;
         float z;
         stream->finish_i++;
@@ -919,7 +939,8 @@ static void g7x_return_clearance_point(const g7x_stream_t *stream, float *x, flo
     start = &stream->region.elements[0];
     *x = start->d;
     *z = start->z;
-    *x = stream->max_x + stream->region.retract;
+    *x = stream->max_x + stream->region.x_allow + stream->region.retract;
+    *z = stream->start_z - stream->dir * (stream->region.z_allow + stream->region.retract);
 }
 
 static void g7x_event_format_text(const g7x_event_t *event, char *out, size_t out_sz)

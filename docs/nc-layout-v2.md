@@ -71,16 +71,26 @@ become the second level of the menu, not a wider strip.
 
 ## Open points to confirm
 
-1. **Alarms when the header is gone.** The settings/reset and alarm guidance is
-   currently the most prominent thing on the panel. In v2 it lands in the bottom
-   left, which is quieter. Should a serious alarm also take the whole status area
-   or overlay the code pane?
-2. **File name.** Removing it from the code pane leaves no indication of the open
-   file outside the file list. Keep a small dim line in the status area, or drop
-   it entirely?
-3. **Message line versus DRO.** Both live in the bottom left. Confirm the
-   precedence: a rejected edit or an alarm should take the line, the DRO returns
-   when it clears.
+Decided:
+
+1. **Filename and alarm text live in the bottom-right pane**, in the same area
+   as the 3x3 grid (above/around it, sharing that pane). The code pane no longer
+   shows the file name.
+2. **Weird alarms float.** An unexpected or serious alarm may be drawn as a
+   centred overlay with the alarm text, dismissed with **Enter**. Ordinary
+   settings/reset guidance stays in the bottom-right pane with the file name.
+3. **DRO occupies one column, stacked vertically** in the bottom-left pane:
+   one line per value (X, Z, F, S - and Y when the machine has it). The operator
+   message keeps the same pane below the DRO, so a rejected edit or a message
+   does not fight the numbers for horizontal space.
+
+Still open:
+
+- exact precedence between a floating alarm and a normal message (assumption:
+  the overlay wins while present, the message returns after Enter dismisses it).
+- which alarms qualify as "weird" (candidate: settings invalid, position
+  untrusted, controller fault - the ones that stop the machine rather than
+  report a rejected edit).
 
 ## Implementation notes
 
@@ -88,8 +98,24 @@ become the second level of the menu, not a wider strip.
   (`NC_FOOTER_Y`, `NC_SPLIT_X`, `NC_RIGHT_PANE_X`, ...). The change is best done
   by replacing those with the v2 region constants once, then adjusting the draw
   functions to them, rather than by editing each draw call.
+- This is one commit, not a series of small patches: between the constant swap
+  and the draw-function updates the panel does not lay out correctly. Do not
+  flash or rebuild the panel half way through; use the frame dump to check the
+  result first.
 - The header draw function is removed with its callers; the notice text it
   rendered becomes a status-area line with the same content.
 - The frame dump test (`python tools/test_nc_ui.py`) is the cheap way to check
   the new layout before flashing: 16 rows, the 3x3 block, the tool strip, and
   the status area all visible in the dumped BMP.
+
+## Implementation order
+
+1. New region constants for the v2 layout (pane bottom, bottom bar top, 3x3
+   area, status column, tool strip) and the code-pane row count.
+2. Header draw call and its callsites removed; notice text routed to the
+   bottom-right pane.
+3. Bottom bar: left status column (stacked DRO lines, then the message line),
+   right pane (file name, alarm text, 3x3 grid).
+4. Tool description strip at the bottom of the graphic pane.
+5. Floating alarm overlay with Enter to dismiss, drawn last so it sits on top.
+6. Frame dump check, then the machine build.

@@ -2282,6 +2282,28 @@ static void nc_visual_draw_thin_preview(const nc_document_t *doc,
     g_nc_visual_frame_preview_tool_us += (t3 - t2) + (mcu_micros() - t5);
 }
 
+/* Footer entries that are switches (not actions). Their highlight must show the
+   state, otherwise "last key pressed" and "feature on" look identical and the
+   entry seems permanently lit. */
+static bool nc_visual_footer_item_is_toggle(nc_footer_action_t action)
+{
+    return action == NC_FOOTER_ACTION_DIMS ||
+           action == NC_FOOTER_ACTION_STOCK ||
+           action == NC_FOOTER_ACTION_PATH ||
+           action == NC_FOOTER_ACTION_ROUGH;
+}
+
+static bool nc_visual_footer_item_on(nc_footer_action_t action)
+{
+    switch (action) {
+    case NC_FOOTER_ACTION_DIMS: return g_nc_visual_show_dims;
+    case NC_FOOTER_ACTION_STOCK: return g_nc_visual_sim_stock;
+    case NC_FOOTER_ACTION_PATH: return g_nc_visual_sim_path;
+    case NC_FOOTER_ACTION_ROUGH: return g_nc_visual_sim_rough;
+    default: return false;
+    }
+}
+
 static void nc_visual_footer_text(char *out, size_t out_sz)
 {
     size_t count;
@@ -2307,7 +2329,9 @@ static void nc_visual_footer_text(char *out, size_t out_sz)
                      out_sz - used,
                      "%s%s%c %s",
                      i ? "|" : "",
-                     footer[i].action == g_nc_visual_selected_action ? "!" : "",
+                     (nc_visual_footer_item_is_toggle(footer[i].action) ?
+                          nc_visual_footer_item_on(footer[i].action) :
+                          footer[i].action == g_nc_visual_selected_action) ? "!" : "",
                      footer[i].key,
                      footer[i].label);
         if (n < 0 || (size_t)n >= out_sz - used) {

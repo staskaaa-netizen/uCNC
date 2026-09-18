@@ -286,6 +286,56 @@ static int test_g7x_block_scan(void)
     return 0;
 }
 
+/* Word editing must respect the letter: a G code may only become a supported
+   command (the cycle family switches inside itself), and unsigned words must
+   never take a sign. This is the path both the machine UI and the desktop panel
+   use, so the rules cannot be bypassed by a caller. */
+static int test_word_value_validation(void)
+{
+    nc_document_t doc;
+
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G72 U1 R1");
+    (void)nc_insert_line(&doc, 1, "G1 X5 F100");
+
+    doc.cursor_line = 0;
+    doc.selected_word = 0; /* G72 */
+    {
+        nc_result_t r = nc_set_selected_word_text(&doc, "99");
+        if (r != NC_ERR_BAD_VALUE) {
+            printf("FAIL G99 accepted rc=%d text=[%s]\n", (int)r, doc.lines[0].text);
+            return 1;
+        }
+    }
+    if (nc_set_selected_word_text(&doc, "99") != NC_ERR_BAD_VALUE ||
+        nc_set_selected_word_text(&doc, "-71") != NC_ERR_BAD_VALUE ||
+        nc_set_selected_word_text(&doc, "7.1") != NC_ERR_BAD_VALUE ||
+        nc_set_selected_word_text(&doc, "") != NC_ERR_BAD_VALUE ||
+        strcmp(doc.lines[0].text, "G72 U1 R1") != 0) {
+        printf("FAIL G whitelist text=[%s]\n", doc.lines[0].text);
+        return 1;
+    }
+    if (nc_set_selected_word_text(&doc, "71") != NC_OK ||
+        strcmp(doc.lines[0].text, "G71 U1 R1") != 0) {
+        printf("FAIL G71 switch text=[%s]\n", doc.lines[0].text);
+        return 1;
+    }
+
+    doc.cursor_line = 1;
+    doc.selected_word = 1; /* X5 may be negative */
+    if (nc_set_selected_word_text(&doc, "-5.25") != NC_OK ||
+        strcmp(doc.lines[1].text, "G1 X-5.25 F100") != 0) {
+        printf("FAIL signed X text=[%s]\n", doc.lines[1].text);
+        return 1;
+    }
+    doc.selected_word = 2; /* F100 may not */
+    if (nc_set_selected_word_text(&doc, "-100") != NC_ERR_BAD_VALUE) {
+        puts("FAIL negative feed accepted");
+        return 1;
+    }
+    return 0;
+}
+
 /* NC supplies program text through the G7x source contract, not the other way
    around: the cursor returns numbered blocks in document order. */
 static int test_numbered_source_cursor(void)
@@ -493,6 +543,7 @@ int main(void)
 {
     int fails = 0;
 
+    fails += test_word_value_validation();
     fails += test_g7_g8_passthrough();
     fails += test_g71_corner_rounding();
     fails += test_g71_corner_chamfer();

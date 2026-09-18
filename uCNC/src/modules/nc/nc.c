@@ -131,6 +131,7 @@ const char *nc_result_text(nc_result_t result)
     case NC_ERR_LINE_TOO_LONG: return "NC line too long";
     case NC_ERR_IO: return "file IO failed";
     case NC_ERR_NO_WORD: return "no word selected";
+    case NC_ERR_BAD_VALUE: return "value not allowed for this word";
     default: return "unknown NC error";
     }
 }
@@ -506,6 +507,8 @@ nc_result_t nc_get_selected_word(const nc_document_t *doc, nc_word_t *word)
     return NC_OK;
 }
 
+static bool nc_word_value_is_valid(char letter, const char *value_text);
+
 nc_result_t nc_set_selected_word_text(nc_document_t *doc, const char *value_text)
 {
     nc_word_t word;
@@ -520,6 +523,9 @@ nc_result_t nc_set_selected_word_text(nc_document_t *doc, const char *value_text
     }
     if (nc_get_selected_word(doc, &word) != NC_OK) {
         return NC_ERR_NO_WORD;
+    }
+    if (!nc_word_value_is_valid(word.letter, value_text)) {
+        return NC_ERR_BAD_VALUE;
     }
 
     old_line = doc->lines[doc->cursor_line].text;
@@ -536,6 +542,76 @@ nc_result_t nc_set_selected_word_text(nc_document_t *doc, const char *value_text
     strcpy(doc->lines[doc->cursor_line].text, new_line);
     doc->dirty = true;
     return NC_OK;
+}
+
+/* Per-letter rules for the value part of a word.
+
+   This is the one place every word edit passes through (typed drafts in
+   nc_text.c and numeric changes), so the rules cannot be bypassed by a caller.
+   The G whitelist is the dialect's command set: the cycle family (70-73, 76),
+   G80, the motions, the modal groups, offsets and the lathe words. */
+static bool nc_word_value_is_valid(char letter, const char *value_text)
+{
+    static const int g_codes[] = {
+        /* Motions, dwell, the lathe words, planes, units, threading, offsets,
+           the cycle family, cancel, distance and feed/spindle modes. The
+           milling canned-cycle return modes (G98/G99) are not part of this
+           dialect and must not be reachable by editing a word. */
+        0, 1, 2, 3, 4, 7, 8, 17, 18, 19, 20, 21, 33, 54, 55, 56, 57, 58,
+        59, 70, 71, 72, 73, 76, 80, 90, 91, 92, 93, 94, 95, 96, 97
+    };
+    const char *p = value_text;
+    char *end = NULL;
+    double value;
+    bool integer_only;
+    bool unsigned_only;
+    size_t i;
+
+    if (!value_text || !*value_text) {
+        return false;
+    }
+    if (*p == '+' || *p == '-') {
+        if (letter != 'X' && letter != 'Y' && letter != 'Z' &&
+            letter != 'U' && letter != 'V' && letter != 'W' &&
+            letter != 'I' && letter != 'J' && letter != 'K' &&
+            letter != 'R' && letter != 'A' && letter != 'B' &&
+            letter != 'C') {
+            return false;
+        }
+        p++;
+    }
+    if (!*p) {
+        return false;
+    }
+    value = strtod(value_text, &end);
+    if (!end || *end != '\0') {
+        return false;
+    }
+
+    integer_only = (letter == 'G' || letter == 'M' || letter == 'T' ||
+                    letter == 'N' || letter == 'L');
+    unsigned_only = (integer_only || letter == 'F' || letter == 'S' ||
+                     letter == 'P' || letter == 'Q' || letter == 'D' ||
+                     letter == 'H');
+    if (unsigned_only && value < 0.0) {
+        return false;
+    }
+    if (integer_only) {
+        for (i = 0u; value_text[i]; i++) {
+            if (value_text[i] == '.' || value_text[i] == ',') {
+                return false;
+            }
+        }
+    }
+    if (letter == 'G') {
+        for (i = 0u; i < sizeof(g_codes) / sizeof(g_codes[0]); i++) {
+            if ((int)value == g_codes[i]) {
+                return true;
+            }
+        }
+        return false;
+    }
+    return true;
 }
 
 nc_result_t nc_change_selected_word_value(nc_document_t *doc, float value)

@@ -34,7 +34,10 @@ typedef enum {
     NC_ERR_TOO_MANY_LINES,
     NC_ERR_LINE_TOO_LONG,
     NC_ERR_IO,
-    NC_ERR_NO_WORD
+    NC_ERR_NO_WORD,
+    /* The word would be written with a value that letter cannot hold (a signed
+       or fractional G code, a negative feed, an unsupported command...). */
+    NC_ERR_BAD_VALUE
 } nc_result_t;
 
 typedef struct {

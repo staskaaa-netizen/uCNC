@@ -9,17 +9,20 @@ CFLAGS = -std=gnu11 -O2 -Wall -Wextra -Wno-unused-parameter \
          -DENABLE_MAIN_LOOP_MODULES -DENABLE_O_CODES -DENABLE_G7X_MODULE \
          -DG33_ENCODER=0 -DDISABLE_SAFE_SETTINGS -DDISABLE_ENDPROGRAM_LOCK \
          -DEMULATE_GRBL_STARTUP=3 -DLVDS_WIDTH=800 -DLVDS_HEIGHT=600 \
-         -DBOARDMAP="src/modules/g7x/tests/virtual_board.h" \
-         -I$(UCNC) -I$(SRC) -I$(SRC)/modules/nc -I$(SRC)/modules/g7x \
+         -include host_boardmap.h \
+         -I$(UCNC) -I$(UCNC)/uCNC -I$(SRC) -I$(SRC)/modules/nc -I$(SRC)/modules/g7x \
          -I$(SRC)/modules/lvds_renderer -I.
 
 # -static keeps the MinGW runtime (libwinpthread) inside the exe so it runs
 # without the toolchain's bin directory on PATH.
 LDFLAGS = -mwindows -static -lcomdlg32 -lgdi32 -luser32 -lcomctl32
 
-CORE = $(SRC)/*.c $(SRC)/core/*.c $(SRC)/interface/*.c \
-       $(SRC)/hal/kinematics/*.c $(SRC)/hal/tools/*.c \
-       $(SRC)/hal/tools/tools/*.c $(SRC)/modules/*.c \
+# $(wildcard) matters: mingw32-make runs recipes through cmd.exe, which does not
+# expand globs itself.
+CORE = $(wildcard $(SRC)/*.c) $(wildcard $(SRC)/core/*.c) \
+       $(wildcard $(SRC)/interface/*.c) $(wildcard $(SRC)/hal/kinematics/*.c) \
+       $(wildcard $(SRC)/hal/tools/*.c) $(wildcard $(SRC)/hal/tools/tools/*.c) \
+       $(wildcard $(SRC)/modules/*.c) \
        $(SRC)/hal/mcus/mcu.c $(SRC)/hal/mcus/virtual/mcu_virtual.c \
        $(SRC)/hal/mcus/virtual/virtual_windows.c
 

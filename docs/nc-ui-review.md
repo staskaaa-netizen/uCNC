@@ -5,6 +5,34 @@ footer/menu model, the editor and the operator messages. Method: source review o
 `nc_visual.c`, `nc_menu.c`, `nc_text.c`, `nc_run.c` plus use of the desktop panel.
 Items marked *bench* can only be judged on the machine.
 
+## The one defect class behind most of this
+
+Almost every finding below is the same logical mismatch that produced the
+Up/Down bug: **one key, or one entry, carries two meanings.**
+
+- **Key overload.** `B`/`C`/`D` are footer actions while browsing and
+  sign/point/accept while editing a value (`nc_visual_key_char` against the
+  `nc_text_edit_handle_key` dispatch). Up/Down used to be the sign and the point.
+- **Entry kind mismatch.** `HOLD` is a state presented as an action;
+  `DIM`/`STOCK`/`PATH`/`ROUGH` are states that were highlighted like actions;
+  momentary actions keep a sticky highlight that reads as a state.
+- **Destination mismatch.** The cursor is both the browsing position and the
+  armed run line with nothing distinguishing them; `#` RUN and `1` SINGLE are
+  the same action under two names.
+- **Hint mismatch.** The footer prints the key meaning for the *browsing*
+  context, which stops being true the moment the context changes.
+
+So this is not a list of unrelated defects to patch one by one. The remedy is a
+single model, and it should be agreed before more keys or menus are added:
+
+1. every pad entry has an explicit kind - **action** (momentary),
+   **toggle** (state), **mode** (latching view);
+2. one key has one meaning inside a context, and a context change swaps the
+   whole map rather than re-purposing a few letters;
+3. toggles show their state, actions never show persistent state, and a mode
+   entry shows which view is active;
+4. the footer shows the meaning of the *current* context only.
+
 ## 1. RUN and HOLD
 
 What exists and works:
@@ -17,14 +45,13 @@ What exists and works:
 
 What needs work:
 
-1. **HOLD is a toggle drawn as an action.** The footer entry stays labelled
-   `HOLD` while the machine is held, so the only state indication is the header
-   text. It should behave like the switches that were just fixed: label flips to
-   `RESUME` (or the entry is highlighted while held).
-2. **`#` RUN and `1` SINGLE dispatch the same action** (`NC_FOOTER_ACTION_SINGLE`),
-   so the footer offers two keys for one behaviour with two different names.
-   Either RUN needs its own action (run to end from the armed line) or the label
-   should stop claiming otherwise.
+1. **HOLD is a toggle drawn as an action** (instance of the defect class above):
+   the entry stays labelled `HOLD` while the machine is held, so the only state
+   indication is the header text. It should take a toggle kind and show
+   `RESUME`/held state like the switches.
+2. **`#` RUN and `1` SINGLE dispatch the same action** (also the class):
+   `NC_FOOTER_ACTION_SINGLE` for both. Either RUN becomes its own action (run to
+   end from the armed line) or the label stops claiming otherwise.
 3. **No armed-line indicator.** The cursor moves and `FROM` uses it, but nothing
    on screen says "will start at line 12" after `FROM` is pressed, and the cursor
    highlight does not distinguish "selected to run from" from "just browsing".
@@ -85,11 +112,10 @@ What needs work:
 
 | P | Item | Size |
 | --- | --- | --- |
-| 1 | HOLD reflects its state (label or highlight), like the switches | small |
+| 1 | Agree and apply the key/entry model: kind per entry, one meaning per key per context, state shown for state entries | medium |
+| 1 | Instances to fix with it: HOLD as toggle, RUN versus SINGLE, sticky action highlight | small each |
 | 1 | Editor: apply the draft on accept only (removes the re-apply bug family) | medium |
-| 2 | `#` RUN versus `1` SINGLE: give RUN its own action or fix the label | small |
 | 2 | Armed start-line feedback after FROM, distinct from the browsing cursor | small |
-| 2 | Ordinary footer actions: clear the press highlight after dispatch | small |
 | 3 | Persist the preview switches with the rest of the UI state | small |
 | 3 | Pad: `-`/`.` buttons and the multi-level menu | medium |
 | 3 | Message types rendered differently; last rejection kept visible | small |

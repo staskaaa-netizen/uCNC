@@ -23,8 +23,11 @@
 #undef FORCEINLINE
 
 #include "cnc.h"
+#include "file_system.h"
+#include "nc_run.h"
 #include "nc_menu.h"
 #include "nc_visual.h"
+#include "host_fs.h"
 #include "lvds_host.h"
 
 #define PANEL_W 800
@@ -63,16 +66,8 @@ static host_button_t g_buttons[] = {
     {  12, 286, 276, 26, "F11 BACKSPACE",NC_VISUAL_KEY_BACKSPACE, (nc_mode_t)-1 },
     {  12, 316, 276, 26, "F12 MODE",     NC_VISUAL_KEY_MODE,      (nc_mode_t)-1 },
 
-    /* 3x3 numeric pad. */
-    {  12, 380,  88, 40, "1", NC_VISUAL_KEY_DIGIT_1, (nc_mode_t)-1 },
-    { 106, 380,  88, 40, "2", NC_VISUAL_KEY_DIGIT_2, (nc_mode_t)-1 },
-    { 200, 380,  88, 40, "3", NC_VISUAL_KEY_DIGIT_3, (nc_mode_t)-1 },
-    {  12, 426,  88, 40, "4", NC_VISUAL_KEY_DIGIT_4, (nc_mode_t)-1 },
-    { 106, 426,  88, 40, "5", NC_VISUAL_KEY_DIGIT_5, (nc_mode_t)-1 },
-    { 200, 426,  88, 40, "6", NC_VISUAL_KEY_DIGIT_6, (nc_mode_t)-1 },
-    {  12, 472,  88, 40, "7", NC_VISUAL_KEY_DIGIT_7, (nc_mode_t)-1 },
-    { 106, 472,  88, 40, "8", NC_VISUAL_KEY_DIGIT_8, (nc_mode_t)-1 },
-    { 200, 472,  88, 40, "9", NC_VISUAL_KEY_DIGIT_9, (nc_mode_t)-1 },
+    /* The 3x3 pad is drawn dynamically (see host_pad_*): it shows the footer
+       menu of the active mode, or digits while a value is being typed. */
 
     /* Control keys. */
     {  12, 518,  88, 32, "0",       NC_VISUAL_KEY_DIGIT_0,  (nc_mode_t)-1 },
@@ -84,6 +79,44 @@ static host_button_t g_buttons[] = {
 };
 
 static const int g_button_count = (int)(sizeof(g_buttons) / sizeof(g_buttons[0]));
+
+/* 3x3 pad geometry: cell 0..8, row major. */
+#define PAD_X0 12
+#define PAD_Y0 380
+#define PAD_W 88
+#define PAD_H 40
+#define PAD_GAP_X 6
+#define PAD_GAP_Y 6
+
+static int host_pad_cell(int x, int y)
+{
+    int col = (x - PAD_X0) / (PAD_W + PAD_GAP_X);
+    int row = (y - PAD_Y0) / (PAD_H + PAD_GAP_Y);
+    int local_x = (x - PAD_X0) % (PAD_W + PAD_GAP_X);
+    int local_y = (y - PAD_Y0) % (PAD_H + PAD_GAP_Y);
+
+    if (x < PAD_X0 || y < PAD_Y0 || col > 2 || row > 2)
+        return -1;
+    if (local_x >= PAD_W || local_y >= PAD_H)
+        return -1;
+    return row * 3 + col;
+}
+
+static void host_pad_click(int cell)
+{
+    size_t count = 0u;
+    const nc_footer_item_t *footer;
+
+    if (cell < 0 || cell > 8)
+        return;
+    if (nc_visual_value_editing()) {
+        nc_visual_handle_key((nc_visual_key_t)(NC_VISUAL_KEY_DIGIT_1 + cell));
+        return;
+    }
+    footer = nc_visual_footer(&count);
+    if (footer && (size_t)cell < count)
+        nc_visual_footer_action((nc_footer_action_t)footer[cell].action);
+}
 
 static void host_send_button(const host_button_t *button)
 {
@@ -109,7 +142,10 @@ static nc_visual_key_t host_key_for_vk(WPARAM vk, bool *handled)
     case VK_PRIOR:  return NC_VISUAL_KEY_PREV;
     case VK_DOWN:
     case VK_NEXT:   return NC_VISUAL_KEY_NEXT;
-    default: break;
+    /* Line and argument movement, as on a normal editor. */
+    case VK_LEFT:   return NC_VISUAL_KEY_WORD_PREV;
+    case VK_RIGHT:  return NC_VISUAL_KEY_WORD_NEXT;
+        default: break;
     }
     if (vk >= '0' && vk <= '9')
         return (nc_visual_key_t)(NC_VISUAL_KEY_DIGIT_0 + (int)(vk - '0'));
@@ -179,7 +215,49 @@ static void host_draw_side(HDC dc)
     SetTextColor(dc, RGB(230, 232, 234));
     TextOutA(dc, PANEL_W + 12, 12, "NC panel keys", 13);
     SetTextColor(dc, RGB(160, 164, 168));
-    TextOutA(dc, PANEL_W + 12, 340, "3x3 keypad (machine mapping)", 29);
+    TextOutA(dc, PANEL_W + 12, 340,
+             nc_visual_value_editing() ? "3x3 keypad: digits" :
+                                         "3x3 keypad: footer menu", 29);
+
+    /* Dynamic pad: footer menu of the active mode, or digits during value
+       entry - the conversational behaviour the machine screen has. */
+    {
+        size_t footer_count = 0u;
+        const nc_footer_item_t *footer = nc_visual_footer(&footer_count);
+        bool editing = nc_visual_value_editing();
+        int cell;
+
+        for (cell = 0; cell < 9; cell++) {
+            const char *label = NULL;
+            char text[32];
+            int col = cell % 3;
+            int row = cell / 3;
+            RECT r = { PANEL_W + PAD_X0 + col * (PAD_W + PAD_GAP_X),
+                       PAD_Y0 + row * (PAD_H + PAD_GAP_Y),
+                       PANEL_W + PAD_X0 + col * (PAD_W + PAD_GAP_X) + PAD_W,
+                       PAD_Y0 + row * (PAD_H + PAD_GAP_Y) + PAD_H };
+            HGDIOBJ old_brush;
+            HGDIOBJ old_pen;
+
+            if (editing) {
+                snprintf(text, sizeof(text), "%d", cell + 1);
+                label = text;
+            } else if (footer && (size_t)cell < footer_count) {
+                snprintf(text, sizeof(text), "%c %s", footer[cell].key,
+                         footer[cell].label);
+                label = text;
+            }
+            if (!label)
+                continue;
+            old_brush = SelectObject(dc, button);
+            old_pen = SelectObject(dc, edge);
+            RoundRect(dc, r.left, r.top, r.right, r.bottom, 6, 6);
+            SelectObject(dc, old_brush);
+            SelectObject(dc, old_pen);
+            SetTextColor(dc, RGB(238, 240, 242));
+            DrawTextA(dc, label, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
 
     for (i = 0; i < g_button_count; i++) {
         const host_button_t *b = &g_buttons[i];
@@ -255,9 +333,11 @@ static LRESULT CALLBACK host_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (x >= b->x && x < b->x + b->w && y >= b->y && y < b->y + b->h) {
                 host_send_button(b);
                 InvalidateRect(hwnd, NULL, FALSE);
-                break;
+                return 0;
             }
         }
+        host_pad_click(host_pad_cell(x, y));
+        InvalidateRect(hwnd, NULL, FALSE);
         return 0;
     }
     case WM_DESTROY:
@@ -269,10 +349,13 @@ static LRESULT CALLBACK host_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProc(hwnd, msg, wp, lp);
 }
 
+static char g_files_root[260];
+
 static void host_init_core(void)
 {
     cnc_init();
     cnc_unit_test_start();
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
     nc_run_init();
     nc_visual_init();
 }
@@ -290,6 +373,33 @@ static int host_dump(const char *path)
     return 0;
 }
 
+/* Headless check that the desktop filesystem is mounted where the NC module
+   expects it: list "/D" through the same fs_* API the file manager uses. */
+static int host_fstest(void)
+{
+    fs_file_t *dir;
+    fs_file_info_t info;
+    unsigned count = 0u;
+
+    cnc_init();
+    cnc_unit_test_start();
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    printf("nc_ui: fs root %s\n", g_files_root[0] ? g_files_root : "nc-files");
+    dir = fs_opendir("/D");
+    if (!dir) {
+        puts("nc_ui: /D is not mounted");
+        return 1;
+    }
+    while (fs_next_file(dir, &info)) {
+        printf("  %-4s %8lu  %s\n", info.is_dir ? "dir" : "file",
+               (unsigned long)info.size, info.full_name);
+        count++;
+    }
+    fs_close(dir);
+    printf("nc_ui: %u entries\n", count);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     WNDCLASSA wc;
@@ -298,6 +408,17 @@ int main(int argc, char **argv)
 
     if (argc >= 3 && strcmp(argv[1], "--dump") == 0)
         return host_dump(argv[2]);
+
+    for (int i = 1; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "--files") == 0) {
+            snprintf(g_files_root, sizeof(g_files_root), "%s", argv[i + 1]);
+            i++;
+        }
+    }
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--fstest") == 0)
+            return host_fstest();
+    }
 
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc = host_wndproc;

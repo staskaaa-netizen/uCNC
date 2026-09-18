@@ -10,7 +10,7 @@ CFLAGS = -std=gnu11 -O2 -Wall -Wextra -Wno-unused-parameter \
          -DG33_ENCODER=0 -DDISABLE_SAFE_SETTINGS -DDISABLE_ENDPROGRAM_LOCK \
          -DEMULATE_GRBL_STARTUP=3 -DLVDS_WIDTH=800 -DLVDS_HEIGHT=600 \
          -include host_boardmap.h \
-         -I$(UCNC) -I$(UCNC)/uCNC -I$(SRC) -I$(SRC)/modules/nc -I$(SRC)/modules/g7x \
+         -I$(UCNC) -I$(UCNC)/uCNC -I$(SRC) -I$(SRC)/modules -I$(SRC)/modules/nc -I$(SRC)/modules/g7x \
          -I$(SRC)/modules/lvds_renderer -I.
 
 # -static keeps the MinGW runtime (libwinpthread) inside the exe so it runs
@@ -42,7 +42,7 @@ MODULES = $(SRC)/modules/g7_g8/parser_g7_g8.c \
           $(SRC)/modules/lvds_renderer/lvds_font_cond_6x8.c \
           $(SRC)/modules/lvds_renderer/lvds_font_ibm_8x14.c
 
-APP = lvds_host.c host_shim.c main.c
+APP = lvds_host.c host_fs.c host_shim.c main.c
 
 TARGET = $(BUILDDIR)/nc_ui.exe
 

@@ -28,7 +28,12 @@ typedef enum
     NC_VISUAL_KEY_CANCEL,
     NC_VISUAL_KEY_PREV,
     NC_VISUAL_KEY_NEXT,
-    NC_VISUAL_KEY_ACCEPT
+    NC_VISUAL_KEY_ACCEPT,
+    /* Arrow-style editing: move between the words (arguments) of one line.
+       PREV/NEXT stay on lines, so a keyboard can map Up/Down to lines and
+       Left/Right to arguments. */
+    NC_VISUAL_KEY_WORD_PREV,
+    NC_VISUAL_KEY_WORD_NEXT
 } nc_visual_key_t;
 
 void nc_visual_init(void);
@@ -36,6 +41,14 @@ void nc_visual_init(void);
    document exactly like the MODE key does. */
 void nc_visual_select_mode(nc_mode_t mode);
 void nc_visual_handle_key(nc_visual_key_t key);
+/* True while a value/word draft is being typed, so a shell can switch its
+   keypad from menu keys to digits. */
+bool nc_visual_value_editing(void);
+/* Footer (soft key) items of the active mode, same list the panel draws at the
+   bottom of the screen. `count` may be NULL. */
+const nc_footer_item_t *nc_visual_footer(size_t *count);
+/* Perform a footer action, exactly as pressing its soft key would. */
+void nc_visual_footer_action(nc_footer_action_t action);
 bool nc_visual_dirty(void);
 bool nc_visual_periodic_needed(void);
 void nc_visual_draw(void);

@@ -3589,6 +3589,15 @@ void nc_visual_handle_key(nc_visual_key_t key)
         g_nc_visual_dirty = true;
         return;
     }
+    if (key == NC_VISUAL_KEY_WORD_PREV || key == NC_VISUAL_KEY_WORD_NEXT) {
+        nc_result_t result = key == NC_VISUAL_KEY_WORD_PREV ?
+                             nc_select_prev_word(&g_nc_visual_doc) :
+                             nc_select_next_word(&g_nc_visual_doc);
+        snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "%s",
+                 result == NC_OK ? "Word" : "No editable word on this line");
+        g_nc_visual_dirty = true;
+        return;
+    }
 
     if (key == NC_VISUAL_KEY_MODE) {
         nc_text_edit_clear(&g_nc_visual_edit);
@@ -3673,6 +3682,23 @@ void nc_visual_handle_key(nc_visual_key_t key)
 bool nc_visual_dirty(void)
 {
     return g_nc_visual_dirty;
+}
+
+bool nc_visual_value_editing(void)
+{
+    return nc_text_edit_active(&g_nc_visual_edit);
+}
+
+const nc_footer_item_t *nc_visual_footer(size_t *count)
+{
+    return nc_menu_footer(g_nc_visual_mode, nc_files_active(), count);
+}
+
+void nc_visual_footer_action(nc_footer_action_t action)
+{
+    nc_visual_dispatch_footer_action(action);
+    g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
+    g_nc_visual_dirty = true;
 }
 
 bool nc_visual_periodic_needed(void)

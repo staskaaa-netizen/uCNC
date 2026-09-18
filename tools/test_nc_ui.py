@@ -22,7 +22,7 @@ FLAGS = ["-std=gnu11", "-O1", "-w",
          "-DEMULATE_GRBL_STARTUP=3", "-DLVDS_WIDTH=800", "-DLVDS_HEIGHT=600",
          "-include", "host_boardmap.h",
          f"-I{ROOT / 'uCNC'}", f"-I{SRC / 'modules' / 'nc'}",
-         f"-I{SRC}",
+         f"-I{SRC}", f"-I{SRC / 'modules'}",
          f"-I{SRC / 'modules' / 'g7x'}", f"-I{SRC / 'modules' / 'lvds_renderer'}",
          f"-I{TOOL}"]
 
@@ -58,7 +58,8 @@ def module_sources():
 
 if __name__ == "__main__":
     exe = OUT / "nc_ui.exe"
-    sources = [TOOL / "lvds_host.c", TOOL / "host_shim.c", TOOL / "main.c",
+    sources = [TOOL / "lvds_host.c", TOOL / "host_fs.c", TOOL / "host_shim.c",
+               TOOL / "main.c",
                *core_sources(),
                *module_sources()]
     cmd = [os.environ.get("CC", "gcc"), *FLAGS, *[str(p) for p in sources],

@@ -343,6 +343,58 @@ static int test_g76_invalid_contract(void)
     return 0;
 }
 
+/* Fanuc two-line header: depth and retract on the first block, range and finish
+   allowances in U/W on the second. It must generate exactly the same cycle as
+   the project's one-line spelling of the same geometry. */
+static int test_two_line_header(void)
+{
+    static const char *first[2] = { "G71 U2 R1", "G72 W2 R1" };
+    static const char *second[2] = { "G71 P100 Q200 U0.5 W0.25 F120",
+                                     "G72 P100 Q200 U0.5 W0.25 F120" };
+    static const char *single[2] = { "G71 U2 R1 X0.5 Z0.25 F120",
+                                     "G72 W2 R1 X0.5 Z0.25 F120" };
+    g7x_stream_t linked;
+    g7x_stream_t plain;
+    sink_t a;
+    sink_t b;
+    int cycle;
+    int i;
+
+    for (cycle = 0; cycle < 2; cycle++) {
+        g7x_stream_reset(&linked);
+        g7x_stream_reset(&plain);
+        if (g7x_stream_begin_linked(&linked, first[cycle], second[cycle]) != G7X_OK ||
+            g7x_stream_begin(&plain, single[cycle]) != G7X_OK)
+            return 1;
+        for (i = 0; i < 2; i++) {
+            g7x_stream_t *stream = i == 0 ? &linked : &plain;
+            if (add_line(stream, "N100 G1 X50 Z0") ||
+                add_line(stream, "G1 X50 Z-10") ||
+                add_line(stream, "N200 G1 X40 Z-10") ||
+                add_line(stream, "G80"))
+                return 1;
+        }
+        if (collect_g7x(&linked, &a) || collect_g7x(&plain, &b))
+            return 1;
+        if (a.count != b.count) {
+            printf("FAIL two-line stream count %d vs %d\n", a.count, b.count);
+            return 1;
+        }
+        for (i = 0; i < a.count; i++) {
+            if (strcmp(a.lines[i], b.lines[i])) {
+                printf("FAIL two-line [%s] vs [%s]\n", a.lines[i], b.lines[i]);
+                return 1;
+            }
+        }
+        /* X 50 + U0.5 + R1 is a diameter of 52.5; Z 0 + W0.25 + R1 clears 1.25. */
+        if (!has_exact(&a, "G0 X52.500") || !has_exact(&a, "G0 Z1.250")) {
+            printf("FAIL two-line clearance cycle %d\n", cycle);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 typedef struct {
     uint32_t numbers[4];
     const char *texts[4];
@@ -522,6 +574,7 @@ int main(void)
     fails += test_g76_invalid_contract();
     fails += test_numbered_history();
     fails += test_numbered_source();
+    fails += test_two_line_header();
 
     if (fails) {
         printf("FAILURES %d\n", fails);

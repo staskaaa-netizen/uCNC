@@ -32,6 +32,9 @@ Use this as a short hardware pass list while NC is still pre-alpha.
 - Rapid lines are dashed and visible; feed/finish lines are distinct.
 - A `G71 ... P100 Q200` range draws the same contour as the equivalent
   `G80`-terminated program and leaves the cursor on the line after `N200`.
+- A Fanuc two-line header (`G71 U1 R1` then `G71 P100 Q200 U0.5 W0.25 F120`)
+  previews as one cycle, and selecting either header line in RUN sends both
+  header lines plus the numbered profile.
 - A numbered range whose `N(Q)` block is missing, repeated or out of order
   shows the preview error instead of drawing a partial contour.
 - Future: zoom/pan has a visible cursor/anchor.

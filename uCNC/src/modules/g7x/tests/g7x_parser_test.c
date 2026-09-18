@@ -240,6 +240,33 @@ int main(void)
     fails += command("N100 G1 X50 Z0", STATUS_OK);
     fails += command("N300 G1 X40 Z-10", STATUS_INVALID_STATEMENT);
     if (g7x_parser_busy()) { puts("FAIL P/Q out-of-range cleanup"); fails++; }
+
+    /* Fanuc two-line header completed by a second G71 block. Its U/W finish
+       allowances must land exactly where the one-line spelling lands. */
+    fails += command("G0 X54 Z2", STATUS_OK);
+    fails += command("G71 U1 R1", STATUS_OK);
+    fails += command("G71 P100 Q200 U0.5 W0.25 F300", STATUS_OK);
+    if (!g7x_parser_busy()) { puts("FAIL two-line header not armed"); fails++; }
+    fails += command("N100 G1 X50 Z0", STATUS_OK);
+    fails += command("G1 X50 Z-10", STATUS_OK);
+    fails += command("N200 G1 X40 Z-10", STATUS_OK);
+    if (g7x_parser_busy()) { puts("FAIL two-line range cleanup"); fails++; }
+    mc_get_position(pos);
+    float two_line_x = pos[AXIS_X];
+    float two_line_z = pos[AXIS_Z];
+    fails += command("G0 X54 Z2", STATUS_OK);
+    fails += command("G71 U1 R1 X0.5 Z0.25 F300", STATUS_OK);
+    fails += command("G1 X50 Z0", STATUS_OK);
+    fails += command("G1 X50 Z-10", STATUS_OK);
+    fails += command("G1 X40 Z-10", STATUS_OK);
+    fails += command("G80", STATUS_OK);
+    mc_get_position(pos);
+    if (fabsf(pos[AXIS_X] - two_line_x) > 0.001f ||
+        fabsf(pos[AXIS_Z] - two_line_z) > 0.001f) {
+        printf("FAIL two-line allowances X%.3f/%.3f Z%.3f/%.3f\n",
+               two_line_x, pos[AXIS_X], two_line_z, pos[AXIS_Z]);
+        fails++;
+    }
 #ifndef G7X_STANDALONE_TEST
     static nc_document_t doc;
     nc_document_init(&doc);
@@ -353,6 +380,53 @@ int main(void)
     before = motion_count;
     fails += command("G0 X42", STATUS_OK);
     if (motion_count != before + 1) { puts("FAIL stale numbered range"); fails++; }
+
+    /* Selecting the second line of a Fanuc two-line header still sends the whole
+       block: both header lines plus the numbered profile. */
+    nc_document_init(&doc);
+    nc_insert_line(&doc, 0, "G71 U1 R1");
+    nc_insert_line(&doc, 1, "G71 P100 Q200 U0.5 W0.25 F300");
+    nc_insert_line(&doc, 2, "N100 G1 X50 Z0");
+    nc_insert_line(&doc, 3, "G1 X50 Z-10");
+    nc_insert_line(&doc, 4, "N200 G1 X40 Z-10");
+    nc_insert_line(&doc, 5, "G0 X80 Z0");
+    if (!nc_run_send_document_line(&doc, 1)) {
+        puts("FAIL two-line selected send arm"); fails++;
+    }
+    for (int i = 0; i < 6 && nc_run_active(); i++) {
+        if (cnc_parse_cmd() != STATUS_OK) {
+            puts("FAIL two-line selected send"); fails++;
+            break;
+        }
+    }
+    if (g7x_parser_busy()) { puts("FAIL two-line selected send cleanup"); fails++; }
+    (void)grbl_stream_available();
+
+    /* Whole-file RUN through a two-line numbered range and a trailing line. */
+    nc_document_init(&doc);
+    nc_insert_line(&doc, 0, "G0 X54 Z2");
+    nc_insert_line(&doc, 1, "G71 U1 R1");
+    nc_insert_line(&doc, 2, "G71 P100 Q200 U0.5 W0.25 F300");
+    nc_insert_line(&doc, 3, "N100 G1 X50 Z0");
+    nc_insert_line(&doc, 4, "G1 X50 Z-10");
+    nc_insert_line(&doc, 5, "N200 G1 X40 Z-10");
+    nc_insert_line(&doc, 6, "G0 X80 Z0");
+    nc_run_start_stream(&doc, 0);
+    for (int i = 0; i < 7; i++) {
+        if (cnc_parse_cmd() != STATUS_OK) {
+            puts("FAIL two-line RUN stream"); fails++;
+            break;
+        }
+    }
+    if (g7x_parser_busy() || nc_run_error()) {
+        puts("FAIL two-line RUN cleanup"); fails++;
+    }
+    mc_get_position(pos);
+    if (fabsf(pos[AXIS_X] - 40.0f) > 0.001f) {
+        printf("FAIL two-line RUN trailing line X%.3f\n", pos[AXIS_X]);
+        fails++;
+    }
+    (void)grbl_stream_available();
 
     nc_document_init(&doc);
     nc_insert_line(&doc, 0, "G1 Xbad");

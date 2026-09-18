@@ -37,7 +37,11 @@ software-tested, not physically validated on a machine.
   serial history, and reports missing/evicted or ambiguous ranges instead of
   guessing. Two-line headers and `G70` replay from the retained range stay open
   below.
-- [ ] Fanuc/Haas one-line and two-line G71/G72 headers and their word meanings.
+- [x] Fanuc one-line and two-line G71/G72 headers with Fanuc word meanings: the
+  first block's U/W is the depth of cut and R the retract, the second block's
+  U/W are the X/Z finish allowances. A second block of the same cycle completes
+  the open header only before any contour row is collected. Haas' D-word depth
+  variant stays unsupported because this parser shares the D and Q word slot.
 - [ ] First P block as approach only; profile F/S/T accepted and ignored for
   roughing (they currently reject the profile row).
 - [ ] Finish stock U/W, direction from allowance signs and 45-degree retract.

@@ -94,8 +94,13 @@ NC supplies document access and UI, not a second cycle generator.
 ## Remaining NC integration
 
 - [x] Supply a document-source adapter for G7x numbered-block lookup
-  (`nc_emit_numbered_source`) and preview one-line `G71/G72 ... P Q` ranges from
-  the document, with missing/ambiguous range errors surfaced as preview errors.
+  (`nc_emit_numbered_source`) and preview both one-line and Fanuc two-line
+  `G71/G72 ... P Q` ranges from the document, with missing/ambiguous range
+  errors surfaced as preview errors.
+- [x] Share one G7x block scan between RUN, the preview and the editor
+  (`nc_g7x.c`): block start/end for numbered ranges and G80 cycles, two-line
+  headers, and which rows count as contour. RUN sends a whole block for a
+  selected line, including either header line of a two-line pair.
 - [ ] Add G76 preview through the shared G7x threading generator.
 - [ ] Keep nc_emit as preview glue; assess removal only if SIM can consume the
   shared stream directly without losing source-line/error information.

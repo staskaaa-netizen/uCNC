@@ -2,6 +2,7 @@
 
 #include "../nc.h"
 #include "../nc_emit.h"
+#include "../nc_g7x.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -158,6 +159,131 @@ static int test_g71_numbered_range_errors(void)
     fails += expect_rejected_with(&stream, G7X_BAD_FIELD);
 
     return fails;
+}
+
+/* Fanuc two-line header in preview: the depth block and the P/Q block form one
+   cycle, and the source continues after the N(Q) row. */
+static int test_g71_two_line_numbered_range(void)
+{
+    nc_document_t doc;
+    nc_emit_stream_t stream;
+
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U1 R1");
+    (void)nc_insert_line(&doc, 1, "G71 P100 Q200 U0.5 W0.25 F120");
+    (void)nc_insert_line(&doc, 2, "N100 G1 X50 Z0");
+    (void)nc_insert_line(&doc, 3, "G1 X50 Z-10");
+    (void)nc_insert_line(&doc, 4, "N200 G1 X40 Z-10");
+    (void)nc_insert_line(&doc, 5, "G0 X80 Z0");
+    nc_emit_stream_begin(&stream, &doc, 0);
+
+    return expect_find_line(&stream, "(G7x finish contour)") ||
+           expect_line(&stream, "G0 X52.500") ||
+           expect_line(&stream, "G0 Z1.250") ||
+           expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
+           expect_line(&stream, "G1 X50.000 Z-10.000") ||
+           expect_line(&stream, "G1 X40.000 Z-10.000") ||
+           expect_line(&stream, "G0 X52.500") ||
+           expect_line(&stream, "G0 Z1.250") ||
+           expect_line(&stream, "G0 X80 Z0");
+}
+
+/* Two-line header that still ends at G80: the second block carries the finish
+   allowances and the feed instead of a numbered range. */
+static int test_g71_two_line_g80(void)
+{
+    nc_document_t doc;
+    nc_emit_stream_t stream;
+
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U1 R1");
+    (void)nc_insert_line(&doc, 1, "G71 U0.5 W0.25 F120");
+    (void)nc_insert_line(&doc, 2, "G1 X50 Z0");
+    (void)nc_insert_line(&doc, 3, "G1 X50 Z-10");
+    (void)nc_insert_line(&doc, 4, "G1 X40 Z-10");
+    (void)nc_insert_line(&doc, 5, "G80");
+    (void)nc_insert_line(&doc, 6, "G0 X80 Z0");
+    nc_emit_stream_begin(&stream, &doc, 0);
+
+    return expect_find_line(&stream, "(G7x finish contour)") ||
+           expect_line(&stream, "G0 X52.500") ||
+           expect_line(&stream, "G0 Z1.250") ||
+           expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
+           expect_line(&stream, "G1 X50.000 Z-10.000") ||
+           expect_line(&stream, "G1 X40.000 Z-10.000") ||
+           expect_line(&stream, "G0 X52.500") ||
+           expect_line(&stream, "G0 Z1.250") ||
+           expect_line(&stream, "G0 X80 Z0");
+}
+
+/* RUN, preview and the contour markers share one block scan, so it is tested
+   directly: numbered range, two-line header and plain G80 cycle. */
+static int test_g7x_block_scan(void)
+{
+    nc_document_t doc;
+    uint32_t p = 0u;
+    uint32_t q = 0u;
+    size_t end = 0u;
+
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U1 R1");
+    (void)nc_insert_line(&doc, 1, "G71 P100 Q200 U0.5 W0.25 F120");
+    (void)nc_insert_line(&doc, 2, "N100 G1 X50 Z0");
+    (void)nc_insert_line(&doc, 3, "G1 X50 Z-10");
+    (void)nc_insert_line(&doc, 4, "N200 G1 X40 Z-10");
+    (void)nc_insert_line(&doc, 5, "G0 X80 Z0");
+
+    if (!nc_g7x_line_is_header("G71 U1 R1") ||
+        nc_g7x_line_is_header("G0 X80") ||
+        !nc_g7x_line_range("G71 P100 Q200", &p, &q) || p != 100u || q != 200u ||
+        nc_g7x_line_range("G71 P200 Q100", &p, &q) ||
+        nc_g7x_line_range("G71 P100", &p, &q) ||
+        !nc_g7x_line_has_range_words("G71 P100") ||
+        nc_g7x_line_has_range_words("G71 U1 R1")) {
+        printf("FAIL block scan words hdr=%d none=%d range=%d p=%u q=%u\n",
+               (int)nc_g7x_line_is_header("G71 U1 R1"),
+               (int)nc_g7x_line_is_header("G0 X80"),
+               (int)nc_g7x_line_range("G71 P100 Q200", &p, &q), p, q);
+        return 1;
+    }
+    if (nc_g7x_block_start(&doc, 1u) != 0u ||
+        nc_g7x_block_start(&doc, 2u) != 2u ||
+        !nc_g7x_block_end(&doc, 0u, &end) || end != 4u ||
+        !nc_g7x_block_end(&doc, 1u, &end) || end != 4u) {
+        printf("FAIL block scan span end=%lu\n", (unsigned long)end);
+        return 1;
+    }
+    if (!nc_g7x_line_is_contour(&doc, 0u, 2u) ||
+        nc_g7x_line_is_contour(&doc, 0u, 1u) ||
+        nc_g7x_line_is_contour(&doc, 0u, 5u)) {
+        puts("FAIL block scan contour range");
+        return 1;
+    }
+
+    /* Plain G80 cycle: the terminator is the end and is not contour. */
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U1 R1 X0.5 Z0.25 F120");
+    (void)nc_insert_line(&doc, 1, "G1 X50 Z0");
+    (void)nc_insert_line(&doc, 2, "G1 X50 Z-10");
+    (void)nc_insert_line(&doc, 3, "G80");
+    (void)nc_insert_line(&doc, 4, "G0 X80 Z0");
+    if (!nc_g7x_block_end(&doc, 0u, &end) || end != 3u ||
+        nc_g7x_line_is_contour(&doc, 0u, 3u) ||
+        !nc_g7x_line_is_contour(&doc, 0u, 1u) ||
+        !nc_g7x_line_is_contour(&doc, 0u, 2u)) {
+        printf("FAIL block scan g80 end=%lu\n", (unsigned long)end);
+        return 1;
+    }
+
+    /* An incomplete block is reported instead of guessed at. */
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U1 R1 P100 Q200 X0.5 Z0.25 F120");
+    (void)nc_insert_line(&doc, 1, "N100 G1 X50 Z0");
+    if (nc_g7x_block_end(&doc, 0u, &end)) {
+        puts("FAIL block scan incomplete");
+        return 1;
+    }
+    return 0;
 }
 
 /* NC supplies program text through the G7x source contract, not the other way
@@ -374,6 +500,9 @@ int main(void)
     fails += test_g71_sample_features();
     fails += test_g71_numbered_range();
     fails += test_g71_numbered_range_errors();
+    fails += test_g71_two_line_numbered_range();
+    fails += test_g71_two_line_g80();
+    fails += test_g7x_block_scan();
     fails += test_numbered_source_cursor();
     fails += test_g72_basic();
     fails += test_g72_rectangle();

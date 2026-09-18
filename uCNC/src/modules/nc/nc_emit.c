@@ -1,4 +1,5 @@
 #include "nc_emit.h"
+#include "nc_g7x.h"
 
 #include "../../interface/grbl_stream.h"
 
@@ -167,30 +168,6 @@ static bool nc_emit_feed_g7x(nc_emit_stream_t *stream)
     return false;
 }
 
-/* P/Q on the cycle header selects a numbered profile range. Returns 1 for a
-   valid range, 0 when the header has no P/Q words and -1 for a malformed one. */
-static int nc_emit_pq_range(const char *line, uint32_t *p, uint32_t *q)
-{
-    float pv;
-    float qv;
-    bool has_p;
-    bool has_q;
-
-    if (!line || !p || !q)
-        return -1;
-    has_p = g7x_get_field_float(line, "P", &pv);
-    has_q = g7x_get_field_float(line, "Q", &qv);
-    if (!has_p && !has_q)
-        return 0;
-    if (!has_p || !has_q ||
-        !isfinite(pv) || !isfinite(qv) || pv < 1.0f || qv < 1.0f ||
-        floorf(pv) != pv || floorf(qv) != qv || qv < pv)
-        return -1;
-    *p = (uint32_t)pv;
-    *q = (uint32_t)qv;
-    return 1;
-}
-
 /* Feed the numbered profile range [p, q] from the document. Unnumbered rows
    inside the range are contour rows, matching the parser's run-time rule. */
 static bool nc_emit_feed_g7x_range(nc_emit_stream_t *stream, uint32_t p, uint32_t q)
@@ -336,14 +313,43 @@ nc_emit_result_t nc_emit_stream_next(nc_emit_stream_t *stream,
 
     line = nc_emit_trim(stream->doc->lines[stream->source_line].text);
     if (g7x_cycle_from_line(line) != G7X_CYCLE_NONE) {
-        g7x_cycle_t cycle = g7x_cycle_from_line(line);
+        const char *second = NULL;
+        size_t second_line = 0u;
+        size_t next = stream->source_line + 1u;
         uint32_t pq_p = 0u;
         uint32_t pq_q = 0u;
-        int pq = (cycle == G7X_CYCLE_G71 || cycle == G7X_CYCLE_G72)
-                     ? nc_emit_pq_range(line, &pq_p, &pq_q)
-                     : 0;
+        bool numbered = false;
 
-        if (pq < 0) {
+        /* Fanuc two-line header: the next content line repeats the cycle and
+           carries the range. */
+        while (next < stream->doc->line_count &&
+               !*nc_emit_trim(stream->doc->lines[next].text))
+            next++;
+        if (next < stream->doc->line_count) {
+            const char *next_line = nc_emit_trim(stream->doc->lines[next].text);
+            if (nc_g7x_line_is_header(next_line) &&
+                g7x_cycle_from_line(next_line) == g7x_cycle_from_line(line)) {
+                second = next_line;
+                second_line = next;
+            }
+        }
+        if (nc_g7x_line_has_range_words(second ? second : line)) {
+            if (!nc_g7x_line_range(second ? second : line, &pq_p, &pq_q)) {
+                if (stream->log) {
+                    grbl_stream_printf("[MSG:NC G7X BEGIN FAIL %.96s]\r\n", line);
+                }
+                stream->error = G7X_BAD_FIELD;
+                stream->active = false;
+                return NC_EMIT_ERROR;
+            }
+            numbered = true;
+        }
+        if (second) {
+            stream->error = g7x_stream_begin_linked(&stream->g7x, line, second);
+        } else {
+            stream->error = g7x_stream_begin(&stream->g7x, line);
+        }
+        if (stream->error != G7X_OK && nc_g7x_line_has_range_words(line)) {
             if (stream->log) {
                 grbl_stream_printf("[MSG:NC G7X BEGIN FAIL %.96s]\r\n", line);
             }
@@ -351,14 +357,13 @@ nc_emit_result_t nc_emit_stream_next(nc_emit_stream_t *stream,
             stream->active = false;
             return NC_EMIT_ERROR;
         }
-        stream->error = g7x_stream_begin(&stream->g7x, line);
         if (stream->error == G7X_OK) {
             if (stream->log) {
                 grbl_stream_printf("[MSG:NC G7X BEGIN %.96s]\r\n", line);
             }
-            stream->source_line++;
+            stream->source_line = (second ? second_line : stream->source_line) + 1u;
             stream->g7x_collecting = true;
-            if (pq > 0) {
+            if (numbered) {
                 if (nc_emit_feed_g7x_range(stream, pq_p, pq_q)) {
                     return nc_emit_g7x_next(stream, out, out_sz, source_line);
                 }

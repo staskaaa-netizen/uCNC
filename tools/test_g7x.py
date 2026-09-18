@@ -38,6 +38,7 @@ if __name__ == "__main__":
     if suite in ("all", "nc"):
         failed |= run("nc", common + ["uCNC/src/modules/nc/nc.c",
                       "uCNC/src/modules/nc/nc_emit.c",
+                      "uCNC/src/modules/nc/nc_g7x.c",
                       "uCNC/src/modules/nc/tests/nc_emit_host_test.c"],
                       ["-DG7X_HOST_TEST", "-DNC_HOST_TEST"])
     if suite in ("all", "parser", "standalone"):
@@ -49,6 +50,7 @@ if __name__ == "__main__":
                     "uCNC/src/hal/mcus/virtual/virtual_windows.c",
                     "uCNC/src/modules/g7_g8/parser_g7_g8.c", *common,
                     "uCNC/src/modules/nc/nc.c", "uCNC/src/modules/nc/nc_run.c",
+                    "uCNC/src/modules/nc/nc_g7x.c",
                     "uCNC/src/modules/nc/nc_feedback.c",
                     f"{module}/tests/g7x_parser_test.c"]
         flags = ["-DPIO_UNIT_TESTING", "-DUCNC_IGNORE_BOARDMAP_OVERRIDES",

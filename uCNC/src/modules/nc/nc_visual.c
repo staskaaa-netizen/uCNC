@@ -15,6 +15,7 @@
 #include "nc_text.h"
 #include "nc_tools.h"
 #include "../g7x/g7x_contour.h"
+#include "nc_g7x.h"
 #include "../lvds_renderer/lvds_draw_api.h"
 #include "../lvds_renderer/lvds_hstx.h"
 #if __has_include("../lvds_renderer/lvds_psram.h")
@@ -1188,6 +1189,26 @@ static void nc_visual_draw_din_layer(const nc_preview_info_t *preview,
 }
 #endif
 
+/* True when `index` carries contour geometry of any G7x block, whether the
+   block ends at G80 or at a numbered range's N(Q) row. */
+static bool nc_visual_line_is_g7x_contour(const nc_document_t *doc, size_t index)
+{
+    size_t i;
+
+    if (!doc || index >= doc->line_count) {
+        return false;
+    }
+    for (i = 0; i <= index; i++) {
+        if (!nc_g7x_line_is_header(doc->lines[i].text)) {
+            continue;
+        }
+        if (nc_g7x_line_is_contour(doc, i, index)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void nc_visual_draw_sim_contour_points(const nc_document_t *doc,
                                               const nc_preview_info_t *preview,
                                               int z0_x,
@@ -1199,7 +1220,6 @@ static void nc_visual_draw_sim_contour_points(const nc_document_t *doc,
 {
 #if NC_PREVIEW_DIN_POINT_MARKERS
     size_t i;
-    bool in_region = false;
     float x = preview ? preview->stock_x : 0.0f;
     float z = 0.0f;
     int prev_z_px = z0_x;
@@ -1218,17 +1238,10 @@ static void nc_visual_draw_sim_contour_points(const nc_document_t *doc,
         bool has_x;
         bool has_z;
 
-        if (g7x_cycle_from_line(line) != G7X_CYCLE_NONE) {
-            in_region = true;
-            continue;
-        }
-        if (!in_region) {
+        if (!nc_visual_line_is_g7x_contour(doc, i)) {
             continue;
         }
         cmd = g7x_contour_cmd_from_line(line);
-        if (cmd == G7X_CONTOUR_END) {
-            break;
-        }
         if (cmd == G7X_CONTOUR_NONE || cmd == G7X_CONTOUR_RAPID) {
             continue;
         }
@@ -3103,31 +3116,13 @@ static void nc_visual_serial_selected_file(void)
 
 static bool nc_visual_line_is_contour_detail(const nc_document_t *doc, size_t index)
 {
-    size_t i;
-    bool in_region = false;
-
     if (!doc || index >= doc->line_count) {
         return false;
     }
-
-    for (i = 0; i <= index; i++) {
-        const char *line = doc->lines[i].text;
-        g7x_cycle_t cycle = g7x_cycle_from_line(line);
-
-        if (cycle != G7X_CYCLE_NONE) {
-            in_region = true;
-            continue;
-        }
-        if (g7x_contour_cmd_from_line(line) == G7X_CONTOUR_END) {
-            if (i == index) {
-                return false;
-            }
-            in_region = false;
-            continue;
-        }
+    if (g7x_contour_cmd_from_line(doc->lines[index].text) == G7X_CONTOUR_NONE) {
+        return false;
     }
-
-    return in_region && g7x_contour_cmd_from_line(doc->lines[index].text) != G7X_CONTOUR_NONE;
+    return nc_visual_line_is_g7x_contour(doc, index);
 }
 
 static void nc_visual_draw_tool_screen(void)

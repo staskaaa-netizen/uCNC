@@ -47,7 +47,11 @@ for the LVDS machine. It does not configure the real G33 spindle feedback.
    run when the `N200` block is accepted, without a `G80`. Then repeat with a
    `G80` inside the range and with a row numbered beyond `Q`; both must return
    an error and leave no pending cycle.
-7. `g76.nc` requires the configured G33 encoder/spindle setup. Expected cut
+7. Fanuc two-line header: send `G71 U1 R1`, then `G71 P100 Q200 U0.5 W0.25 F120`
+   and the same profile. The cycle must match the one-line spelling above with
+   the X clearance at 52.5 and the Z clearance at 1.25. Check that a `G71` block
+   sent after the first contour row is still rejected instead of merged.
+8. `g76.nc` requires the configured G33 encoder/spindle setup. Expected cut
    diameters are 38, 36.5, 36, then a spring pass at 36; lead is 1.5 mm/rev.
    Check actual phase/pitch separately before treating threading as validated.
 

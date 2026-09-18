@@ -259,6 +259,52 @@ g7x_result_t g7x_stream_begin(g7x_stream_t *stream, const char *cycle_line)
     return g7x_stream_begin_parsed(stream, cycle, retract, x_allow, z_allow, feed, doc);
 }
 
+g7x_result_t g7x_stream_begin_linked(g7x_stream_t *stream,
+                                     const char *first_line,
+                                     const char *second_line)
+{
+    g7x_cycle_profile_t profile;
+    g7x_cycle_t cycle;
+    float retract = 1.0f;
+    float x_allow = 0.0f;
+    float z_allow = 0.0f;
+    float feed = 120.0f;
+    float doc = 0.0f;
+    float value;
+
+    if (!stream || !first_line || !second_line)
+        return G7X_BAD_FIELD;
+    cycle = g7x_cycle_from_line(second_line);
+    if (cycle == G7X_CYCLE_NONE)
+        cycle = g7x_cycle_from_line(first_line);
+    if (!g7x_cycle_profile(cycle, &profile))
+        return G7X_UNSUPPORTED;
+
+    /* First Fanuc block: depth of cut and the retract amount. */
+    if (!g7x_contour_field_float(first_line, profile.rough_doc_word, &doc))
+        return G7X_BAD_FIELD;
+    (void)g7x_contour_field_float(first_line, 'R', &retract);
+    if (g7x_contour_field_float(second_line, 'R', &value))
+        retract = value;
+
+    /* Second Fanuc block: U and W are the X and Z finish allowances in
+       diameter programming. The project's X/Z spelling means the same. */
+    if (g7x_contour_field_float(second_line, 'X', &value))
+        x_allow = value * 0.5f;
+    else if (g7x_contour_field_float(second_line, 'U', &value))
+        x_allow = value * 0.5f;
+    if (g7x_contour_field_float(second_line, 'Z', &value))
+        z_allow = value;
+    else if (g7x_contour_field_float(second_line, 'W', &value))
+        z_allow = value;
+    if (g7x_contour_field_float(second_line, 'F', &value))
+        feed = value;
+    else if (g7x_contour_field_float(first_line, 'F', &value))
+        feed = value;
+
+    return g7x_stream_begin_parsed(stream, cycle, retract, x_allow, z_allow, feed, doc);
+}
+
 g7x_result_t g7x_stream_add_line(g7x_stream_t *stream, const char *line, bool *done)
 {
     g7x_contour_cmd_t cmd;

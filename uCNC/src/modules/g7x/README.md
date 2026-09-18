@@ -18,10 +18,20 @@ arc interiors. G71/G72 still include their existing finishing pass. `G70` and
 the two-line Fanuc/Haas cycle headers are not implemented; the one-line P/Q
 range is described below.
 
-### Numbered P/Q ranges
+### Fanuc headers and numbered P/Q ranges
 
-The one-line Fanuc/Haas form selects the profile by block number instead of an
-explicit `G80`:
+Fanuc writes the roughing cycle as two blocks: the first carries the depth of
+cut and the retract amount, the second the profile range and the finish
+allowances. Both the two-line form and the one-line project spelling select the
+profile by block number instead of an explicit `G80`:
+
+```text
+G71 U1 R1
+G71 P100 Q200 U0.5 W0.25 F120
+N100 G0 X50 Z0
+G1 Z-30
+N200 X40
+```
 
 ```text
 G71 U1 R1 P100 Q200 X0.5 Z0.5 F120
@@ -42,6 +52,13 @@ Rules implemented by both the parser run path and the NC preview:
   above `Q`, an incomplete `P`/`Q` pair and `Q < P` all fail the source command
   and clear collection.
 
+Two-line word meanings follow Fanuc: the first block's `U` (G71) or `W` (G72)
+is the depth of cut and `R` the retract amount, while the second block's `U` and
+`W` are the X and Z finish allowances. A second block of the same cycle
+completes the open header only while no contour row has been collected, so an
+unrelated repeat of `G71`/`G72` is still rejected. `X`/`Z` are accepted as the
+project's spelling of the same allowances.
+
 Numbered profile rows are retained in a bounded ring
 (`G7X_MAX_RETAINED_BLOCKS`, `G7X_RETAINED_TEXT_LEN` in
 `g7x_source.h`). `g7x_parser_numbered_history()` exposes it for diagnostics and
@@ -55,16 +72,11 @@ contract in `g7x_source.h`. NC implements it for its own documents with
 `nc_emit_numbered_source()`, so G7x stays independent of NC storage while NC
 keeps ownership of the file text.
 
-Not implemented yet: two-line Fanuc/Haas headers, `G70 P/Q` replay from the
-retained range, treating the first `P` block as approach-only, and `S`/`T`
-words on profile rows (they currently reject the row).
-
-Word meanings stay in the project's dialect: `U` (G71) or `W` (G72) is still
-the depth of cut and `X`/`Z` are the finish allowances, even when `P`/`Q` are
-present. Haas puts the finish allowances in `U`/`W` and the depth in `D`, and
-Fanuc's two-line form splits depth and allowances across two blocks. Those
-conventions are not interchangeable and are not guessed at here; adopting them
-is the open header/word-meaning task.
+Not implemented yet: `G70 P/Q` replay from the retained range, treating the
+first `P` block as approach-only, and `S`/`T` words on profile rows (they
+currently reject the row). Haas' single-line form, which puts the finish
+allowances in `U`/`W` and the depth in `D`, is not supported: this parser stores
+`D` and `Q` in the same word slot, so `D` cannot be used next to a `Q` range.
 
 ### Native G76 contract
 

@@ -22,6 +22,12 @@ g7x_cycle_t g7x_cycle_from_line(const char *line);
 g7x_contour_cmd_t g7x_contour_cmd_from_line(const char *line);
 
 g7x_result_t g7x_stream_begin(g7x_stream_t *stream, const char *cycle_line);
+/* Fanuc two-line header: the first block carries the depth of cut (U for G71,
+   W for G72) and R, the second carries P/Q plus the X/Z finish allowances in
+   U/W. Both X/Z and U/W spellings are accepted for the allowances. */
+g7x_result_t g7x_stream_begin_linked(g7x_stream_t *stream,
+                                     const char *first_line,
+                                     const char *second_line);
 g7x_result_t g7x_stream_add_line(g7x_stream_t *stream, const char *line, bool *done);
 g7x_result_t g7x_thread_begin(g7x_thread_stream_t *stream,
                               const char *line,

@@ -3,6 +3,7 @@
 
 #include "../../interface/grbl_stream.h"
 #include "../g7x/g7x.h"
+#include "nc_g7x.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -104,18 +105,9 @@ static bool nc_run_line_is_g7x_header(const char *line)
 
 static bool nc_run_find_g7x_end(const nc_document_t *doc, size_t line, size_t *end_line)
 {
-    size_t i;
-
-    if (!doc || !end_line || line >= doc->line_count) {
-        return false;
-    }
-    for (i = line + 1u; i < doc->line_count; i++) {
-        if (nc_run_line_starts_gcode(doc->lines[i].text, 80u)) {
-            *end_line = i;
-            return true;
-        }
-    }
-    return false;
+    /* Shared with the preview: a numbered range ends at N(Q), otherwise at the
+       G80 line. */
+    return nc_g7x_block_end(doc, line, end_line);
 }
 
 static bool nc_run_line_sendable(const char *line)
@@ -284,6 +276,7 @@ void nc_run_send_line(const char *line)
 bool nc_run_send_document_line(const nc_document_t *doc, size_t line)
 {
     const char *text;
+    size_t start_line;
     size_t end_line;
 
     if (!doc || line >= doc->line_count) {
@@ -294,9 +287,12 @@ bool nc_run_send_document_line(const nc_document_t *doc, size_t line)
         return false;
     }
 
-    if (nc_run_line_is_g7x_header(text) &&
-        nc_run_find_g7x_end(doc, line, &end_line)) {
-        if (!nc_run_start_stream(doc, line)) {
+    /* A G7x block is sent as a whole: the header (or both header lines) plus
+       its numbered range or G80 terminator. */
+    start_line = nc_g7x_block_start(doc, line);
+    if (nc_run_line_is_g7x_header(doc->lines[start_line].text) &&
+        nc_run_find_g7x_end(doc, start_line, &end_line)) {
+        if (!nc_run_start_stream(doc, start_line)) {
             return false;
         }
         g_nc_run_stream_end_line = end_line;

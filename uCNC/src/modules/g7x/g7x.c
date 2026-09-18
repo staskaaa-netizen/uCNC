@@ -39,6 +39,13 @@ static uint32_t g7x_parser_pq_p;
 static uint32_t g7x_parser_pq_q;
 static uint32_t g7x_parser_pq_last;
 static g7x_history_t g7x_parser_history;
+/* Fanuc two-line header: the second G71/G72 block completes the open header
+   and its U/W words are finish allowances, not the depth of cut. */
+static bool g7x_parser_continuation;
+static float g7x_parser_pending_x_allow;
+static bool g7x_parser_pending_x_allow_set;
+static float g7x_parser_pending_z_allow;
+static bool g7x_parser_pending_z_allow_set;
 #if G7X_ENABLE_G76 && defined(G33_ENCODER)
 static g7x_thread_stream_t g7x_parser_thread_stream;
 #endif
@@ -72,6 +79,11 @@ static void g7x_parser_clear_state(void)
     g7x_parser_pq_p = 0u;
     g7x_parser_pq_q = 0u;
     g7x_parser_pq_last = 0u;
+    g7x_parser_continuation = false;
+    g7x_parser_pending_x_allow = 0.0f;
+    g7x_parser_pending_x_allow_set = false;
+    g7x_parser_pending_z_allow = 0.0f;
+    g7x_parser_pending_z_allow_set = false;
 #if G7X_ENABLE_G76 && defined(G33_ENCODER)
     g7x_parser_thread_runner_active = false;
 #endif
@@ -1565,6 +1577,14 @@ static void g7x_parser_retain_contour(uint32_t number,
     (void)g7x_history_add(&g7x_parser_history, number, text);
 }
 
+/* A cycle header is still waiting for its first contour row. Only then may a
+   second G71/G72 block complete it (Fanuc two-line form). */
+static bool g7x_parser_header_waiting(void)
+{
+    return (g7x_parser_region_active || g7x_parser_pq_armed) &&
+           g7x_parser_stream.region.count == 0u;
+}
+
 /* Close the active contour region and queue its generated blocks. Used by an
    explicit G80 and by the N(Q) block of a P/Q numbered range. */
 static void g7x_parser_region_complete(gcode_exec_args_t *ptr)
@@ -1791,6 +1811,21 @@ bool g7x_parse(void *args)
         ptr->new_state->groups.motion_mantissa = 0;
         if (g7x_parser_busy() ||
             ptr->cmd->group_extended != 0) {
+            /* Fanuc two-line header: a second G71/G72 block of the same cycle,
+               seen before any contour row, completes the open header. */
+            g7x_cycle_t want = ptr->code == 72 ? G7X_CYCLE_G72 : G7X_CYCLE_G71;
+            if (ptr->code != 76 && !ptr->cmd->group_extended &&
+                g7x_parser_header_waiting() &&
+                g7x_parser_stream.region.cycle == want) {
+                g7x_parser_continuation = true;
+                g7x_parser_pending_x_allow = 0.0f;
+                g7x_parser_pending_x_allow_set = false;
+                g7x_parser_pending_z_allow = 0.0f;
+                g7x_parser_pending_z_allow_set = false;
+                ptr->cmd->group_extended = G7X_EXTENDED_CODE;
+                *(ptr->error) = STATUS_OK;
+                return EVENT_HANDLED;
+            }
             *(ptr->error) = STATUS_GCODE_MODAL_GROUP_VIOLATION;
             return EVENT_HANDLED;
         }
@@ -1813,8 +1848,24 @@ bool g7x_parse(void *args)
 
     if (ptr->cmd->group_extended == G7X_EXTENDED_CODE &&
         (ptr->word == 'U' || ptr->word == 'W')) {
-        g7x_parser_pending_doc = ptr->value;
-        g7x_parser_pending_doc_set = true;
+        if (g7x_parser_continuation) {
+            /* Second Fanuc block: U/W are the X/Z finish allowances. X is a
+               diameter word in G7 mode, so it needs the same halving the G7/G8
+               modifier applies to X words. */
+            float value = ptr->value;
+            if (ptr->word == 'U') {
+                if (g7_g8_is_diameter_mode())
+                    value *= 0.5f;
+                g7x_parser_pending_x_allow = value;
+                g7x_parser_pending_x_allow_set = true;
+            } else {
+                g7x_parser_pending_z_allow = value;
+                g7x_parser_pending_z_allow_set = true;
+            }
+        } else {
+            g7x_parser_pending_doc = ptr->value;
+            g7x_parser_pending_doc_set = true;
+        }
         *(ptr->error) = STATUS_OK;
         return EVENT_HANDLED;
     }
@@ -1892,6 +1943,83 @@ bool g7x_exec_modifier(void *args)
 #endif
 
     if (ptr->cmd->group_extended == G7X_EXTENDED_CODE) {
+        /* Second block of a Fanuc two-line header: merge it into the open
+           cycle instead of starting a second one. */
+        if (g7x_parser_continuation) {
+            g7x_cycle_t cycle = g7x_parser_stream.region.cycle;
+            bool has_p = CHECKFLAG(ptr->cmd->words, GCODE_WORD_P);
+            bool has_q = CHECKFLAG(ptr->cmd->words, GCODE_WORD_Q);
+            bool numbered = false;
+            uint32_t pq_p = 0u;
+            uint32_t pq_q = 0u;
+            float retract = CHECKFLAG(ptr->cmd->words, GCODE_WORD_R) ?
+                            ptr->words->r : g7x_parser_stream.region.retract;
+            float x_allow = g7x_parser_stream.region.x_allow;
+            float z_allow = g7x_parser_stream.region.z_allow;
+            float feed = g7x_parser_stream.feed;
+            float doc = g7x_parser_pending_doc_set ?
+                        g7x_parser_pending_doc : g7x_parser_stream.doc;
+            g7x_result_t result;
+
+            g7x_parser_continuation = false;
+            if (has_p || has_q) {
+                if (!has_p || !has_q ||
+                    !g7x_parser_pq_number(ptr->words->p, &pq_p) ||
+                    !g7x_parser_pq_number(ptr->words->d, &pq_q) ||
+                    pq_q < pq_p) {
+                    g7x_parser_clear_state();
+                    *(ptr->error) = STATUS_INVALID_STATEMENT;
+                    return EVENT_HANDLED;
+                }
+                numbered = true;
+            }
+            if (CHECKFLAG(ptr->cmd->words, GCODE_WORD_X))
+                x_allow = ptr->words->xyzabc[AXIS_X];
+            else if (g7x_parser_pending_x_allow_set)
+                x_allow = g7x_parser_pending_x_allow;
+            if (CHECKFLAG(ptr->cmd->words, GCODE_WORD_Z))
+                z_allow = ptr->words->xyzabc[AXIS_Z];
+            else if (g7x_parser_pending_z_allow_set)
+                z_allow = g7x_parser_pending_z_allow;
+            if (CHECKFLAG(ptr->cmd->words, GCODE_WORD_F))
+                feed = ptr->words->f;
+
+            result = g7x_stream_begin_parsed(&g7x_parser_stream, cycle, retract,
+                                             x_allow, z_allow, feed, doc);
+            if (result != G7X_OK) {
+                g7x_parser_clear_state();
+                *(ptr->error) = STATUS_INVALID_STATEMENT;
+                return EVENT_HANDLED;
+            }
+            if (numbered) {
+                g7x_parser_region_active = false;
+                g7x_parser_pq_armed = true;
+                g7x_parser_pq_collecting = false;
+                g7x_parser_pq_p = pq_p;
+                g7x_parser_pq_q = pq_q;
+                g7x_parser_pq_last = 0u;
+            } else {
+                g7x_parser_region_active = true;
+            }
+            ptr->new_state->feedrate = feed *
+                (ptr->new_state->groups.units == G20 ? INCH_MM_MULT : 1.0f);
+            ptr->new_state->groups.motion = G1;
+            g7x_parser_pending_doc = 0.0f;
+            g7x_parser_pending_doc_set = false;
+            g7x_parser_pending_x_allow = 0.0f;
+            g7x_parser_pending_x_allow_set = false;
+            g7x_parser_pending_z_allow = 0.0f;
+            g7x_parser_pending_z_allow_set = false;
+            g7x_parser_pending_corner_kind = G7X_CORNER_NONE;
+            g7x_parser_pending_corner_amount = 0.0f;
+            ptr->cmd->group_extended = 0;
+            ptr->cmd->groups = 0;
+            ptr->cmd->words = 0;
+            memset(ptr->words, 0, sizeof(*ptr->words));
+            proto_print("[MSG:G7X parser collect active]\r\n");
+            *(ptr->error) = STATUS_OK;
+            return EVENT_HANDLED;
+        }
         /* Fanuc/Haas numbered range: P and Q select the profile blocks that
            follow this header instead of an explicit G80 terminator. */
         bool has_p = CHECKFLAG(ptr->cmd->words, GCODE_WORD_P);
@@ -1938,6 +2066,7 @@ bool g7x_exec_modifier(void *args)
         }
 
         if (numbered) {
+            g7x_parser_region_active = false;
             g7x_parser_pq_armed = true;
             g7x_parser_pq_collecting = false;
             g7x_parser_pq_p = pq_p;

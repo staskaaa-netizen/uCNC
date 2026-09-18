@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 
+#include "nc_menu.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -30,6 +32,9 @@ typedef enum
 } nc_visual_key_t;
 
 void nc_visual_init(void);
+/* Jump straight to a mode (desktop shells and future mode keys). Cycles the
+   document exactly like the MODE key does. */
+void nc_visual_select_mode(nc_mode_t mode);
 void nc_visual_handle_key(nc_visual_key_t key);
 bool nc_visual_dirty(void);
 bool nc_visual_periodic_needed(void);

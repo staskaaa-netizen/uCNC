@@ -3050,8 +3050,16 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
 
 static void nc_visual_cycle_mode(void)
 {
+    nc_visual_select_mode((nc_mode_t)((g_nc_visual_mode + 1) % NC_MODE_COUNT));
+}
+
+void nc_visual_select_mode(nc_mode_t mode)
+{
+    if (mode < 0 || mode >= NC_MODE_COUNT || mode == g_nc_visual_mode) {
+        return;
+    }
     nc_visual_save_current_if_file();
-    nc_visual_set_mode((nc_mode_t)((g_nc_visual_mode + 1) % NC_MODE_COUNT));
+    nc_visual_set_mode(mode);
     g_nc_visual_selected_action = NC_FOOTER_ACTION_NONE;
     if (nc_visual_uses_file()) {
         nc_files_set_active(false);
@@ -3074,6 +3082,7 @@ static void nc_visual_cycle_mode(void)
     } else {
         snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Mode: %s", nc_menu_mode_name(g_nc_visual_mode));
     }
+    g_nc_visual_dirty = true;
 }
 
 static void nc_visual_draw_text_clip(int x,

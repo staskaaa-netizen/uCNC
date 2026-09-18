@@ -98,6 +98,11 @@ NC supplies document access and UI, not a second cycle generator.
   with a Grbl 1.1 protocol client, Win32 COM transport and host tests. The
   Win32 GUI shell (editor + preview) is the remaining step; see
   `docs/desktop-sender.md`.
+- [x] Windows panel shell (`tools/nc_ui_win`): the real NC screen renders on the
+  host through a GDI LVDS backend, with the machine key row (F1-F6 modes,
+  F7-F12 soft keys, 3x3 pad) beside the emulated 800x600 panel. `nc_visual` grew
+  `nc_visual_select_mode()` for direct mode keys. RUN still drives the virtual
+  parser; a Grbl transport for real hardware is the next step.
 - [x] Supply a document-source adapter for G7x numbered-block lookup
   (`nc_emit_numbered_source`) and preview both one-line and Fanuc two-line
   `G71/G72 ... P Q` ranges from the document, with missing/ambiguous range

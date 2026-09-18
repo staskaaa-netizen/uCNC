@@ -51,11 +51,17 @@ Done: host build, expansion for both targets, Grbl 1.1 protocol (greeting,
 Win32 COM transport, scripted fake-controller tests and CLI smoke checks
 (`python tools/test_nc_sender.py`).
 
+On the UI side, `tools/nc_ui_win` runs the real panel layout on Windows: the NC
+screen code draws through the host LVDS backend, so the 800x600 layout, palette
+and fonts are the firmware's, and the machine keys (F1-F6 mode row, F7-F12 soft
+keys, 3x3 numeric pad) sit next to the emulated panel. `python
+tools/test_nc_ui.py` renders a frame headlessly for layout checks.
+
 Next:
 
-1. Win32 GUI shell, following `tools/leancam_win`: program list, editor, preview
-   drawing from the NC emitter, connect/run controls and a live position marker
-   driven by the same `grbl_stream` status reports.
+1. Wire the panel shell's RUN path to a real controller: NC RUN currently drives
+   the virtual parser, so it needs a Grbl transport built on
+   `tools/nc_sender/grbl_stream.c` (open port, expand, stream, status, hold).
 2. `G76` expansion through the shared G7x threading generator, allowed only for
    threading-capable targets.
 3. Character-count streaming to keep the controller buffer full instead of one

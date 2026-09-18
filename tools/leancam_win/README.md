@@ -12,6 +12,13 @@ mingw32-make
 .\build\LeanCamWin.exe
 ```
 
+The build compiles the module sources the generator needs
+(`leancam_gcode.c`, `leancam_code.c`, the G7x text helpers) plus `host_stub.c`,
+which mirrors the tool-catalog stub used by the module's own host test, and
+links statically so no MinGW runtime DLL is required. The `leancam_gcode.c` /
+`.h` copies sitting in this folder are from the pre-split generator era and are
+no longer used by the build - do not edit them.
+
 ## What It Does
 
 * view `.lcam` commands in the same two-row LeanCam style as the RA8876 UI: field labels on top, field values below

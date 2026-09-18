@@ -137,6 +137,14 @@ On the desktop, three things reuse that ownership instead of copying it:
    dependency; check with `objdump -p <exe> | findstr "DLL Name"`.
 9. Keep build entry points alive: `tools/test_*.py` both build and run, so a
    broken tool shows up as a failing script rather than a stale binary.
+10. Treat shared devices like modules: one owner at a time (SD card, display
+    scanout), and write the bring-up combination down with a baseline to roll
+    back to. `docs/sd-card-history.md` is the template.
+11. Keep stress and health harnesses as history once they have done their job,
+    and record what they measured - the 7.3 ms PSRAM present number prevents
+    someone re-trying it next year.
+12. Use the size trigger: at ~10k lines in a "simple" module, or ~2k in one
+    file, extract the domain and rebuild the consumers instead of patching.
 
 ## Don't
 
@@ -159,6 +167,14 @@ On the desktop, three things reuse that ownership instead of copying it:
 7. Don't require PATH surgery or a sibling DLL to start a build output.
 8. Don't mark work finished from software tests alone. `TESTING.md` exists
    because spindle phase, feed hold and the panel layout need the machine.
+9. Don't mask a realtime fault (stack overflow, memory overlap, descriptor
+   ownership) with fallback behaviour; the torture findings show those are
+   architecture faults.
+10. Don't re-enable a disabled bring-up workaround (long filenames, DMA,
+    direct scanout) as a feature without the bench checklist.
+11. Don't split a module and leave its consumers behind. LeanCamWin is that
+    mistake: the module moved on, the tool froze, and its copied generator kept
+    looking authoritative.
 
 ## What carried over
 
@@ -167,6 +183,96 @@ module's C generator as the single source of truth, `ok`-based streaming with
 `?` status polling and a live marker, and the observation that the same program
 needs a Grbl path and a uCNC path. What changed is that those instincts became
 modules, profiles and tests instead of staying inside one application.
+
+## Quirks and war stories
+
+Three of them shaped the current rules more than any design document.
+
+### 1. Two modules fighting over the SD card
+
+`docs/sd-card-history.md` is the full record. The shape of the problem: the
+upstream SD driver and the local board bring-up both wanted to own mount
+timing, and the machine has no card-detect pin to arbitrate.
+
+What the bring-up actually depends on today (all of it learned by trial):
+
+- software SPI on CLK GPIO30 / MOSI GPIO31 / MISO GPIO40 / CS GPIO43, because
+  this pin assignment is not a valid RP2350 hardware-SPI group;
+- DMA disabled, card detect undefined (255), one mount attempt with a 500 ms
+  boot delay and up to three retries;
+- the NC module drives the mounted `/D` filesystem and `SD_CARD_NO_SYSTEM_MENU`
+  keeps a second menu from mounting the same card;
+- short filenames (`FF_USE_LFN=0`) are an upstream decision made *because long
+  names did not work*. Do not re-enable them as a UI improvement; enforce and
+  explain the limit in the NC file UI instead.
+- unmount/remount only while no file operation is active, and no claim of
+  removal detection without a detect pin.
+
+One incident is recorded precisely because it is easy to mis-attribute: a
+settings-invalid lock after a firmware update was a settings validation failure.
+A working SD mount neither explains nor repairs it, and the audit says so
+explicitly.
+
+Rules that came out of it: one owner per device (card, and by extension the
+display path); pin the working combination (checkpoint plus a saved baseline
+UF2) before touching bring-up; every mount change ships with the bench checklist
+in the same document.
+
+### 2. The direct-output torture harness
+
+`LVDS_HSTX_TORTURE_TEST` was a temporary compile-time stress harness for the
+LVDS target: repeated program runs, snapshot churn, framebuffer presents,
+line-repeat fault injection, stack and canary diagnostics, with compact serial
+summaries. It is gone from release code and its findings live in
+`uCNC/src/modules/lvds_renderer/README.md` and
+`uCNC/src/modules/leanCam/docs/architecture.md`.
+
+What it bought:
+
+- the "display froze while the machine kept moving" class was a stalled
+  HSTX DMA/control path, not a core crash. The descriptor-ring backend replaced
+  the old ping/pong handoff, and the recovery code left with it;
+- measured rejections: PSRAM scanout was slow and lost sync; DMA present from
+  PSRAM into the SRAM scanout framebuffer took about 7.3 ms for 240,000 bytes
+  and still produced garbage, even with HSTX DMA priority and paced present DMA;
+- chunked present was a pacing experiment for older layouts and is gone.
+
+Rules that came out of it: keep `lvds_hstx_present()` on the CPU copy path;
+keep realtime memory visible and boring; a stack overflow, memory overlap or
+descriptor ownership bug is an architecture fault, not something to hide behind
+a fallback; draw guards belong in the low-level API; torture and health knobs
+stay in history, not in release configuration.
+
+### 3. The ~10k-line restart rule
+
+Measured today: the LeanCam module is **10,879 lines** across 21 C files, with
+two of them carrying most of it (`leancam_bridge.c` 99 KB / 2809 lines,
+`leancam_gcode.c` 116 KB / 2783 lines) and mixing UI state, file IO and
+generation. The NC module is **6,638 lines** across 16 files, and the geometry
+that used to live inside the LeanCam generator now sits in three G7x files.
+
+That extraction is what made everything else possible: host tests, the desktop
+sender, the panel shell, and a preview that cannot disagree with the machine.
+LeanCamWin is the counter-example: built while the module was small, never
+rebuilt after the module crossed the line, and it rotted in place.
+
+The rule: when a "simple" module passes roughly 10k lines (or one file passes
+~2k), stop patching it. Extract the domain into its own module, write down the
+ownership boundary and give it a standalone test target, then rebuild the
+consumers on top. Budget the consumer rewrite as part of the split - the split
+without it is exactly how a tool becomes a stale snapshot.
+
+### 4. Repairs applied while writing this note
+
+- `tools/leancam_win` builds again: its Makefile now compiles the module sources
+  the generator needs (generator, `leancam_code.c`, the G7x text helpers) plus a
+  host stub for the tool-catalog lookup, which is the same contract the module's
+  own host test uses, and links statically so no `libwinpthread-1.dll` is
+  required. The old prebuilt exe failed with `STATUS_DLL_NOT_FOUND`; the rebuilt
+  one links and starts, but should be launched on a normal desktop session to
+  confirm the window (a headless run exits immediately).
+- the tracked duplicate `tools/leancam_win/leancam_gcode.c` is still in the tree
+  and still unused; it should be deleted so nobody edits the wrong copy.
 
 ## Verification
 
@@ -182,8 +288,9 @@ pio run -e RP2350-LEANCAM-LVDS      # the panel change still builds for the mach
 - LeanCam still owns its own G71/G72/G76 stepping; the G7x module is not yet
   wired into the conversational layer, so the "one owner" rule is only half
   applied on that side.
-- `tools/leancam_win` needs a Makefile rebuild (module sources + static link) or
-  it should be retired in favour of the NC tools.
+- `tools/leancam_win` builds again (module sources + host stub + static link),
+  but the app should be started from a normal desktop session to confirm the
+  window, and the tracked duplicate `leancam_gcode.c` copy should be deleted.
 - NC RUN on the desktop drives the virtual machine; a Grbl transport for real
   hardware is the next integration step.
 - The 3x3 mapping question (side pad vs the on-screen bottom row) is a layout

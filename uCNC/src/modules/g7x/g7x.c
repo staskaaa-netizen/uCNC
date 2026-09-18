@@ -305,6 +305,51 @@ static bool g7x_corner_tangents(g7x_v2_t p0,
     return true;
 }
 
+/* Editor-facing corner fit check. The generator clamps a corner amount to the
+   same limit, so a UI can explain a programmed radius instead of silently
+   showing a different one. */
+bool g7x_corner_fit(float prev_x, float prev_z,
+                    float corner_x, float corner_z,
+                    float next_x, float next_z,
+                    float requested,
+                    float *max_amount,
+                    float *limit_length)
+{
+    g7x_v2_t p0 = { prev_x, prev_z };
+    g7x_v2_t p1 = { corner_x, corner_z };
+    g7x_v2_t p2 = { next_x, next_z };
+    g7x_v2_t a;
+    g7x_v2_t b;
+    float dot;
+    float angle;
+    float len_a;
+    float len_b;
+    float limit;
+    float max_r;
+
+    if (max_amount)
+        *max_amount = 0.0f;
+    if (limit_length)
+        *limit_length = 0.0f;
+    if (requested <= 0.0001f ||
+        !g7x_v2_norm(g7x_v2_sub(p0, p1), &a) ||
+        !g7x_v2_norm(g7x_v2_sub(p2, p1), &b))
+        return false;
+    dot = g7x_v2_dot(a, b);
+    if (dot < -0.999f || dot > 0.999f)
+        return false;
+    angle = acosf(dot);
+    len_a = g7x_v2_len(g7x_v2_sub(p0, p1));
+    len_b = g7x_v2_len(g7x_v2_sub(p2, p1));
+    limit = (len_a < len_b) ? len_a : len_b;
+    max_r = limit * 0.45f * tanf(angle * 0.5f);
+    if (max_amount)
+        *max_amount = max_r;
+    if (limit_length)
+        *limit_length = limit;
+    return requested <= max_r + 0.0001f;
+}
+
 static bool g7x_expand_corner(g7x_contour_element_t *prev,
                               g7x_contour_element_t *corner,
                               g7x_contour_element_t *next,

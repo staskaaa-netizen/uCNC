@@ -203,6 +203,18 @@ enum {
 };
 
 void g7x_modal_default(g7x_modal_t *modal);
+/* Corner fit check for editors: with the three contour points around a corner
+   and the requested R/C amount, report the largest amount the adjacent
+   segments allow and which of the two segments limits it (stream units).
+   Returns false when the geometry is degenerate (zero length, straight or
+   doubled-back segments). The generator clamps to the same limit; this exists
+   so a UI can say *why* a programmed radius was not honoured. */
+bool g7x_corner_fit(float prev_x, float prev_z,
+                    float corner_x, float corner_z,
+                    float next_x, float next_z,
+                    float requested,
+                    float *max_amount,
+                    float *limit_length);
 void g7x_modal_from_ucnc_modes(g7x_modal_t *modal, const uint8_t *modalgroups);
 bool g7x_cycle_profile(g7x_cycle_t cycle, g7x_cycle_profile_t *profile);
 

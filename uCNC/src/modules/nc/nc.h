@@ -61,6 +61,21 @@ typedef struct {
 
 const char *nc_result_text(nc_result_t result);
 
+/* One transient operator message, set by the editor/validation paths and shown
+   by the screen. INFO describes the field being edited, WARNING explains a
+   rejected edit, ERROR is for something the controller refused. */
+typedef enum {
+    NC_MSG_NONE = 0,
+    NC_MSG_INFO,
+    NC_MSG_WARNING,
+    NC_MSG_ERROR
+} nc_message_kind_t;
+
+void nc_message_clear(void);
+void nc_message_set(nc_message_kind_t kind, const char *fmt, ...);
+nc_message_kind_t nc_message_kind(void);
+const char *nc_message_text(void);
+
 void nc_document_init(nc_document_t *doc);
 bool nc_path_supported(const char *path);
 bool nc_line_has_old_pipe_syntax(const char *line);

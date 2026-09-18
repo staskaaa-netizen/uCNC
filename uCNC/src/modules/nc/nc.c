@@ -4,6 +4,7 @@
 #endif
 
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -509,6 +510,66 @@ nc_result_t nc_get_selected_word(const nc_document_t *doc, nc_word_t *word)
 
 static bool nc_word_value_is_valid(char letter, const char *value_text);
 
+/* Why a value was refused, in operator words. The letter decides which rule
+   applied; the detailed per-case reason (minus versus point versus unsupported
+   code) comes with the field-prompt UI. */
+static const char *nc_word_value_hint(char letter)
+{
+    switch (letter) {
+    case 'G':
+        return "G codes are positive whole numbers from the supported set";
+    case 'M':
+    case 'T':
+    case 'N':
+    case 'L':
+        return "positive whole numbers only";
+    case 'F':
+    case 'S':
+        return "a feed or speed must be positive";
+    case 'P':
+    case 'Q':
+    case 'D':
+    case 'H':
+        return "a negative value is not meaningful here";
+    default:
+        return "check the value";
+    }
+}
+
+static nc_message_kind_t g_nc_message_kind;
+static char g_nc_message_text[96];
+
+void nc_message_clear(void)
+{
+    g_nc_message_kind = NC_MSG_NONE;
+    g_nc_message_text[0] = '\0';
+}
+
+void nc_message_set(nc_message_kind_t kind, const char *fmt, ...)
+{
+    va_list args;
+
+    if (kind == NC_MSG_NONE || !fmt) {
+        nc_message_clear();
+        return;
+    }
+    va_start(args, fmt);
+    vsnprintf(g_nc_message_text, sizeof(g_nc_message_text), fmt, args);
+    va_end(args);
+    g_nc_message_text[sizeof(g_nc_message_text) - 1] = '\0';
+    g_nc_message_kind = kind;
+}
+
+nc_message_kind_t nc_message_kind(void)
+{
+    return g_nc_message_kind;
+}
+
+const char *nc_message_text(void)
+{
+    return g_nc_message_text;
+}
+
 nc_result_t nc_set_selected_word_text(nc_document_t *doc, const char *value_text)
 {
     nc_word_t word;
@@ -525,6 +586,9 @@ nc_result_t nc_set_selected_word_text(nc_document_t *doc, const char *value_text
         return NC_ERR_NO_WORD;
     }
     if (!nc_word_value_is_valid(word.letter, value_text)) {
+        nc_message_set(NC_MSG_WARNING, "%c%s is not valid here: %s",
+                       word.letter, value_text,
+                       nc_word_value_hint(word.letter));
         return NC_ERR_BAD_VALUE;
     }
 

@@ -476,6 +476,70 @@ nc_result_t nc_select_next_word(nc_document_t *doc)
     return NC_OK;
 }
 
+/* Same-letter field walk. The current line is searched first (so two X words on
+   one row are both reachable), then the neighbouring lines heading in the same
+   direction. It only moves the selection: no value is ever written. */
+static nc_result_t nc_select_same_word(nc_document_t *doc, bool forward)
+{
+    nc_word_t words[24];
+    nc_word_t current;
+    char letter;
+    size_t line;
+    int count;
+    int i;
+
+    if (!doc || doc->line_count == 0) {
+        return NC_ERR_BAD_ARG;
+    }
+    if (nc_get_selected_word(doc, &current) != NC_OK) {
+        return NC_ERR_NO_WORD;
+    }
+    letter = current.letter;
+    line = doc->cursor_line;
+    count = nc_parse_words(doc->lines[line].text, words, 24);
+    for (i = doc->selected_word + (forward ? 1 : -1);
+         i >= 0 && i < count;
+         i += forward ? 1 : -1) {
+        if (words[i].letter == letter) {
+            doc->selected_word = i;
+            return NC_OK;
+        }
+    }
+
+    while (forward ? (line + 1u < doc->line_count) : (line > 0u)) {
+        line = forward ? line + 1u : line - 1u;
+        count = nc_parse_words(doc->lines[line].text, words, 24);
+        if (forward) {
+            for (i = 0; i < count; i++) {
+                if (words[i].letter == letter) {
+                    doc->cursor_line = line;
+                    doc->selected_word = i;
+                    return NC_OK;
+                }
+            }
+        } else {
+            for (i = count - 1; i >= 0; i--) {
+                if (words[i].letter == letter) {
+                    doc->cursor_line = line;
+                    doc->selected_word = i;
+                    return NC_OK;
+                }
+            }
+        }
+    }
+    return NC_ERR_NO_WORD;
+}
+
+nc_result_t nc_select_same_word_next(nc_document_t *doc)
+{
+    return nc_select_same_word(doc, true);
+}
+
+nc_result_t nc_select_same_word_prev(nc_document_t *doc)
+{
+    return nc_select_same_word(doc, false);
+}
+
 nc_result_t nc_select_prev_word(nc_document_t *doc)
 {
     nc_word_t words[24];

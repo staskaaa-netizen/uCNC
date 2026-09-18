@@ -93,6 +93,11 @@ int nc_parse_words(const char *line, nc_word_t *words, int max_words);
 bool nc_word_value(const char *line, const nc_word_t *word, float *value);
 nc_result_t nc_select_next_word(nc_document_t *doc);
 nc_result_t nc_select_prev_word(nc_document_t *doc);
+/* Field-typed navigation (Heidenhain style): move to the next/previous word
+   that has the same letter as the selected one, searching the current line
+   first and then the neighbouring lines. Nothing is written to the program. */
+nc_result_t nc_select_same_word_next(nc_document_t *doc);
+nc_result_t nc_select_same_word_prev(nc_document_t *doc);
 nc_result_t nc_get_selected_word(const nc_document_t *doc, nc_word_t *word);
 nc_result_t nc_set_selected_word_text(nc_document_t *doc, const char *value_text);
 nc_result_t nc_change_selected_word_value(nc_document_t *doc, float value);

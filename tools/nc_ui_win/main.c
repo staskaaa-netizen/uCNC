@@ -139,9 +139,9 @@ static nc_visual_key_t host_key_for_vk(WPARAM vk, bool *handled)
     case VK_BACK:   return NC_VISUAL_KEY_BACKSPACE;
     case VK_DELETE: return NC_VISUAL_KEY_FINISH;
     case VK_UP:
-    case VK_PRIOR:  return NC_VISUAL_KEY_PREV;
+    case VK_PRIOR:  return NC_VISUAL_KEY_FIELD_PREV;
     case VK_DOWN:
-    case VK_NEXT:   return NC_VISUAL_KEY_NEXT;
+    case VK_NEXT:   return NC_VISUAL_KEY_FIELD_NEXT;
     /* Line and argument movement, as on a normal editor. */
     case VK_LEFT:   return NC_VISUAL_KEY_WORD_PREV;
     case VK_RIGHT:  return NC_VISUAL_KEY_WORD_NEXT;

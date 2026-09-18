@@ -33,7 +33,11 @@ typedef enum
        PREV/NEXT stay on lines, so a keyboard can map Up/Down to lines and
        Left/Right to arguments. */
     NC_VISUAL_KEY_WORD_PREV,
-    NC_VISUAL_KEY_WORD_NEXT
+    NC_VISUAL_KEY_WORD_NEXT,
+    /* Field-typed navigation: jump to the next/previous word with the same
+       letter, like a control that steps between equal fields. Never edits. */
+    NC_VISUAL_KEY_FIELD_PREV,
+    NC_VISUAL_KEY_FIELD_NEXT
 } nc_visual_key_t;
 
 void nc_visual_init(void);

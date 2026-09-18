@@ -3617,9 +3617,13 @@ void nc_visual_handle_key(nc_visual_key_t key)
         nc_result_t result;
         char letter = '?';
 
-        /* Only code views walk fields. In the file list, a menu or the tool
-           table these keys keep their existing step behaviour. */
-        if (nc_files_active() || !nc_visual_is_code_view()) {
+        /* Field walking belongs to editable code views only. In the file list,
+           a menu, or a view that only runs and simulates (RUN, SIM) these keys
+           keep their original path through the footer actions, which also
+           reports the newly selected line - moving the cursor directly here
+           would move the highlight without registering the selection. */
+        if (nc_files_active() || !nc_visual_is_code_view() ||
+            !nc_visual_can_edit_code()) {
             nc_visual_handle_key(forward ? NC_VISUAL_KEY_NEXT : NC_VISUAL_KEY_PREV);
             return;
         }

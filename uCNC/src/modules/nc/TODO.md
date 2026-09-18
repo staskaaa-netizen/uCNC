@@ -93,6 +93,11 @@ NC supplies document access and UI, not a second cycle generator.
 
 ## Remaining NC integration
 
+- [x] Desktop sender (`tools/nc_sender`): the NC document, emitter and G7x
+  generators compile host-side and stream expanded programs to Grbl or uCNC,
+  with a Grbl 1.1 protocol client, Win32 COM transport and host tests. The
+  Win32 GUI shell (editor + preview) is the remaining step; see
+  `docs/desktop-sender.md`.
 - [x] Supply a document-source adapter for G7x numbered-block lookup
   (`nc_emit_numbered_source`) and preview both one-line and Fanuc two-line
   `G71/G72 ... P Q` ranges from the document, with missing/ambiguous range

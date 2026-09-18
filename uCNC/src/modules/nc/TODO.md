@@ -93,6 +93,11 @@ NC supplies document access and UI, not a second cycle generator.
 
 ## Remaining NC integration
 
+- [ ] UI review before the next big step (`docs/nc-ui-review.md`): RUN/HOLD
+  feedback (HOLD is a toggle drawn as an action, no armed-line indicator, `#`
+  RUN and `1` SINGLE dispatch the same action), footer highlight semantics,
+  preview switches not persisted, message kinds not rendered differently. Two
+  P1 items: HOLD state feedback and apply-the-draft-on-accept in the editor.
 - [ ] **Global editor note - steal the editor flow from Heidenhain TNC 415.**
   Field-by-field entry instead of prefilled lines: start a function, the control
   prompts the first required field (letter + description, no need to type the

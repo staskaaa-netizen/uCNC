@@ -40,6 +40,22 @@ never type a field letter - only numbers.
 
 ## Word rules (validation, per letter)
 
+### Applied when, not as you type
+
+Today the draft is written into the program on every key stroke
+(`nc_text_edit_apply` from the digit, backspace and sign paths), so a partial
+value becomes the value. Two symptoms follow, and the rule for the TNC flow is
+the opposite of both:
+
+- deleting the last character used to leave `0` in the field (the empty draft
+  was mapped to "0"). Empty now writes nothing, so the field keeps its value;
+- leaving the field (Up/Down, mode change, another footer action) must keep the
+  old value, not the partly typed one. That needs the draft to be applied only
+  on accept: `nc_text_edit_handle_key` should stop applying per keystroke and
+  apply once when Enter/End commits the field. The draft is already rendered in
+  the value cell while active, so the operator does not need the program text to
+  change under the cursor.
+
 Validation belongs where every caller passes through - the selected-word edit
 path - and it must be letter aware:
 

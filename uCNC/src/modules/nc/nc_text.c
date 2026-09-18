@@ -160,9 +160,13 @@ static void nc_text_edit_apply(nc_document_t *doc, nc_text_edit_t *edit)
         return;
     }
 
+    /* An empty draft never writes. It used to push "0", which meant deleting
+       the last character of a value turned it into zero; the field must keep
+       whatever value it had instead. */
     if (edit->buf[0] == '\0') {
-        strncpy(apply, "0", sizeof(apply) - 1);
-    } else if (strcmp(edit->buf, "-") == 0) {
+        return;
+    }
+    if (strcmp(edit->buf, "-") == 0) {
         strncpy(apply, "-0", sizeof(apply) - 1);
     } else if (strcmp(edit->buf, ".") == 0) {
         strncpy(apply, "0.", sizeof(apply) - 1);

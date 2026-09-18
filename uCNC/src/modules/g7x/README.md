@@ -59,6 +59,13 @@ Not implemented yet: two-line Fanuc/Haas headers, `G70 P/Q` replay from the
 retained range, treating the first `P` block as approach-only, and `S`/`T`
 words on profile rows (they currently reject the row).
 
+Word meanings stay in the project's dialect: `U` (G71) or `W` (G72) is still
+the depth of cut and `X`/`Z` are the finish allowances, even when `P`/`Q` are
+present. Haas puts the finish allowances in `U`/`W` and the depth in `D`, and
+Fanuc's two-line form splits depth and allowances across two blocks. Those
+conventions are not interchangeable and are not guessed at here; adopting them
+is the open header/word-meaning task.
+
 ### Native G76 contract
 
 With `G7X_ENABLE_G76` enabled (default) and `G33_ENCODER` configured, G76 expands

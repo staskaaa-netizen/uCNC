@@ -183,3 +183,18 @@ bool nc_g7x_line_is_contour(const nc_document_t *doc,
         return index <= end;
     return index < end;
 }
+
+bool nc_g7x_line_is_any_contour(const nc_document_t *doc, size_t index)
+{
+    size_t i;
+
+    if (!doc || index >= doc->line_count)
+        return false;
+    for (i = 0; i <= index; i++) {
+        if (!nc_g7x_line_is_header(doc->lines[i].text))
+            continue;
+        if (nc_g7x_line_is_contour(doc, i, index))
+            return true;
+    }
+    return false;
+}

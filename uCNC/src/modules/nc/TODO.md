@@ -523,17 +523,48 @@ NC supplies document access and UI, not a second cycle generator.
   lists that name NC sources by hand were updated: `tools/nc_ui_win/Makefile`
   and `tools/test_nc_ui.py`.
 
-  **Next cuts, in this order** - the tool takes its input as data, so each one
-  is the same move with a different list:
-  1. the preview renderer joins its data half in `nc_preview.c`:
-     `nc_visual_draw_thin_preview()`, `nc_visual_draw_emitted_preview()`, the
-     live stock, the dimension layer and the view flags it toggles;
-  2. `nc_pad.c`: the one 3x3 grid the MANUAL jog pad, the EDIT helper and the
-     planned `3x3_path_builder.c` share;
-  3. `nc_manual.c`: the MANUAL screen's own ~310 lines;
-  4. only then the rename the file now owns: the moved functions are still
-     `nc_visual_draw_*()` in `nc_draw.c`, and that is a separate commit because
-     a rename hides a behaviour change in a diff.
+  **Third move done: the preview renderer joined its data half.** `nc_preview.c`
+  is now what the name says - `nc_preview_collect()` and the drawing of the
+  stock, the contour, the dimension layer, the emitted path, the live tool
+  marker and the live stock mask (17 functions, 853 lines) - and `nc_visual.c`
+  is 3,478 lines (from 5,708 before the drawing move) with the screens, the
+  editor, the key handling and the footer dispatch left in it.
+
+  This one is not a move and does not pretend to be: the preview used to read
+  the screen's own globals, and the boundary the header now writes down is a
+  request instead - `nc_preview_ctx_t` (the document to draw, the screen's own
+  document, the runtime snapshot, the mode, the full-body flag, the run's line,
+  the tool path, the status buffer it may write an error into, and the three
+  run flags the code asked separately before) plus `nc_preview_layer()` for the
+  four switches (`STOCK`, `PATH`, `ROUGH`, `DIM`) the footer toggles: the screen
+  reports the key it read, the preview keeps the state and the screen reads the
+  value back to light its key. The live stock mask, the tool marker rectangle
+  and the one-frame cache stayed with the drawing they belong to. The screen
+  builds the request once per frame in `nc_visual_preview()`, so no call path
+  reaches from the preview back into the screen.
+
+  Two things fell out of the cut rather than being planned: the same
+  "is this line contour geometry of a G7x block" scan was wanted by the editor
+  and the preview, so it is now `nc_g7x_line_is_any_contour()` next to the block
+  scan that owns it; and `NC_VISUAL_HAVE_PSRAM` became the preview's.
+
+  Same guard as the drawing move: `tools/test_nc_ui.py` passes, the five bench
+  dumps and all twelve `tools/nc_ui_show.py` frames are byte-identical to the
+  ones taken before the cut, and both firmware targets build. Still to verify on
+  the machine, as before: the RUN live-stock path, which needs PSRAM.
+
+  **Next cuts, in this order:**
+  1. `nc_pad.c`: the one 3x3 grid the MANUAL jog pad, the EDIT helper and the
+     planned `3x3_path_builder.c` share - the drawing
+     (`nc_visual_draw_modal_items()`) and the item shape are already one, the
+     cut is about where the nine entries and their meaning live;
+  2. `nc_manual.c`: the MANUAL screen's own ~310 lines plus its jog/feed state;
+  3. the editor and the key handling, which is what is left of `nc_visual.c`
+     once 1 and 2 are out - that file is still over the 2k line mark at 3.5k;
+  4. only then the rename: the moved functions are still `nc_visual_draw_*()` in
+     `nc_draw.c` and the preview group still says `nc_visual_*` in
+     `nc_preview.c`. A rename is a separate commit because it hides a behaviour
+     change in a diff.
 
   The drawing half (`nc_draw`: text clipping and wrapping, the tool glyph
   geometry, chuck/stock hatching, the dimension callouts, the floating 3x3 grid

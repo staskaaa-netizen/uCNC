@@ -46,6 +46,11 @@ bool nc_g7x_line_is_contour(const nc_document_t *doc,
                             size_t start_line,
                             size_t index);
 
+/* True when `index` carries contour geometry of any block in the document.
+   The preview marks these lines and the editor highlights them: one scan, so
+   the two cannot disagree about what a contour line is. */
+bool nc_g7x_line_is_any_contour(const nc_document_t *doc, size_t index);
+
 #ifdef __cplusplus
 }
 #endif

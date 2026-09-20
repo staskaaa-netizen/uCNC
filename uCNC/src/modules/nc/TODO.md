@@ -607,12 +607,34 @@ NC supplies document access and UI, not a second cycle generator.
   breath (the two keys the editor's entries take were passed in the wrong
   order, which showed up as the helper opening instead of a digit being typed).
 
-  **The editor's other half is next:** the code-line and tool-row movement, the
-  file list and the open/new flows, the word/field key steps and the code pane
-  drawing (including the file list overlay). Then `nc_visual.c` is the screen
-  frame around the screens: tabs, header, notice, footer strip, key map, the
-  TOOLS pane, RUN arming and the frame stats - and the Heidenhain field flow
-  above lands in `nc_editor.c`.
+  **Sixth cut done: the editor's other half - and the editor is out.** The rest
+  of the EDIT screen went the same way: the code-line and tool-row movement, the
+  file list and the open/new flows, the word and field key steps, the selection
+  log, saving before the buffer is reused, and the drawing of the file list and
+  the code pane with its name row. `nc_editor.c` is 1,119 lines; `nc_visual.c`
+  is 1,889 - down from 5,708 at the start of the split and inside the 2k rule.
+
+  What is left in `nc_visual.c` is the screen frame around the screens, which is
+  what the file's name says: the mode and view predicates, the document, the
+  snapshot and the frame stats, the tabs, the header, the notice, the footer
+  strip, the key map (the order a key is offered in), the footer dispatch, the
+  TOOLS pane, RUN arming and stepping, MANUAL's and the editor's contexts.
+
+  The key map is now four steps the screen offers in order - the helper, the
+  name row, the edit keys (new-file field, words, fields, the selected value)
+  and the cursor keys - each of which is the editor's, called from where the
+  screen's own sequence wants it. The one place the editor has to hand something
+  back is `ctx->follow`: a helper menu entry names a footer action and the screen
+  runs it, because what a footer entry does is the screen's.
+
+  **The check that this cut needed.** The frame dumps could not see the new-file
+  field - it is only drawn while the file list is up - and the extraction had
+  left the field handler with a local copy of the key character, so every digit
+  was dropped and a nameless file was created. The bench now has
+  `--newfiletest` (`tools/test_nc_ui.py` runs it): it opens the list, presses
+  `5 NEW`, types `1 2`, commits with `#`, and loads `/D/nc/files/12.nc` back -
+  then repeats it with `A` and proves no file was left behind. With the handler
+  passing the key on, the check passes; with the bug put back, it fails.
   The rename was done before those cuts, as its own commit: the drawn functions
   are `nc_draw_*()` in `nc_draw.c` and `nc_preview_*()` in `nc_preview.c`, and
   `nc_visual_*()` now means what it says - a function of the screen file. It ran

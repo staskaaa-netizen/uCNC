@@ -173,6 +173,16 @@ if __name__ == "__main__":
         print("FAIL the NC program and its tool table do not check out")
         sys.exit(1)
 
+    # The editor's new-file field: a path the frame dumps cannot see, because
+    # the field is only drawn while the file list is up.
+    run = subprocess.run([str(exe), "--files", str(root), "--newfiletest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "newfiletest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL the new-file field does not take the typed name")
+        sys.exit(1)
+
     # And the same file on screen. The remembered state points EDIT at it, which
     # is also how the machine reopens the last program after a reboot.
     (root / "nc_state.txt").write_text(

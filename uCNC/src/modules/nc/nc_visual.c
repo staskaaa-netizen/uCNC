@@ -111,8 +111,6 @@ static uint32_t g_nc_visual_frame_preview_geom_us;
 static uint32_t g_nc_visual_frame_preview_tool_us;
 static size_t g_nc_visual_last_draw_run_line = (size_t)-1;
 static bool g_nc_visual_last_runtime_busy;
-static bool g_nc_visual_new_file_active;
-static char g_nc_visual_new_file_name[NC_FILE_NAME_MAX];
 
 /* The parser is running or held. The preview is told the answer instead of
    asking: the screen owns what the machine is doing. */
@@ -184,11 +182,9 @@ static void nc_visual_manual_screen(nc_manual_screen_t *screen)
     screen->dirty = &g_nc_visual_dirty;
 }
 
-static void nc_visual_serial_selected_line(void);
-static void nc_visual_serial_selected_file(void);
 static void nc_files_preview_sync(void);
-static size_t nc_visual_code_line(void);
 static bool nc_visual_can_edit_code(void);
+static bool nc_visual_is_code_view(void);
 static void nc_visual_dispatch_footer_action(uint8_t action);
 static bool nc_visual_full_preview(void);
 
@@ -197,6 +193,14 @@ static void nc_visual_fps_tick(uint32_t snapshot_us,
                                uint32_t present_us,
                                uint32_t total_us);
 
+static nc_mode_t g_nc_visual_mode = NC_MODE_MANUAL;
+static uint8_t g_nc_visual_selected_action = NC_FOOTER_ACTION_NONE;
+/* The editor's file-name row above line 1 can hold the cursor. */
+/* Screen idle time is tracked so the state store is written when the operator
+   stops moving, never in the middle of a screen change. */
+#define NC_VISUAL_IDLE_FLUSH_MS 400u
+static uint32_t g_nc_visual_last_input_ms;
+
 /* The editor's view of this screen: the document is the screen's, and so are the
    status line and the repaint flag. `s` is the frame being drawn, which only the
    editor's panels need. */
@@ -204,21 +208,14 @@ static void nc_visual_editor_ctx(nc_editor_ctx_t *ctx, const nc_snapshot_t *s)
 {
     ctx->doc = &g_nc_visual_doc;
     ctx->snapshot = s;
+    ctx->mode = g_nc_visual_mode;
     ctx->editable = nc_visual_can_edit_code();
+    ctx->code_view = nc_visual_is_code_view();
     ctx->status = g_nc_visual_status;
     ctx->status_size = sizeof(g_nc_visual_status);
     ctx->dirty = &g_nc_visual_dirty;
     ctx->follow = NC_FOOTER_ACTION_NONE;
 }
-
-static nc_mode_t g_nc_visual_mode = NC_MODE_MANUAL;
-static uint8_t g_nc_visual_selected_action = NC_FOOTER_ACTION_NONE;
-/* The editor's file-name row above line 1 can hold the cursor. */
-static bool g_nc_visual_name_selected;
-/* Screen idle time is tracked so the state store is written when the operator
-   stops moving, never in the middle of a screen change. */
-#define NC_VISUAL_IDLE_FLUSH_MS 400u
-static uint32_t g_nc_visual_last_input_ms;
 
 static const char *nc_visual_tool_path(void)
 {
@@ -263,66 +260,6 @@ static void nc_visual_set_mode(nc_mode_t mode)
     nc_state_save();
 }
 
-/* What the operator was trying to do when an autosave failed, so the same
-   action twice can mean "go on and drop the edits". A failed card write must
-   not wall the machine off: the first press reports, the second insists. */
-enum {
-    NC_VISUAL_UNSAVED_NONE = 0,
-    NC_VISUAL_UNSAVED_MODE,
-    NC_VISUAL_UNSAVED_OPEN,
-    NC_VISUAL_UNSAVED_NEW
-};
-static uint8_t g_nc_visual_unsaved_arm;
-
-/* Called whenever the buffer is about to be reused - a screen change, opening
-   another file, creating one. The edits go to the card first. If that write
-   fails the caller must not go on: the document is still in memory and is the
-   only copy, so it stays open and the operator sees why. */
-static bool nc_visual_save_current_if_file(void)
-{
-    if (g_nc_visual_doc.dirty && nc_path_supported(g_nc_visual_doc.path) &&
-        nc_save_file(&g_nc_visual_doc, g_nc_visual_doc.path) != NC_OK) {
-        return false;
-    }
-    g_nc_visual_unsaved_arm = 0;
-    if (nc_path_supported(g_nc_visual_doc.path)) {
-        nc_state_remember_path(g_nc_visual_mode, g_nc_visual_doc.path);
-        nc_state_remember_cursor(&g_nc_visual_doc);
-        nc_state_save();
-    }
-    return true;
-}
-
-static bool nc_visual_proceed_without_saving(uint8_t kind)
-{
-    if (g_nc_visual_unsaved_arm == kind) {
-        g_nc_visual_unsaved_arm = 0;
-        return true;
-    }
-    g_nc_visual_unsaved_arm = kind;
-    return false;
-}
-
-
-static void nc_visual_seed_demo(void)
-{
-    nc_document_init(&g_nc_visual_doc);
-    nc_insert_line(&g_nc_visual_doc, 0, "G970 X-10 U120 Z-150 W30");
-    nc_insert_line(&g_nc_visual_doc, 1, "G971 X80 Z125 E0");
-    nc_insert_line(&g_nc_visual_doc, 2, "G972 C15");
-    nc_insert_line(&g_nc_visual_doc, 3, "G973 P7");
-    nc_insert_line(&g_nc_visual_doc, 4, "G71 U2 R1 X0.5 Z0.5 F120");
-    nc_insert_line(&g_nc_visual_doc, 5, "\tG1 X50 Z0");
-    nc_insert_line(&g_nc_visual_doc, 6, "\tG1 X25 Z-25");
-    nc_insert_line(&g_nc_visual_doc, 7, "G80");
-    g_nc_visual_doc.cursor_line = 4;
-    nc_select_next_word(&g_nc_visual_doc);
-    nc_select_next_word(&g_nc_visual_doc);
-    strncpy(g_nc_visual_doc.path, "NC module bring-up", sizeof(g_nc_visual_doc.path) - 1);
-    g_nc_visual_doc.dirty = false;
-    g_nc_visual_status[0] = '\0';
-    g_nc_visual_dirty = true;
-}
 
 
 
@@ -342,67 +279,13 @@ static void nc_visual_seed_demo(void)
 
 
 
-static bool nc_visual_selected_tool_word(char *letter, int *line_index)
-{
-    nc_word_t word;
-
-    if (letter) {
-        *letter = '\0';
-    }
-    if (line_index) {
-        *line_index = -1;
-    }
-    if (g_nc_visual_mode != NC_MODE_TOOLS ||
-        nc_get_selected_word(&g_nc_visual_doc, &word) != NC_OK ||
-        g_nc_visual_doc.cursor_line >= g_nc_visual_doc.line_count ||
-        !nc_tool_line_is_tool(g_nc_visual_doc.lines[g_nc_visual_doc.cursor_line].text)) {
-        return false;
-    }
-    if (letter) {
-        *letter = word.letter;
-    }
-    if (line_index) {
-        *line_index = (int)g_nc_visual_doc.cursor_line;
-    }
-    return true;
-}
 
 
 
-static int nc_visual_find_tool_line(int selected_tool, int *selected_line)
-{
-    int count = 0;
-    size_t i;
 
-    if (selected_line) {
-        *selected_line = -1;
-    }
-    for (i = 0; i < g_nc_visual_doc.line_count; i++) {
-        if (nc_tool_line_is_tool(g_nc_visual_doc.lines[i].text)) {
-            if (count == selected_tool && selected_line) {
-                *selected_line = (int)i;
-            }
-            count++;
-        }
-    }
-    return count;
-}
 
-static int nc_visual_selected_tool_index(void)
-{
-    int count = 0;
-    size_t i;
 
-    for (i = 0; i < g_nc_visual_doc.line_count; i++) {
-        if (nc_tool_line_is_tool(g_nc_visual_doc.lines[i].text)) {
-            if (i >= g_nc_visual_doc.cursor_line) {
-                return count;
-            }
-            count++;
-        }
-    }
-    return count > 0 ? count - 1 : 0;
-}
+
 
 static const char *nc_visual_run_state_text(const nc_runtime_state_t *runtime)
 {
@@ -421,21 +304,6 @@ static const char *nc_visual_run_state_text(const nc_runtime_state_t *runtime)
     return "RUN";
 }
 
-static const char *nc_visual_file_basename(const char *path)
-{
-    const char *slash;
-    const char *backslash;
-
-    if (!path || !path[0]) {
-        return "(no file)";
-    }
-    slash = strrchr(path, '/');
-    backslash = strrchr(path, '\\');
-    if (backslash && (!slash || backslash > slash)) {
-        slash = backslash;
-    }
-    return slash ? slash + 1 : path;
-}
 
 /* Footer entries that are switches (not actions). Their highlight must show the
    state, otherwise "last key pressed" and "feature on" look identical and the
@@ -552,82 +420,8 @@ static char nc_visual_key_char(nc_visual_key_t key)
     }
 }
 
-static const char *nc_visual_new_file_ext(void)
-{
-    return g_nc_visual_mode == NC_MODE_TOOLS ? ".t" : ".nc";
-}
 
-static void nc_visual_new_file_status(void)
-{
-    snprintf(g_nc_visual_status,
-             sizeof(g_nc_visual_status),
-             "New:%.40s%s #OK *DEL A",
-             g_nc_visual_new_file_name[0] ? g_nc_visual_new_file_name : "_",
-             nc_visual_new_file_ext());
-}
 
-static bool nc_visual_new_file_handle_key(nc_visual_key_t key)
-{
-    char ch = nc_visual_key_char(key);
-    size_t len;
-    char path[NC_PATH_MAX];
-    nc_result_t r;
-
-    if (!g_nc_visual_new_file_active) {
-        return false;
-    }
-
-    if (key == NC_VISUAL_KEY_CANCEL) {
-        g_nc_visual_new_file_active = false;
-        strncpy(g_nc_visual_status, "New file cancelled", sizeof(g_nc_visual_status) - 1);
-        return true;
-    }
-    if (key == NC_VISUAL_KEY_FINISH || key == NC_VISUAL_KEY_ACCEPT) {
-        /* The new file replaces the open one in the same buffer: save it
-           first, the same way a screen change does. */
-        if (!nc_visual_save_current_if_file() &&
-            !nc_visual_proceed_without_saving(NC_VISUAL_UNSAVED_NEW)) {
-            strncpy(g_nc_visual_status, "Save failed - press again to create", sizeof(g_nc_visual_status) - 1);
-            return true;
-        }
-        if (!g_nc_visual_new_file_name[0] ||
-            !nc_files_create_named(g_nc_visual_new_file_name, nc_visual_new_file_ext(), path, sizeof(path))) {
-            strncpy(g_nc_visual_status, "New file create failed", sizeof(g_nc_visual_status) - 1);
-            return true;
-        }
-        r = nc_load_file(&g_nc_visual_doc, path);
-        if (r != NC_OK) {
-            snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Create open failed: %s", nc_result_text(r));
-            return true;
-        }
-        g_nc_visual_new_file_active = false;
-        nc_files_set_active(false);
-        nc_state_remember_path(g_nc_visual_mode, path);
-        nc_state_save();
-        snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Created %s", nc_visual_file_basename(path));
-        return true;
-    }
-    if (key == NC_VISUAL_KEY_BACKSPACE) {
-        len = strlen(g_nc_visual_new_file_name);
-        if (len > 0u) {
-            g_nc_visual_new_file_name[len - 1u] = '\0';
-        }
-        nc_visual_new_file_status();
-        return true;
-    }
-    if (ch >= '0' && ch <= '9') {
-        len = strlen(g_nc_visual_new_file_name);
-        if (len + 1u < sizeof(g_nc_visual_new_file_name)) {
-            g_nc_visual_new_file_name[len] = ch;
-            g_nc_visual_new_file_name[len + 1u] = '\0';
-        }
-        nc_visual_new_file_status();
-        return true;
-    }
-
-    nc_visual_new_file_status();
-    return true;
-}
 
 static uint8_t nc_visual_footer_action_for_key(nc_visual_key_t key)
 {
@@ -766,149 +560,12 @@ static bool nc_visual_can_edit_code(void)
            g_nc_visual_mode == NC_MODE_TOOLS;
 }
 
-static void nc_visual_move_tool_line(int delta)
-{
-    int selected_tool = nc_visual_selected_tool_index();
-    int tool_count = nc_visual_find_tool_line(selected_tool, NULL);
-    int selected_line = -1;
 
-    if (tool_count == 0) {
-        strncpy(g_nc_visual_status, "No tool rows", sizeof(g_nc_visual_status) - 1);
-        return;
-    }
-    if (delta < 0 && selected_tool > 0) {
-        selected_tool--;
-    } else if (delta > 0 && selected_tool + 1 < tool_count) {
-        selected_tool++;
-    }
-    (void)nc_visual_find_tool_line(selected_tool, &selected_line);
-    if (selected_line >= 0) {
-        g_nc_visual_doc.cursor_line = (size_t)selected_line;
-        g_nc_visual_doc.selected_word = -1;
-        nc_editor_clear_draft();
-        snprintf(g_nc_visual_status,
-                 sizeof(g_nc_visual_status),
-                 "Tool %d/%d",
-                 selected_tool + 1,
-                 tool_count);
-        nc_visual_serial_selected_line();
-    }
-}
 
-static void nc_visual_set_code_line(size_t line)
-{
-    if (g_nc_visual_doc.line_count == 0) {
-        g_nc_visual_doc.cursor_line = 0;
-        nc_run_set_line(&g_nc_visual_doc, 0);
-        return;
-    }
-    if (line >= g_nc_visual_doc.line_count) {
-        line = g_nc_visual_doc.line_count - 1;
-    }
-    g_nc_visual_doc.cursor_line = line;
-    if (g_nc_visual_mode == NC_MODE_RUN) {
-        nc_run_set_line(&g_nc_visual_doc, line);
-    }
-    g_nc_visual_doc.selected_word = -1;
-    g_nc_visual_name_selected = false;
-}
 
-static size_t nc_visual_code_line(void)
-{
-    size_t line = g_nc_visual_mode == NC_MODE_RUN ? nc_run_line() : g_nc_visual_doc.cursor_line;
 
-    return g_nc_visual_doc.line_count && line >= g_nc_visual_doc.line_count ? 0 : line;
-}
 
-static void nc_visual_move_code_line(int delta)
-{
-    size_t line = nc_visual_code_line();
 
-    if (!nc_visual_is_code_view() ||
-        g_nc_visual_doc.line_count == 0) {
-        strncpy(g_nc_visual_status, "No code lines", sizeof(g_nc_visual_status) - 1);
-        return;
-    }
-    /* Above line 1 sits the row naming the file this code belongs to. */
-    if (delta < 0 && (g_nc_visual_name_selected || line == 0)) {
-        g_nc_visual_name_selected = true;
-        /* Drop the value selection: the movement keys must stay movement keys
-           while the name row is the cursor. */
-        g_nc_visual_doc.selected_word = -1;
-        nc_editor_clear_draft();
-        g_nc_visual_status[0] = '\0';
-        return;
-    }
-    if (delta > 0 && g_nc_visual_name_selected) {
-        g_nc_visual_name_selected = false;
-        g_nc_visual_status[0] = '\0';
-        return;
-    }
-    if (delta < 0 && line > 0) {
-        line--;
-    } else if (delta > 0 && line + 1 < g_nc_visual_doc.line_count) {
-        line++;
-    }
-
-    nc_visual_set_code_line(line);
-    /* No position report: the editor numbers the lines and highlights this
-       one. The message line stays for messages. */
-    g_nc_visual_status[0] = '\0';
-}
-
-static nc_result_t nc_visual_insert_tool_ref(void)
-{
-    int tool_no = 1;
-    char line[16];
-
-    (void)nc_tool_number_for_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line + 1u, &tool_no);
-    if (tool_no <= 0) {
-        tool_no = 1;
-    }
-    snprintf(line, sizeof(line), "T%d", tool_no);
-    return nc_insert_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line + 1u, line);
-}
-
-static void nc_visual_open_file_view(const char *root, bool seed_samples)
-{
-    int made = seed_samples ? nc_files_seed_samples() : 0;
-
-    nc_files_set_active(true);
-    g_nc_visual_new_file_active = false;
-    if (nc_files_refresh(root)) {
-        /* The pane header already shows the directory. */
-        strncpy(g_nc_visual_status,
-                made ? "Sample files created" : "",
-                sizeof(g_nc_visual_status) - 1);
-        /* Land on the file that is open, if it is in this folder. */
-        (void)nc_files_select_path(g_nc_visual_doc.path);
-        nc_files_preview_sync();
-    } else {
-        strncpy(g_nc_visual_status, "File list unavailable", sizeof(g_nc_visual_status) - 1);
-    }
-}
-
-/* Enter on the file-name row shows the folder the open file lives in. */
-static void nc_visual_open_current_folder(void)
-{
-    char dir[NC_PATH_MAX];
-    const char *path = g_nc_visual_doc.path;
-    const char *slash = 0;
-    size_t i;
-    size_t len = strlen(path);
-
-    for (i = 0; i < len; i++) {
-        if (path[i] == '/' || path[i] == '\\') {
-            slash = path + i;
-        }
-    }
-    if (!slash || slash == path) {
-        nc_visual_open_file_view(NC_FILES_DIR, false);
-        return;
-    }
-    snprintf(dir, sizeof(dir), "%.*s", (int)(slash - path), path);
-    nc_visual_open_file_view(dir, false);
-}
 
 /* Live preview of the file pointed at in the file list.
 
@@ -943,16 +600,6 @@ static void nc_files_preview_sync(void)
     g_nc_visual_dirty = true;
 }
 
-static void nc_visual_insert_preset_action(nc_preset_t preset,
-                                           const char *ok,
-                                           const char *fail)
-{
-    if (nc_insert_preset(&g_nc_visual_doc, preset) == NC_OK) {
-        strncpy(g_nc_visual_status, ok, sizeof(g_nc_visual_status) - 1);
-    } else {
-        strncpy(g_nc_visual_status, fail, sizeof(g_nc_visual_status) - 1);
-    }
-}
 
 
 
@@ -1059,13 +706,13 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
         /* Opens the folder the open file lives in, so the list can land on it;
            falls back to the NC folder when nothing is open. */
         if (g_nc_visual_doc.path[0]) {
-            nc_visual_open_current_folder();
+            nc_editor_open_current_folder(&editor);
         } else {
-            nc_visual_open_file_view(NC_FILES_DIR, true);
+            nc_editor_open_files(&editor, NC_FILES_DIR, true);
         }
         break;
     case NC_FOOTER_ACTION_FILES:
-        nc_visual_open_file_view(NULL, false);
+        nc_editor_open_files(&editor, NULL, false);
         break;
     case NC_FOOTER_ACTION_OPEN:
         if (nc_files_active()) {
@@ -1090,15 +737,15 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
             }
             /* The buffer is about to be reused for another file: put the edits
                of the one that is open on the card first. */
-            if (!nc_visual_save_current_if_file() &&
-                !nc_visual_proceed_without_saving(NC_VISUAL_UNSAVED_OPEN)) {
+            if (!nc_editor_save_current(&editor) &&
+                !nc_editor_proceed_without_saving(&editor, NC_EDITOR_UNSAVED_OPEN)) {
                 strncpy(g_nc_visual_status, "Save failed - press again to open", sizeof(g_nc_visual_status) - 1);
                 break;
             }
             r = nc_load_file(&g_nc_visual_doc, path);
             if (r == NC_OK) {
                 nc_files_set_active(false);
-                g_nc_visual_new_file_active = false;
+                nc_editor_new_file_end(&editor);
                 nc_state_remember_path(g_nc_visual_mode, path);
                 nc_state_save();
                 snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Opened %s", nc_files_name(nc_files_selected()));
@@ -1107,9 +754,9 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
             }
         } else {
             nc_files_set_active(true);
-            g_nc_visual_new_file_active = false;
+            nc_editor_new_file_end(&editor);
             if (nc_files_refresh(NULL)) {
-                nc_visual_serial_selected_file();
+                nc_editor_serial_selected_file();
                 g_nc_visual_status[0] = '\0';
             } else {
                 strncpy(g_nc_visual_status, "File list unavailable", sizeof(g_nc_visual_status) - 1);
@@ -1117,29 +764,29 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
         }
         break;
     case NC_FOOTER_ACTION_PRESET_OD:
-        nc_visual_insert_preset_action(NC_PRESET_OD, "Inserted OD preset", "OD preset failed");
+        nc_editor_insert_preset(&editor, NC_PRESET_OD, "Inserted OD preset", "OD preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_ID:
-        nc_visual_insert_preset_action(NC_PRESET_ID, "Inserted ID preset", "ID preset failed");
+        nc_editor_insert_preset(&editor, NC_PRESET_ID, "Inserted ID preset", "ID preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_FACE:
-        nc_visual_insert_preset_action(NC_PRESET_FACE, "Inserted FACE preset", "FACE preset failed");
+        nc_editor_insert_preset(&editor, NC_PRESET_FACE, "Inserted FACE preset", "FACE preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_LINE:
-        nc_visual_insert_preset_action(NC_PRESET_LINE, "Inserted line preset", "Line preset failed");
+        nc_editor_insert_preset(&editor, NC_PRESET_LINE, "Inserted line preset", "Line preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_ARC:
-        nc_visual_insert_preset_action(NC_PRESET_ARC, "Inserted arc preset", "Arc preset failed");
+        nc_editor_insert_preset(&editor, NC_PRESET_ARC, "Inserted arc preset", "Arc preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_SETUP:
-        nc_visual_insert_preset_action(NC_PRESET_SETUP, "Inserted setup preset", "Setup preset failed");
+        nc_editor_insert_preset(&editor, NC_PRESET_SETUP, "Inserted setup preset", "Setup preset failed");
         break;
     case NC_FOOTER_ACTION_PRESET_END:
-        nc_visual_insert_preset_action(NC_PRESET_END, "Inserted G80", "G80 preset failed");
+        nc_editor_insert_preset(&editor, NC_PRESET_END, "Inserted G80", "G80 preset failed");
         break;
     case NC_FOOTER_ACTION_TOOL:
         if (g_nc_visual_mode == NC_MODE_PROGRAM) {
-            if (nc_visual_insert_tool_ref() == NC_OK) {
+            if (nc_editor_insert_tool_ref(&editor) == NC_OK) {
                 nc_cursor_down(&g_nc_visual_doc);
                 g_nc_visual_doc.selected_word = -1;
                 snprintf(g_nc_visual_status,
@@ -1156,7 +803,7 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
             if (nc_state_load_document(g_nc_visual_mode, &g_nc_visual_doc)) {
                 if (g_nc_visual_doc.line_count && !nc_tool_line_is_tool(g_nc_visual_doc.lines[g_nc_visual_doc.cursor_line].text)) {
                     int first_line = -1;
-                    (void)nc_visual_find_tool_line(0, &first_line);
+                    (void)nc_editor_find_tool_line(&editor, 0, &first_line);
                     if (first_line >= 0) {
                         g_nc_visual_doc.cursor_line = (size_t)first_line;
                     }
@@ -1188,9 +835,7 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
         break;
     case NC_FOOTER_ACTION_NEW:
         if (nc_files_active()) {
-            g_nc_visual_new_file_active = true;
-            g_nc_visual_new_file_name[0] = '\0';
-            nc_visual_new_file_status();
+            nc_editor_new_file_begin(&editor);
             break;
         }
         nc_document_init(&g_nc_visual_doc);
@@ -1226,25 +871,25 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
     case NC_FOOTER_ACTION_BACK:
         if (nc_files_active()) {
             nc_files_select_prev();
-            nc_visual_serial_selected_file();
+            nc_editor_serial_selected_file();
             strncpy(g_nc_visual_status, "File up", sizeof(g_nc_visual_status) - 1);
         } else if (g_nc_visual_mode == NC_MODE_TOOLS) {
-            nc_visual_move_tool_line(-1);
+            nc_editor_move_tool_line(&editor, -1);
         } else {
-            nc_visual_move_code_line(-1);
-            nc_visual_serial_selected_line();
+            nc_editor_move_line(&editor, -1);
+            nc_editor_serial_selected_line(&editor);
         }
         break;
     case NC_FOOTER_ACTION_STEP:
         if (nc_files_active()) {
             nc_files_select_next();
-            nc_visual_serial_selected_file();
+            nc_editor_serial_selected_file();
             strncpy(g_nc_visual_status, "File down", sizeof(g_nc_visual_status) - 1);
         } else if (g_nc_visual_mode == NC_MODE_TOOLS) {
-            nc_visual_move_tool_line(1);
+            nc_editor_move_tool_line(&editor, 1);
         } else {
-            nc_visual_move_code_line(1);
-            nc_visual_serial_selected_line();
+            nc_editor_move_line(&editor, 1);
+            nc_editor_serial_selected_line(&editor);
         }
         break;
     case NC_FOOTER_ACTION_RESET:
@@ -1273,7 +918,7 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
         break;
     case NC_FOOTER_ACTION_REFRESH:
         if (nc_files_refresh(NULL)) {
-            nc_visual_serial_selected_file();
+            nc_editor_serial_selected_file();
             snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Refreshed %s", nc_files_cwd());
         } else {
             strncpy(g_nc_visual_status, "Refresh failed", sizeof(g_nc_visual_status) - 1);
@@ -1299,8 +944,8 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
                 break;
             }
             /* Loading for RUN reuses the same buffer, so save first. */
-            if (!nc_visual_save_current_if_file() &&
-                !nc_visual_proceed_without_saving(NC_VISUAL_UNSAVED_OPEN)) {
+            if (!nc_editor_save_current(&editor) &&
+                !nc_editor_proceed_without_saving(&editor, NC_EDITOR_UNSAVED_OPEN)) {
                 strncpy(g_nc_visual_status, "Save failed - press again to load", sizeof(g_nc_visual_status) - 1);
                 break;
             }
@@ -1405,11 +1050,14 @@ static void nc_visual_cycle_mode(void)
 
 void nc_visual_select_mode(nc_mode_t mode)
 {
+    nc_editor_ctx_t editor;
+
     if (mode < 0 || mode >= NC_MODE_COUNT || mode == g_nc_visual_mode) {
         return;
     }
-    if (!nc_visual_save_current_if_file() &&
-        !nc_visual_proceed_without_saving(NC_VISUAL_UNSAVED_MODE)) {
+    nc_visual_editor_ctx(&editor, 0);
+    if (!nc_editor_save_current(&editor) &&
+        !nc_editor_proceed_without_saving(&editor, NC_EDITOR_UNSAVED_MODE)) {
         strncpy(g_nc_visual_status,
                 "Save failed - press again to leave",
                 sizeof(g_nc_visual_status) - 1);
@@ -1426,7 +1074,7 @@ void nc_visual_select_mode(nc_mode_t mode)
                 nc_run_set_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line);
             if (g_nc_visual_mode == NC_MODE_TOOLS) {
                 int first_tool = -1;
-                if (nc_visual_find_tool_line(0, &first_tool) > 0 && first_tool >= 0) {
+                if (nc_editor_find_tool_line(&editor, 0, &first_tool) > 0 && first_tool >= 0) {
                     g_nc_visual_doc.cursor_line = (size_t)first_tool;
                     g_nc_visual_doc.selected_word = -1;
                 }
@@ -1445,46 +1093,12 @@ void nc_visual_select_mode(nc_mode_t mode)
 }
 
 
-static void nc_visual_serial_selected_line(void)
-{
-    size_t line = nc_visual_code_line();
-    const char *text = "";
 
-    if (line < g_nc_visual_doc.line_count) {
-        text = g_nc_visual_doc.lines[line].text;
-    }
-    grbl_stream_printf(__romstr__("[MSG:NC SELECT %s %lu: %.96s]\r\n"),
-                       nc_menu_mode_name(g_nc_visual_mode),
-                       (unsigned long)(line + 1),
-                       text);
-}
 
-static void nc_visual_serial_selected_file(void)
-{
-    int selected = nc_files_selected();
-    const char *name = nc_files_name(selected);
-    char path[NC_PATH_MAX];
-
-    if (nc_files_selected_path(path, sizeof(path))) {
-        grbl_stream_printf(__romstr__("[MSG:NC FILE %d: %.96s]\r\n"), selected + 1, path);
-    } else {
-        grbl_stream_printf(__romstr__("[MSG:NC FILE %d: %.96s]\r\n"), selected + 1, name);
-    }
-}
-
-static bool nc_visual_line_is_contour_detail(const nc_document_t *doc, size_t index)
-{
-    if (!doc || index >= doc->line_count) {
-        return false;
-    }
-    if (g7x_contour_cmd_from_line(doc->lines[index].text) == G7X_CONTOUR_NONE) {
-        return false;
-    }
-    return nc_g7x_line_is_any_contour(doc, index);
-}
 
 static void nc_visual_draw_tool_screen(void)
 {
+    nc_editor_ctx_t editor;
     int tool_count;
     int selected_tool;
     int selected_line;
@@ -1498,10 +1112,11 @@ static void nc_visual_draw_tool_screen(void)
     char active_letter = '\0';
     int active_line = -1;
 
-    tool_count = nc_visual_find_tool_line(nc_visual_selected_tool_index(), NULL);
-    selected_tool = nc_visual_selected_tool_index();
-    (void)nc_visual_find_tool_line(selected_tool, &selected_line);
-    (void)nc_visual_selected_tool_word(&active_letter, &active_line);
+    nc_visual_editor_ctx(&editor, 0);
+    tool_count = nc_editor_find_tool_line(&editor, nc_editor_selected_tool_index(&editor), NULL);
+    selected_tool = nc_editor_selected_tool_index(&editor);
+    (void)nc_editor_find_tool_line(&editor, selected_tool, &selected_line);
+    (void)nc_editor_selected_tool_word(&editor, &active_letter, &active_line);
     if (selected_tool >= 8) {
         first_tool = selected_tool - 7;
     }
@@ -1539,7 +1154,7 @@ static void nc_visual_draw_tool_screen(void)
         nc_tool_t tool;
         const char *line;
 
-        (void)nc_visual_find_tool_line(first_tool + row, &tool_line);
+        (void)nc_editor_find_tool_line(&editor, first_tool + row, &tool_line);
         if (tool_line < 0) {
             continue;
         }
@@ -1795,8 +1410,6 @@ static void nc_visual_draw_header(const nc_snapshot_t *s)
 
 static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
 {
-    int row;
-    int line_cols = (NC_RIGHT_PANE_W - NC_LINE_TEXT_X_PAD) / NC_VISUAL_CHAR_W;
     char buf[80];
     char footer_text[160];
     bool full_preview = nc_visual_full_preview();
@@ -1862,148 +1475,11 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
     t2 = mcu_micros();
 
     if (nc_files_active()) {
-        int count = nc_files_count();
-        int selected_file = nc_files_selected();
-        int first_file = 0;
-        const int visible_files = 14;
-        if (selected_file >= visible_files) {
-            first_file = selected_file - visible_files + 1;
-        }
-        nc_draw_text_clip(NC_RIGHT_PANE_X + 12, NC_PANE_Y + 10, "NC FILES", 18, NC_VISUAL_ACCENT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-        nc_draw_text_clip(NC_RIGHT_PANE_X + 96, NC_PANE_Y + 10, nc_files_cwd(), 32, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-        if (count > 0 && selected_file >= 0) {
-            snprintf(buf, sizeof(buf), "%d/%d", selected_file + 1, count);
-            nc_draw_text_clip(NC_RIGHT_PANE_X + NC_RIGHT_PANE_W - 70, NC_PANE_Y + 10, buf, 8, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-        }
-        if (!nc_files_ready()) {
-            nc_draw_text_clip(NC_RIGHT_PANE_X + 16, NC_PANE_Y + 48, "File list not ready", 36, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-        } else if (!count) {
-            nc_draw_text_clip(NC_RIGHT_PANE_X + 16, NC_PANE_Y + 48, "No NC files found", 36, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-        }
-        for (row = 0; row < count - first_file && row < visible_files; row++) {
-            int file_index = first_file + row;
-            int y = NC_PANE_Y + 60 + row * 26;
-            bool selected = (file_index == selected_file);
-            lvds_color_t bg = selected ? NC_VISUAL_SELECT : NC_VISUAL_BG;
-            const char *name = nc_files_name(file_index);
-            bool is_dir = nc_files_is_dir(file_index);
-            snprintf(buf, sizeof(buf), "%c %s", is_dir ? '/' : ' ', name);
-            if (selected) {
-                lvds_draw_fill_rect(NC_RIGHT_PANE_X + 4, y - 4, NC_RIGHT_PANE_W - 8, 26, bg);
-            }
-            nc_draw_text_clip(NC_RIGHT_PANE_X + 16,
-                                     y,
-                                     buf,
-                                     line_cols,
-                                     selected ? NC_VISUAL_TEXT : NC_VISUAL_DIM,
-                                     bg,
-                                     LVDS_FONT_NORMAL);
-        }
-        if (g_nc_visual_new_file_active) {
-            snprintf(buf,
-                     sizeof(buf),
-                     "NEW: %s%s  # OK  * DEL  A CANCEL",
-                     g_nc_visual_new_file_name[0] ? g_nc_visual_new_file_name : "_",
-                     nc_visual_new_file_ext());
-            lvds_draw_fill_rect(NC_RIGHT_PANE_X + 8, NC_PANE_BOTTOM - 26,
-                                NC_RIGHT_PANE_W - 16, 22, NC_VISUAL_BG);
-            nc_draw_text_clip(NC_RIGHT_PANE_X + 16,
-                                     NC_PANE_BOTTOM - 24,
-                                     buf,
-                                     line_cols,
-                                     NC_VISUAL_TEXT,
-                                     NC_VISUAL_BG,
-                                     LVDS_FONT_NORMAL);
-        }
+        nc_editor_draw_files(&editor);
     } else if (g_nc_visual_mode == NC_MODE_TOOLS) {
         nc_visual_draw_tool_screen();
     } else if (nc_visual_is_code_view() && !full_preview) {
-        /* The file this code belongs to, as the editor's own first row: the
-           cursor can sit on it and Enter opens its folder. */
-        {
-            bool sel = g_nc_visual_name_selected;
-            lvds_color_t bg = sel ? NC_VISUAL_SELECT : NC_VISUAL_BG;
-            /* Selected, the name reads as a field, the way a selected word does
-               on a code line. */
-            lvds_color_t fg = sel ? NC_VISUAL_WORD_FG : NC_VISUAL_DIM;
-            lvds_color_t text_bg = sel ? NC_VISUAL_WORD_BG : NC_VISUAL_BG;
-
-            if (sel) {
-                lvds_draw_fill_rect(NC_RIGHT_PANE_X, NC_PANE_Y,
-                                    NC_RIGHT_PANE_W, NC_VISUAL_ROW_H, bg);
-            }
-            snprintf(buf,
-                     sizeof(buf),
-                     "%s%s",
-                     s->path[0] ? s->path : "(no file)",
-                     s->dirty ? " *" : "");
-            nc_draw_text_clip(NC_RIGHT_PANE_X + NC_LINE_TEXT_X_PAD,
-                                     NC_PANE_Y,
-                                     buf,
-                                     line_cols,
-                                     fg,
-                                     text_bg,
-                                     LVDS_FONT_NORMAL);
-        }
-        for (row = 0; row < NC_MAX_VISIBLE_LINES; row++) {
-            int y = NC_CODE_Y + row * NC_VISUAL_ROW_H;
-            size_t line_index = s->first_line + (size_t)row;
-            bool selected = line_index == nc_visual_code_line();
-            char display_line[NC_MAX_LINE_LEN + 2];
-            const char *line_text = s->lines[row];
-            int word_start = nc_visual_can_edit_code() ? s->selected_word_start : -1;
-            int word_end = nc_visual_can_edit_code() ? s->selected_word_end : -1;
-            if (line_text[0] != '\t' &&
-                line_text[0] != ' ' &&
-                nc_visual_line_is_contour_detail(&g_nc_visual_doc, line_index)) {
-                display_line[0] = '\t';
-                strncpy(display_line + 1, line_text, sizeof(display_line) - 2);
-                display_line[sizeof(display_line) - 1] = '\0';
-                line_text = display_line;
-                if (word_start >= 0) word_start++;
-                if (word_end >= 0) word_end++;
-            }
-            if (selected &&
-                nc_visual_can_edit_code() &&
-                g_nc_visual_mode != NC_MODE_RUN &&
-                s->selected_label[0]) {
-                /* The legend takes the row above the cursor line. For line 1
-                   that row is the file-name row, so the legend sits over the
-                   name for as long as it is showing and the name comes back
-                   when it is not - the same way it covers a code line on every
-                   other row. */
-                int hint_y = (row == 0) ? NC_PANE_Y : (y - NC_VISUAL_ROW_H);
-
-                lvds_draw_fill_rect(NC_RIGHT_PANE_X + 2, hint_y - 3, NC_RIGHT_PANE_W - 4, NC_VISUAL_ROW_H, NC_VISUAL_BG);
-                snprintf(buf, sizeof(buf), "%c  %s", g_nc_visual_doc.selected_word >= 0 ? '>' : ' ', s->selected_label);
-                nc_draw_text_clip(NC_RIGHT_PANE_X + NC_LINE_TEXT_X_PAD,
-                                         hint_y,
-                                         buf,
-                                         line_cols,
-                                         NC_VISUAL_ACCENT,
-                                         NC_VISUAL_BG,
-                                         LVDS_FONT_NORMAL);
-            }
-            snprintf(buf, sizeof(buf), "%3lu", (unsigned long)(s->first_line + (size_t)row + 1));
-            lvds_draw_text(NC_RIGHT_PANE_X + NC_LINE_NO_X_PAD, y, buf, selected ? NC_VISUAL_LINE_NO_SELECTED : NC_VISUAL_DIM,
-                           selected ? NC_VISUAL_SELECT : NC_VISUAL_BG,
-                           LVDS_FONT_NORMAL);
-            nc_text_draw_line_with_word(line_text,
-                                        NC_RIGHT_PANE_X + NC_LINE_TEXT_X_PAD,
-                                        y,
-                                        line_cols,
-                                        NC_VISUAL_CHAR_W,
-                                        NC_VISUAL_ROW_H,
-                                        word_start,
-                                        word_end,
-                                        selected,
-                                        NC_VISUAL_TEXT,
-                                        NC_VISUAL_DIM,
-                                        NC_VISUAL_BG,
-                                        NC_VISUAL_SELECT,
-                                        NC_VISUAL_WORD_FG,
-                                        NC_VISUAL_WORD_BG);
-        }
+        nc_editor_draw_pane(&editor);
     } else if (g_nc_visual_mode == NC_MODE_MANUAL) {
         nc_visual_manual_pane(&s->runtime);
     }
@@ -2052,6 +1528,8 @@ static void nc_visual_draw_live_snapshot(const nc_snapshot_t *s)
 
 void nc_visual_init(void)
 {
+    nc_editor_ctx_t editor;
+
     nc_palette_init();
     nc_files_init();
     nc_presets_init();
@@ -2063,6 +1541,7 @@ void nc_visual_init(void)
     if (g_nc_visual_mode < 0 || g_nc_visual_mode >= NC_MODE_COUNT) {
         g_nc_visual_mode = NC_MODE_PROGRAM;
     }
+    nc_visual_editor_ctx(&editor, 0);
     if (nc_visual_uses_file() &&
         nc_state_load_document(g_nc_visual_mode, &g_nc_visual_doc)) {
         snprintf(g_nc_visual_status,
@@ -2072,7 +1551,7 @@ void nc_visual_init(void)
                  g_nc_visual_doc.path);
         g_nc_visual_dirty = true;
     } else if (!nc_state_load_document(NC_MODE_PROGRAM, &g_nc_visual_doc)) {
-        nc_visual_seed_demo();
+        nc_editor_seed_demo(&editor);
         nc_state_remember_path(NC_MODE_PROGRAM, "");
         nc_state_save();
     } else {
@@ -2116,19 +1595,8 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
             return;
         }
     }
-    if (g_nc_visual_name_selected) {
-        if (key == NC_VISUAL_KEY_ACCEPT) {
-            /* The file-name row is the way into its folder. */
-            nc_visual_open_current_folder();
-            g_nc_visual_status[0] = '\0';
-            g_nc_visual_dirty = true;
-            return;
-        }
-        if (key != NC_VISUAL_KEY_PREV && key != NC_VISUAL_KEY_NEXT &&
-            key != NC_VISUAL_KEY_MODE) {
-            /* Anything else hands the cursor back to the code. */
-            g_nc_visual_name_selected = false;
-        }
+    if (nc_editor_key_name(&editor, key)) {
+        return;
     }
     if (!nc_files_active() &&
         g_nc_visual_mode == NC_MODE_TOOLS &&
@@ -2148,85 +1616,12 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
         return;
     }
 
-    if (nc_visual_new_file_handle_key(key)) {
-        g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
-        g_nc_visual_dirty = true;
+    if (nc_editor_key_edit(&editor, key, key_ch)) {
         return;
     }
-    if (key == NC_VISUAL_KEY_WORD_PREV || key == NC_VISUAL_KEY_WORD_NEXT) {
-        nc_result_t result = key == NC_VISUAL_KEY_WORD_PREV ?
-                             nc_select_prev_word(&g_nc_visual_doc) :
-                             nc_select_next_word(&g_nc_visual_doc);
-        snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "%s",
-                 result == NC_OK ? "Word" : "No editable word on this line");
-        g_nc_visual_dirty = true;
-        return;
-    }
-    if (key == NC_VISUAL_KEY_FIELD_PREV || key == NC_VISUAL_KEY_FIELD_NEXT) {
-        bool forward = key == NC_VISUAL_KEY_FIELD_NEXT;
-        nc_word_t word;
-        nc_result_t result;
-
-        /* TOOLS uses Up/Down to select tool rows. Field walking is for the
-           editor screens; on TOOLS the row selection is the cursor. */
-        if (!nc_files_active() && g_nc_visual_mode == NC_MODE_TOOLS) {
-            nc_visual_dispatch_footer_action(forward ? NC_FOOTER_ACTION_STEP :
-                                                       NC_FOOTER_ACTION_BACK);
-            g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
-            g_nc_visual_dirty = true;
-            return;
-        }
-
-        /* Field walking belongs to editable code views only. In the file list,
-           a menu, or a view that only runs and simulates (RUN, SIM) these keys
-           keep their original path through the footer actions, which also
-           reports the newly selected line - moving the cursor directly here
-           would move the highlight without registering the selection. */
-        if (nc_files_active() || !nc_visual_is_code_view() ||
-            !nc_visual_can_edit_code()) {
-            nc_visual_handle_key(forward ? NC_VISUAL_KEY_NEXT : NC_VISUAL_KEY_PREV);
-            return;
-        }
-        /* Arrows never edit: drop any draft instead of applying it, so a stray
-           decimal point cannot be pushed into the program. */
-        nc_editor_clear_draft();
-        result = forward ? nc_select_same_word_next(&g_nc_visual_doc) :
-                           nc_select_same_word_prev(&g_nc_visual_doc);
-        if (result == NC_OK &&
-            nc_get_selected_word(&g_nc_visual_doc, &word) == NC_OK) {
-            /* The field itself is highlighted; no position report. */
-            g_nc_visual_status[0] = '\0';
-            g_nc_visual_dirty = true;
-            return;
-        }
-        /* No field of that letter to go to (including "no word selected at
-           all"): move one line directly. Going through the key dispatch here
-           is what caused the bug, because while a word is selected those
-           letters mean sign (B), dot (C) and next word/accept (D). Moving the
-           cursor ourselves cannot start an edit and cannot write a value. */
-        if (forward) {
-            if (g_nc_visual_name_selected) {
-                /* Down from the file-name row is line 1. */
-                g_nc_visual_name_selected = false;
-            } else {
-                nc_cursor_down(&g_nc_visual_doc);
-            }
-        } else if (g_nc_visual_doc.cursor_line == 0) {
-            /* Above line 1 sits the row naming the file. */
-            g_nc_visual_name_selected = true;
-        } else {
-            nc_cursor_up(&g_nc_visual_doc);
-        }
-        g_nc_visual_doc.selected_word = -1;
-        nc_editor_clear_draft();
-        g_nc_visual_status[0] = '\0';
-        g_nc_visual_dirty = true;
-        return;
-    }
-
     if (key == NC_VISUAL_KEY_MODE) {
         nc_editor_clear_draft();
-        g_nc_visual_new_file_active = false;
+        nc_editor_new_file_end(&editor);
         nc_visual_cycle_mode();
         g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
         g_nc_visual_dirty = true;
@@ -2282,40 +1677,7 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
         return;
     }
 
-    switch (key) {
-    case NC_VISUAL_KEY_PREV:
-        nc_editor_clear_draft();
-        nc_cursor_up(&g_nc_visual_doc);
-        g_nc_visual_status[0] = '\0';
-        break;
-    case NC_VISUAL_KEY_NEXT:
-        nc_editor_clear_draft();
-        nc_cursor_down(&g_nc_visual_doc);
-        g_nc_visual_status[0] = '\0';
-        break;
-    case NC_VISUAL_KEY_ACCEPT:
-    case NC_VISUAL_KEY_FINISH:
-        if (nc_select_next_word(&g_nc_visual_doc) == NC_OK) {
-            strncpy(g_nc_visual_status, "Next word", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "No editable word here", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_VISUAL_KEY_BACKSPACE:
-        if (nc_select_prev_word(&g_nc_visual_doc) == NC_OK) {
-            strncpy(g_nc_visual_status, "Previous word", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "No editable word here", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_VISUAL_KEY_CANCEL:
-        nc_editor_clear_draft();
-        g_nc_visual_doc.selected_word = -1;
-        strncpy(g_nc_visual_status, "Selection cleared", sizeof(g_nc_visual_status) - 1);
-        break;
-    default:
-        break;
-    }
+    nc_editor_key_cursor(&editor, key);
 
     g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
     g_nc_visual_dirty = true;

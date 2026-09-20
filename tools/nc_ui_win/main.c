@@ -1573,6 +1573,74 @@ static int host_padtest(void)
     return 0;
 }
 
+/* Headless check of the editor's new-file field: the keys have to reach the
+   name, the name has to reach the card, and the file that is created has to be
+   the one the editor then holds.
+
+   This path is why the check exists: the extraction of the editor passed the
+   key character to the field handler and the handler kept a local copy of it,
+   so every digit was dropped and the file was created with no name at all -
+   something no frame dump shows, because the field is only drawn in the file
+   list. */
+static int host_newfiletest(void)
+{
+    static const char *const created = "/D/nc/files/12.nc";
+    nc_document_t doc;
+    int failures = 0;
+    nc_result_t r;
+
+    host_init_core();
+    nc_visual_select_mode(NC_MODE_PROGRAM);
+    host_pump_idle(64u);
+
+    nc_visual_handle_key(NC_VISUAL_KEY_CANCEL);             /* drop the selection:
+                                                               `0` opens the list
+                                                               only without one */
+    nc_visual_handle_key(NC_VISUAL_KEY_DIGIT_0);            /* open the file list */
+    nc_visual_handle_key(NC_VISUAL_KEY_DIGIT_5);            /* 5 NEW */
+    nc_visual_handle_key(NC_VISUAL_KEY_DIGIT_1);            /* type the name */
+    nc_visual_handle_key(NC_VISUAL_KEY_DIGIT_2);
+    nc_visual_handle_key(NC_VISUAL_KEY_FINISH);             /* '#' creates it */
+    host_pump_idle(64u);
+
+    nc_document_init(&doc);
+    r = nc_load_file(&doc, created);
+    if (r != NC_OK) {
+        printf("newfiletest: FAIL the typed name did not reach the card (%s)\n",
+               nc_result_text(r));
+        failures++;
+    } else {
+        printf("newfiletest: created %s with %u lines\n", created,
+               (unsigned)doc.line_count);
+    }
+
+    /* The next digits must land in the next field: a field that keeps its own
+       copy of the key is exactly what this checks against. */
+    nc_visual_handle_key(NC_VISUAL_KEY_CANCEL);
+    nc_visual_handle_key(NC_VISUAL_KEY_DIGIT_0);
+    nc_visual_handle_key(NC_VISUAL_KEY_DIGIT_5);
+    nc_visual_handle_key(NC_VISUAL_KEY_DIGIT_3);
+    nc_visual_handle_key(NC_VISUAL_KEY_CANCEL);             /* 'A' cancels */
+    host_pump_idle(64u);
+
+    {
+        nc_document_t other;
+
+        nc_document_init(&other);
+        if (nc_load_file(&other, "/D/nc/files/3.nc") == NC_OK) {
+            puts("newfiletest: FAIL a cancelled new-file field still created a file");
+            failures++;
+        }
+    }
+
+    if (failures) {
+        printf("newfiletest: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("newfiletest: PASS the new-file field takes the typed name and creates it");
+    return 0;
+}
+
 /* Headless check that the desktop filesystem is mounted where the NC module
    expects it: list "/D" through the same fs_* API the file manager uses. */
 static int host_fstest(void)
@@ -1658,6 +1726,8 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--filetest") == 0)
             return host_filetest();
+        if (strcmp(argv[i], "--newfiletest") == 0)
+            return host_newfiletest();
     }
 
     memset(&wc, 0, sizeof(wc));

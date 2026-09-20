@@ -25,6 +25,7 @@
 
 #include "nc.h"
 #include "nc_menu.h"
+#include "nc_presets.h"
 #include "nc_state.h"
 #include "nc_visual.h"
 
@@ -35,7 +36,9 @@ extern "C" {
 typedef struct {
     nc_document_t *doc;              /* the screen's buffer */
     const nc_snapshot_t *snapshot;   /* the frame being drawn, or NULL */
+    nc_mode_t mode;
     bool editable;                   /* this screen may change the code */
+    bool code_view;                  /* EDIT/RUN: the pane shows code */
     char *status;                    /* the screen's status line */
     size_t status_size;
     bool *dirty;
@@ -47,6 +50,15 @@ typedef struct {
 
 /* The floating helper owns every key while it is up. */
 bool nc_editor_modal_key(nc_editor_ctx_t *ctx, nc_visual_key_t key, char ch);
+
+/* The file-name row above line 1 is the cursor. */
+bool nc_editor_key_name(nc_editor_ctx_t *ctx, nc_visual_key_t key);
+
+/* The new-file field, the word/field keys and the selected value. */
+bool nc_editor_key_edit(nc_editor_ctx_t *ctx, nc_visual_key_t key, char ch);
+
+/* The plain cursor keys, once the screen has decided this view may be edited. */
+void nc_editor_key_cursor(nc_editor_ctx_t *ctx, nc_visual_key_t key);
 
 /* A word is selected and the keys type into it. */
 bool nc_editor_selected_word_key(nc_editor_ctx_t *ctx, nc_visual_key_t key, char ch);
@@ -62,6 +74,47 @@ void nc_editor_clear_draft(void);
 
 /* The draft line and the helper panel. */
 void nc_editor_draw_aids(nc_editor_ctx_t *ctx);
+
+/* The file list the editor opens into, and the code pane with its name row. */
+void nc_editor_draw_files(nc_editor_ctx_t *ctx);
+void nc_editor_draw_pane(nc_editor_ctx_t *ctx);
+
+/* What the footer actions ask for. */
+void nc_editor_move_line(nc_editor_ctx_t *ctx, int delta);
+void nc_editor_move_tool_line(nc_editor_ctx_t *ctx, int delta);
+void nc_editor_open_files(nc_editor_ctx_t *ctx, const char *root, bool seed_samples);
+void nc_editor_open_current_folder(nc_editor_ctx_t *ctx);
+void nc_editor_new_file_begin(nc_editor_ctx_t *ctx);
+void nc_editor_new_file_end(nc_editor_ctx_t *ctx);
+void nc_editor_seed_demo(nc_editor_ctx_t *ctx);
+nc_result_t nc_editor_insert_tool_ref(nc_editor_ctx_t *ctx);
+void nc_editor_insert_preset(nc_editor_ctx_t *ctx,
+                             nc_preset_t preset,
+                             const char *ok,
+                             const char *fail);
+
+/* The tool rows of the TOOLS screen: the document's, read the same way the
+   code cursor reads the program. */
+int nc_editor_selected_tool_index(nc_editor_ctx_t *ctx);
+int nc_editor_find_tool_line(nc_editor_ctx_t *ctx, int selected_tool,
+                             int *selected_line);
+bool nc_editor_selected_tool_word(nc_editor_ctx_t *ctx, char *letter,
+                                  int *line_index);
+
+/* A failed autosave must not wall the machine off: the first press reports, the
+   second insists, which is what `kind` remembers. */
+enum {
+    NC_EDITOR_UNSAVED_NONE = 0,
+    NC_EDITOR_UNSAVED_MODE,
+    NC_EDITOR_UNSAVED_OPEN,
+    NC_EDITOR_UNSAVED_NEW
+};
+bool nc_editor_save_current(nc_editor_ctx_t *ctx);
+bool nc_editor_proceed_without_saving(nc_editor_ctx_t *ctx, uint8_t kind);
+
+/* The selection goes to the serial log, the way the bench reads it. */
+void nc_editor_serial_selected_line(nc_editor_ctx_t *ctx);
+void nc_editor_serial_selected_file(void);
 
 #ifdef __cplusplus
 }

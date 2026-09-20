@@ -39,8 +39,6 @@ static const char *nc_state_key(nc_mode_t mode)
 {
     switch (mode) {
     case NC_MODE_PROGRAM: return "EDIT";
-    case NC_MODE_SIM: return "SIM";
-    case NC_MODE_MDI: return "MDI";
     case NC_MODE_TOOLS: return "TOOLS";
     case NC_MODE_RUN: return "RUN";
     case NC_MODE_MANUAL:
@@ -126,7 +124,13 @@ const char *nc_state_path(nc_mode_t mode)
     return g_nc_state_path[mode];
 }
 
-void nc_state_save(void)
+/* The state file is written when the screen goes idle, not while the operator
+   is moving between screens: a FAT write costs a good part of a second on the
+   card, and a screen change used to pay it two or three times over. Everything
+   that changes the remembered state only marks it stale. */
+static bool g_nc_state_dirty;
+
+static void nc_state_write(void)
 {
     fs_file_t *fp = fs_open(NC_STATE_PATH, "w");
     int i;
@@ -158,6 +162,20 @@ void nc_state_save(void)
     fs_close(fp);
 }
 
+void nc_state_save(void)
+{
+    g_nc_state_dirty = true;
+}
+
+void nc_state_flush(void)
+{
+    if (!g_nc_state_dirty) {
+        return;
+    }
+    g_nc_state_dirty = false;
+    nc_state_write();
+}
+
 static fs_file_t *nc_state_open_read(void)
 {
     fs_file_t *fp = fs_open(NC_STATE_PATH, "r");
@@ -179,7 +197,6 @@ void nc_state_init(void)
     memset(g_nc_state_path, 0, sizeof(g_nc_state_path));
     memset(g_nc_state_cursor, 0, sizeof(g_nc_state_cursor));
     g_nc_state_mode = NC_MODE_PROGRAM;
-    strncpy(g_nc_state_path[NC_MODE_MDI], NC_MDI_PATH, NC_PATH_MAX - 1);
     strncpy(g_nc_state_path[NC_MODE_TOOLS], NC_TOOL_PATH, NC_PATH_MAX - 1);
 
     fp = nc_state_open_read();
@@ -257,28 +274,16 @@ bool nc_state_load_document(nc_mode_t mode, nc_document_t *doc)
     }
 
     path = g_nc_state_path[mode];
-    if (mode == NC_MODE_MDI) {
-        path = NC_MDI_PATH;
-    } else if (mode == NC_MODE_TOOLS && !nc_state_tool_path_supported(path)) {
+    if (mode == NC_MODE_TOOLS && !nc_state_tool_path_supported(path)) {
         path = NC_TOOL_PATH;
     }
     if (path && path[0] && nc_load_file(doc, path) == NC_OK) {
         nc_state_remember_path(mode, path);
         doc->cursor_line = doc->line_count ? MIN(g_nc_state_cursor[mode], doc->line_count - 1) : 0;
         return true;
-    } else if (path && path[0] && mode != NC_MODE_MDI && mode != NC_MODE_TOOLS) {
+    } else if (path && path[0] && mode != NC_MODE_TOOLS) {
         nc_state_remember_path(mode, "");
         nc_state_save();
-    }
-    if (mode == NC_MODE_MDI) {
-        nc_document_init(doc);
-        (void)nc_insert_line(doc, 0, "");
-        strncpy(doc->path, NC_MDI_PATH, sizeof(doc->path) - 1);
-        doc->path[sizeof(doc->path) - 1] = '\0';
-        (void)nc_save_file(doc, NC_MDI_PATH);
-        nc_state_remember_path(mode, NC_MDI_PATH);
-        nc_state_save();
-        return true;
     }
     if (mode == NC_MODE_TOOLS) {
         nc_document_init(doc);

@@ -254,4 +254,7 @@ pio run -e RP2350-G7X-MODULE        # NC-free G7x build target
   last place the "one owner" rule is not applied.
 - NC RUN on the desktop drives the virtual machine; a Grbl transport for real
   hardware is the next integration step.
-- The panel key layout question: side 3x3 pad versus the on-screen bottom row.
+- The panel key layout question is settled: the desktop shell carries the
+  machine's own key row (F1-F5 modes plus the 4x4 keypad `cam_keyboard.c`
+  decodes) and asks the active screen what each key means, so the bench cannot
+  disagree with the keyboard; the panel's on-screen 3x3 stays the firmware's.

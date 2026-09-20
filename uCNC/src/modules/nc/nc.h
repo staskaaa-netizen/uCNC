@@ -21,7 +21,9 @@ extern "C" {
 #endif
 
 #ifndef NC_MAX_VISIBLE_LINES
-#define NC_MAX_VISIBLE_LINES 18
+/* Code rows the pane shows. One row-height of the pane is the file-name row
+   above them, so the visible window is one less than the pane's row units. */
+#define NC_MAX_VISIBLE_LINES 17
 #endif
 
 #define NC_PATH_MAX 96
@@ -77,6 +79,11 @@ nc_message_kind_t nc_message_kind(void);
 const char *nc_message_text(void);
 
 void nc_document_init(nc_document_t *doc);
+/* A file the panel can read, edit and save. */
+bool nc_path_text(const char *path);
+/* The subset of those that carry a program: anything the preview, the emitter
+   or RUN may read as G-code. A `.txt` is text for the editor and nothing else -
+   opening the preset file must not turn it into a program. */
 bool nc_path_supported(const char *path);
 bool nc_line_has_old_pipe_syntax(const char *line);
 

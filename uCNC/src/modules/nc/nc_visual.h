@@ -49,14 +49,25 @@ void nc_visual_init(void);
    document exactly like the MODE key does. */
 void nc_visual_select_mode(nc_mode_t mode);
 void nc_visual_handle_key(nc_visual_key_t key);
-/* True while a value/word draft is being typed, so a shell can switch its
-   keypad from menu keys to digits. */
-bool nc_visual_value_editing(void);
+/* The keypad key that is down right now (the characters
+   nc_visual_key_for_char() takes), or 0 when nothing is held. A held MANUAL
+   direction key in feed mode feeds until it comes up, so a shell that can hold
+   a key reports both edges; a shell that cannot simply reports 0. */
+void nc_visual_hold_key(char key);
+/* Main-loop hook: flush the remembered state once the screen is idle. */
+void nc_visual_idle_tasks(void);
 /* Footer (soft key) items of the active mode, same list the panel draws at the
    bottom of the screen. `count` may be NULL. */
 const nc_footer_item_t *nc_visual_footer(size_t *count);
-/* Perform a footer action, exactly as pressing its soft key would. */
-void nc_visual_footer_action(nc_footer_action_t action);
+/* The machine keypad's key characters, as cam_keyboard.c reports them (digits,
+   `*`, `#`, and `A`-`D`), to the key the screen acts on. The panel shell on the
+   host presses through the same table, so the bench presses what the machine
+   presses. Unknown characters give NC_VISUAL_KEY_NONE. */
+nc_visual_key_t nc_visual_key_for_char(char key);
+/* The key's meaning on the active screen when it is not a footer entry - the
+   jog keys the MANUAL pad draws. NULL when the footer label or the bare key is
+   all there is to say. */
+const char *nc_visual_key_hint(char key);
 bool nc_visual_dirty(void);
 bool nc_visual_periodic_needed(void);
 void nc_visual_draw(void);

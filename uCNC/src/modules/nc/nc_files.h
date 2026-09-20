@@ -35,6 +35,7 @@ int nc_files_selected(void);
 void nc_files_select_prev(void);
 void nc_files_select_next(void);
 bool nc_files_selected_path(char *out, int out_sz);
+bool nc_files_select_path(const char *path);
 bool nc_files_enter_selected(void);
 bool nc_files_go_parent(void);
 bool nc_files_delete_selected(void);

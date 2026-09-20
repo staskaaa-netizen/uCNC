@@ -18,6 +18,11 @@ typedef enum {
 } nc_preset_t;
 
 nc_result_t nc_insert_preset(nc_document_t *doc, nc_preset_t preset);
+/* Boot call: compiled presets, then whatever the SD card can answer with. */
+bool nc_presets_init(void);
+/* Retried from the NC input path until the preset file is settled. */
+bool nc_presets_sync(void);
+bool nc_insert_preset_id(nc_document_t *doc, int id);
 
 #ifdef __cplusplus
 }

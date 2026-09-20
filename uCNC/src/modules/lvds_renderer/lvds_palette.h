@@ -20,7 +20,7 @@ typedef enum {
     green,
     white,
     yellow_pale,
-    brown,
+    tool_orange,
     red_bright,
     green_bright,
     LC_COLOR_COUNT

@@ -248,10 +248,19 @@ void lvds_hstx_present(void)
 }
 
 /* No PSRAM on the desktop: callers fall back to the SRAM path. */
-bool lvds_psram_init(void) { return false; }
-bool lvds_psram_available(void) { return false; }
-uint32_t lvds_psram_clock_hz(void) { return 0u; }
-void *lvds_psram_ptr(size_t offset) { (void)offset; return NULL; }
+/* The host has no PSRAM, but the panel's live-stock path needs a scratch region
+   for the material mask. Give it a static one of the same size, so the bench
+   draws the same live stock the machine draws - the RUN screens are supposed to
+   mirror the machine, and "Live stock needs PSRAM" on every run frame would be
+   the bench talking about itself, not about the panel. */
+static uint8_t g_host_psram[1024u * 1024u];
+bool lvds_psram_init(void) { return true; }
+bool lvds_psram_available(void) { return true; }
+uint32_t lvds_psram_clock_hz(void) { return 1u; }
+void *lvds_psram_ptr(size_t offset)
+{
+    return offset < sizeof(g_host_psram) ? &g_host_psram[offset] : NULL;
+}
 
 bool lvds_host_save_bmp(const char *path)
 {

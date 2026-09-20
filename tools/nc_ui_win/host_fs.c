@@ -35,34 +35,33 @@ typedef struct {
 static char g_root[HOST_FS_ROOT_MAX];
 static fs_t g_drive;
 
-/* "/D/nc/files" -> "<root>\nc\files". Everything under /D is mapped; other
-   drives are rejected. */
+/* "/nc/files" -> "<root>\nc\files".
+
+   uCNC's fs layer splits the drive letter off before it calls the driver, so
+   the paths that arrive here are already drive relative - "/nc/files",
+   "/presets.txt", and "/" for the drive root - exactly the shape FatFs sees on
+   the machine. A leading "/D" is tolerated too, so the driver can also be fed
+   a full uCNC path from a test. */
 static bool host_path(const char *path, char *out, size_t out_sz)
 {
     size_t i = 0u;
 
     if (!path || !out || out_sz == 0u)
         return false;
-    if (strncmp(path, "/D", 2u) != 0)
-        return false;
-    path += 2u;
-    if (*path == '/')
+    if (strncmp(path, "/D", 2u) == 0 && (path[2] == '\0' || path[2] == '/'))
+        path += 2u;
+    while (*path == '/')
         path++;
-    out[i++] = '\0';
-    i = 0u;
-    while (*path && i + 2u < out_sz) {
+    snprintf(out, out_sz, "%s", (g_root[0] != '\0') ? g_root : "");
+    i = strlen(out);
+    if (*path && i > 0u && (i + 1u) < out_sz) {
+        out[i++] = '\\';
+    }
+    while (*path && (i + 1u) < out_sz) {
         out[i++] = (*path == '/') ? '\\' : *path;
         path++;
     }
     out[i] = '\0';
-    {
-        char joined[HOST_FS_PATH_MAX];
-        if (g_root[0] == '\0')
-            snprintf(joined, sizeof(joined), "%s", out);
-        else
-            snprintf(joined, sizeof(joined), "%s\\%s", g_root, out);
-        snprintf(out, out_sz, "%s", joined);
-    }
     return true;
 }
 
@@ -70,16 +69,20 @@ static void host_mkdir_deep(const char *dir)
 {
 #ifdef _WIN32
     char temp[HOST_FS_PATH_MAX];
-    size_t len;
+    size_t i;
 
     snprintf(temp, sizeof(temp), "%s", dir);
-    len = strlen(temp);
-    while (len > 3u) {
-        if (temp[len - 1u] == '\\') {
-            temp[len - 1u] = '\0';
-            CreateDirectoryA(temp, NULL);
+    /* Create every component shortest first, so "a\b\c" works even when only
+       "a" exists. "C:" is left alone: it names a drive, not a directory. */
+    for (i = 1u; temp[i] != '\0'; i++) {
+        if (temp[i] == '\\' || temp[i] == '/') {
+            char sep = temp[i];
+            if (i > 2u || temp[1] != ':') {
+                temp[i] = '\0';
+                CreateDirectoryA(temp, NULL);
+                temp[i] = sep;
+            }
         }
-        len--;
     }
     CreateDirectoryA(dir, NULL);
 #else
@@ -90,11 +93,21 @@ static void host_mkdir_deep(const char *dir)
 static fs_file_t *host_open(const char *path, const char *mode)
 {
     char real[HOST_FS_PATH_MAX];
+    char open_mode[8];
     fs_file_t *file;
     host_file_t *host;
 
     if (!host_path(path, real, sizeof(real)))
         return NULL;
+    /* Always binary. The firmware's readers mix reads with seeks and ask
+       fs_available() for what is left; in text mode Windows translates bytes
+       and makes ftell/fseek positions meaningless, so fs_available() reports
+       zero after the first read and files load as a single line. */
+    if (mode && *mode)
+        snprintf(open_mode, sizeof(open_mode), "%s%s", mode,
+                 strchr(mode, 'b') ? "" : "b");
+    else
+        snprintf(open_mode, sizeof(open_mode), "rb");
     file = calloc(1, sizeof(*file));
     host = calloc(1, sizeof(*host));
     if (!file || !host) {
@@ -102,7 +115,7 @@ static fs_file_t *host_open(const char *path, const char *mode)
         free(host);
         return NULL;
     }
-    host->fp = fopen(real, mode && *mode ? mode : "rb");
+    host->fp = fopen(real, open_mode);
     if (!host->fp) {
         free(file);
         free(host);
@@ -162,9 +175,9 @@ static void host_close(fs_file_t *file)
         if (host->find && host->find != INVALID_HANDLE_VALUE)
             FindClose(host->find);
 #endif
-        free(host);
     }
-    free(file);
+    /* host and file are released by uCNC's fs_close() through freefile_ptr(),
+       the same contract the machine's sd_* driver relies on. */
 }
 
 static bool host_remove(const char *path)

@@ -8,6 +8,9 @@ extern "C" {
 #endif
 
 const char *nc_vocab_label_for_word(const char *line, const nc_word_t *word);
+const char *nc_vocab_gcode_name(int gcode);
+const char *nc_vocab_gcode_parameters(int gcode);
+const char *nc_vocab_gcode_template(int gcode);
 
 #ifdef __cplusplus
 }

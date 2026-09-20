@@ -73,6 +73,23 @@ When testing clocks, change only the clock path values:
 
 Do not mix clock tests with scanout architecture changes.
 
+## Panel Alignment
+
+Framebuffer row 0 lands on the panel's top row with the vertical values below
+unchanged, and moving the back porch does not move the picture on the glass -
+the panel follows the active lines rather than counting from the sync. Measured
+with single-row markers drawn on the first and last framebuffer rows.
+
+Open problem: the **close of the frame does not come out clean on the panel**.
+With a marker on the last framebuffer row the glass showed it about two to three
+rows above the bottom edge, with fragments below it, and a two-row marker read
+as two separate lines. Only the last rows are affected; the rest of the frame is
+right. Nothing was changed in the scanout path to chase it - both the front
+porch and the back porch were tried and neither altered what the panel showed,
+so they are back at their original values. Until it is understood, the UI keeps
+the bottom few rows of the panel as background (see `nc/TODO.md`) instead of
+drawing a border into them.
+
 ## Memory Ownership
 
 Realtime scanout memory is static, aligned, and SRAM-backed:
@@ -103,6 +120,16 @@ Rules:
 - Do not add live HSTX health polling or auto-recovery to release code.
 
 If scanout fails now, treat it as a real memory, ownership, or timing fault.
+
+## Line Preparation Rule
+
+Core1 prepares the line the descriptor ring reaches
+`LVDS_HSTX_ACTIVE_LINE_BUFFERS - 1` scanlines later, and that arithmetic wraps
+into the next frame. Preparing from the current descriptor's active `y` and
+stopping at the image edge instead left the first lines of every frame holding
+the tail of the previous one, because those descriptors are reached from the
+vertical blanking, where the old rule prepared nothing. The artifact read as a
+band of the bottom of the screen across the top of the header. Keep the wrap.
 
 ## Public Boundary
 

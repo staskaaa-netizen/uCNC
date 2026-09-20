@@ -88,7 +88,9 @@ static bool nc_files_parent_path(const char *path, char *out, int out_sz)
 void nc_files_init(void)
 {
     g_nc_file_count = 0;
-    g_nc_file_selected = 0;
+    /* Nothing is marked until the operator points at something: entering the
+       list should not look like the first entry was chosen. */
+    g_nc_file_selected = -1;
     g_nc_files_ready = false;
     g_nc_files_active = false;
     strncpy(g_nc_files_cwd, NC_FILES_DIR, sizeof(g_nc_files_cwd) - 1);
@@ -112,7 +114,9 @@ bool nc_files_refresh(const char *dir)
     const char *scan_dir = (dir && dir[0]) ? dir : g_nc_files_cwd;
 
     g_nc_file_count = 0;
-    g_nc_file_selected = 0;
+    /* Nothing is marked until the operator points at something: entering the
+       list should not look like the first entry was chosen. */
+    g_nc_file_selected = -1;
     g_nc_files_ready = false;
 
     dp = fs_opendir(scan_dir);
@@ -145,7 +149,9 @@ bool nc_files_refresh(const char *dir)
         if (!nc_files_valid_entry_name(name)) {
             continue;
         }
-        if (!info.is_dir && !nc_path_supported(name)) {
+        /* Text files show up and open (the preset file, notes), but only the
+           program extensions are read as G-code - see nc_path_supported(). */
+        if (!info.is_dir && !nc_path_text(name)) {
             continue;
         }
 
@@ -215,16 +221,63 @@ int nc_files_selected(void)
 
 void nc_files_select_prev(void)
 {
-    if (g_nc_file_selected > 0) {
+    if (g_nc_file_selected < 0) {
+        g_nc_file_selected = g_nc_file_count > 0 ? g_nc_file_count - 1 : -1;
+    } else if (g_nc_file_selected > 0) {
         g_nc_file_selected--;
     }
 }
 
 void nc_files_select_next(void)
 {
-    if (g_nc_file_selected + 1 < g_nc_file_count) {
+    if (g_nc_file_selected < 0) {
+        g_nc_file_selected = g_nc_file_count > 0 ? 0 : -1;
+    } else if (g_nc_file_selected + 1 < g_nc_file_count) {
         g_nc_file_selected++;
     }
+}
+
+static int nc_files_icmp(const char *a, const char *b)
+{
+    while (*a && *b) {
+        int ca = (unsigned char)*a++;
+        int cb = (unsigned char)*b++;
+
+        if (ca >= 'a' && ca <= 'z') {
+            ca -= 'a' - 'A';
+        }
+        if (cb >= 'a' && cb <= 'z') {
+            cb -= 'a' - 'A';
+        }
+        if (ca != cb) {
+            return ca - cb;
+        }
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+/* Point the list at a path already known to the caller - the file that is open
+   - so entering the folder from the editor lands on it. Comparison ignores
+   case: the card does, and the remembered path may not match it. */
+bool nc_files_select_path(const char *path)
+{
+    int i;
+
+    if (!path || !path[0]) {
+        return false;
+    }
+    for (i = 0; i < g_nc_file_count; i++) {
+        char candidate[NC_PATH_MAX];
+
+        if (!nc_files_build_path(i, candidate, sizeof(candidate))) {
+            continue;
+        }
+        if (nc_files_icmp(candidate, path) == 0) {
+            g_nc_file_selected = i;
+            return true;
+        }
+    }
+    return false;
 }
 
 bool nc_files_selected_path(char *out, int out_sz)

@@ -89,8 +89,11 @@ On the desktop, three things reuse that ownership instead of copying it:
   sources, expands the program (including one-line and Fanuc two-line P/Q
   ranges) and streams it with a Grbl 1.1 client;
 - `tools/nc_ui_win` compiles `nc_visual.c` *unmodified* and gives it a host LVDS
-  backend, so the panel layout is the firmware's, and attaches the machine key
-  row (F1-F6 modes, F7-F12 soft keys, 3x3 pad) beside it;
+  backend, so the panel layout is the firmware's, and attaches the machine's own
+  key row (F1-F5 modes, and the 4x4 keypad `cam_keyboard.c` decodes) beside it.
+  The pad sends the character through `nc_visual_key_for_char()` - the same
+  table `nc_module.c` maps the hardware keypad through - and takes its labels
+  from the screen, so the bench cannot state a key meaning of its own;
 - `nc_g7x.c` gives RUN, the preview and the editor one shared answer to "where
   does this G7x block start and end", so the three views cannot disagree.
 
@@ -297,5 +300,11 @@ pio run -e RP2350-LEANCAM-LVDS      # the panel change still builds for the mach
   window, and the tracked duplicate `leancam_gcode.c` copy should be deleted.
 - NC RUN on the desktop drives the virtual machine; a Grbl transport for real
   hardware is the next integration step.
-- The 3x3 mapping question (side pad vs the on-screen bottom row) is a layout
-  decision the panel shell is meant to help answer.
+- The key layout question is answered: the shell's keys are the machine's key
+  row (the 4x4 keypad plus the mode keys), each label asked of the active
+  screen, while the panel's on-screen 3x3 stays what the firmware draws - in
+  MANUAL the digits' jog meanings, elsewhere the floating helper. An earlier
+  side pad mapped its cells to footer positions, which sent the wrong key as
+  soon as a mode labelled its slots with letters (MANUAL's `B`/`C`/`D`) or
+  skipped a slot; `--padtest` now fails if a mode offers a key the keypad has
+  not.

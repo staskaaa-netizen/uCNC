@@ -31,5 +31,5 @@ lvds_color_t nc_col_footer_text(void) { return lvds_palette_element(LC_ELEM_FOOT
 lvds_color_t nc_col_footer_value(void) { return lvds_palette_element(LC_ELEM_FOOTER_VALUE); }
 lvds_color_t nc_col_footer_button(void) { return lvds_palette_color(white_warm); }
 lvds_color_t nc_col_tool_mark(void) { return lvds_palette_element(LC_ELEM_PREVIEW_TOOL_MARK); }
-lvds_color_t nc_col_tool_fill(void) { return lvds_palette_color(yellow); }
+lvds_color_t nc_col_tool_fill(void) { return lvds_palette_color(tool_orange); }
 lvds_color_t nc_col_tool_crosshair(void) { return lvds_palette_element(LC_ELEM_PREVIEW_TOOL); }

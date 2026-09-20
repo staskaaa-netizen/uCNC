@@ -71,6 +71,9 @@ virtualeeprom
 *.dat
 *.zip
 *.nc
+!uCNC/src/modules/nc/tests/fixtures/*.nc
+!tools/nc_sender/tests/*.nc
+!uCNC/src/modules/g7x/tests/serial/*.nc
 tmp/
 
 # VSCode
@@ -87,3 +90,6 @@ managed_components
 sdkconfig.*
 !sdkconfig.defaults
 *.vcd
+# Python tooling
+__pycache__/
+*.pyc

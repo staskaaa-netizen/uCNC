@@ -10,8 +10,10 @@
 extern "C" {
 #endif
 
-#define NC_MDI_PATH "mdi.nc"
-#define NC_TOOL_PATH "tool.t"
+/* Drive-qualified: a bare name never reaches a driver - uCNC's fs layer
+   refuses a path that does not start with a drive, so "tool.t" opened nothing
+   on the machine (the desktop bench was more forgiving). */
+#define NC_TOOL_PATH "/D/nc/files/tool.t"
 
 typedef struct {
     uint16_t exec_state;
@@ -43,6 +45,8 @@ void nc_state_remember_cursor(const nc_document_t *doc);
 const char *nc_state_path(nc_mode_t mode);
 bool nc_state_tool_path_supported(const char *path);
 void nc_state_save(void);
+/* Writes the state file if anything changed since the last flush. */
+void nc_state_flush(void);
 bool nc_state_load_document(nc_mode_t mode, nc_document_t *doc);
 void nc_state_runtime(nc_runtime_state_t *state);
 void nc_state_snapshot(const nc_document_t *doc, nc_snapshot_t *snapshot);

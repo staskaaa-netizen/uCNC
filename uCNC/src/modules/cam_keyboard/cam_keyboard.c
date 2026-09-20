@@ -39,6 +39,7 @@ SOFTI2C(camkbi2c, CAM_KB_I2C_FREQ, CAM_KB_I2C_SCL, CAM_KB_I2C_SDA);
 
 static uint8_t   g_cam_kb_raw[6];
 static cam_key_t g_cam_kb_key = CAM_KEY_NONE;
+static char      g_cam_kb_press;          /* key that went down in this update */
 static bool      g_cam_kb_changed = false;
 static bool      g_cam_kb_inited = false;
 static uint32_t  g_cam_kb_next_init_ms = 0;
@@ -123,6 +124,7 @@ void cam_keyboard_init(void)
 
     cam_keyboard_clear_raw();
     g_cam_kb_key = CAM_KEY_NONE;
+    g_cam_kb_press = 0;
     g_cam_kb_changed = false;
     g_cam_kb_inited = ok;
     g_cam_kb_next_init_ms = mcu_millis() + (ok ? 0u : 1000u);
@@ -130,10 +132,12 @@ void cam_keyboard_init(void)
 
 cam_key_t cam_keyboard_decode_key(const uint8_t raw[6])
 {
-    uint8_t evt = raw[0];
-
-    if (evt & 0x80)
-        return CAM_KEY_NONE;
+    /* Bit 7 of the event byte is the release flag; the key is the low seven
+       bits either way. Reading a release as "no key" is what left the driver
+       believing a key was still down: the next press of that key then looked
+       like a repeat and was thrown away, so every key worked once until
+       another one was pressed. */
+    uint8_t evt = (uint8_t)(raw[0] & 0x7F);
 
     switch (evt)
     {
@@ -188,8 +192,6 @@ char cam_keyboard_key_to_char(cam_key_t key)
 void cam_keyboard_update(void)
 {
     uint8_t count;
-    uint8_t evt;
-    bool got_press = false;
 
     if (!g_cam_kb_inited) {
         cam_keyboard_init();
@@ -197,34 +199,49 @@ void cam_keyboard_update(void)
     }
 
     g_cam_kb_changed = false;
+    g_cam_kb_press = 0;
 
     if (!cam_keyboard_read_reg(TCA8418_REG_KEY_LCK_EC, &count)) {
         g_cam_kb_inited = false;
         g_cam_kb_next_init_ms = mcu_millis() + 1000u;
+        g_cam_kb_key = CAM_KEY_NONE;
         return;
     }
 
     count &= 0x0F;
     if (!count)
-        return;
+        return;     /* nothing new: a key that is down stays down */
 
     while (count--)
     {
+        uint8_t evt;
+        cam_key_t key;
+
         if (!cam_keyboard_read_reg(TCA8418_REG_KEY_EVENT_A, &evt))
             break;
 
-        if ((evt & 0x80) == 0)
+        cam_keyboard_clear_raw();
+        g_cam_kb_raw[0] = evt;
+        key = cam_keyboard_decode_key(g_cam_kb_raw);
+        if (key == CAM_KEY_NONE)
+            continue;
+
+        if (evt & 0x80)
         {
-            cam_keyboard_clear_raw();
-            g_cam_kb_raw[0] = evt;
-            g_cam_kb_key = cam_keyboard_decode_key(g_cam_kb_raw);
-            g_cam_kb_changed = (g_cam_kb_key != CAM_KEY_NONE);
-            got_press = g_cam_kb_changed;
+            /* Release: the key comes up, whether or not its press was in this
+               same read. */
+            if (key == g_cam_kb_key)
+                g_cam_kb_key = CAM_KEY_NONE;
+        }
+        else
+        {
+            g_cam_kb_key = key;
+            /* The press is kept apart from the key that is down: a tap whose
+               release arrives in the same read is still a press. */
+            g_cam_kb_press = cam_keyboard_key_to_char(key);
+            g_cam_kb_changed = true;
         }
     }
-
-    if (!got_press)
-        g_cam_kb_key = CAM_KEY_NONE;
 
     (void)cam_keyboard_write_reg(TCA8418_REG_INT_STAT, 0xFF);
 }
@@ -242,6 +259,11 @@ cam_key_t cam_keyboard_key(void)
 char cam_keyboard_key_char(void)
 {
     return cam_keyboard_key_to_char(g_cam_kb_key);
+}
+
+char cam_keyboard_pressed_char(void)
+{
+    return g_cam_kb_press;
 }
 
 bool cam_keyboard_changed(void)

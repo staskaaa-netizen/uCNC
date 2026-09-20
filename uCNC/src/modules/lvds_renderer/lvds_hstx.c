@@ -363,8 +363,15 @@ static uint32_t lvds_hstx_line_addr_for_v(uint32_t v, bool *active_video, uint16
 
     if ((v < LVDS_HSTX_V_FRONT_PORCH) ||
         ((v >= LVDS_HSTX_V_FRONT_PORCH + LVDS_HSTX_V_SYNC_WIDTH) &&
-         (v < LVDS_HSTX_V_INACTIVE))) {
+        (v < LVDS_HSTX_V_INACTIVE))) {
         if (v == (LVDS_HSTX_V_INACTIVE - 1)) {
+            /*
+             * An active-encoded line inside the vertical blanking, one line
+             * before the active region: the buffer carries DE, so a panel that
+             * displays blanking lines shows this buffer's content above the
+             * frame. Kept as it has always been; change it only with a panel
+             * check.
+             */
             return (uint32_t)(uintptr_t)g_active_line[0];
         }
         return (uint32_t)(uintptr_t)g_inactive_line;
@@ -422,12 +429,24 @@ static void __no_inline_not_in_flash_func(lvds_hstx_descriptor_refill)(void)
     g_descriptor_last_index = index;
 
     if (index < LVDS_HSTX_V_TOTAL) {
+        /*
+         * Prepare the line the ring reaches LVDS_HSTX_ACTIVE_LINE_BUFFERS - 1
+         * lines later, wrapping into the next frame. Preparing from the current
+         * descriptor's y instead, and stopping at the image edge, left the
+         * first lines of every frame holding the tail of the previous one:
+         * they are reached from the vertical blanking, where no line was
+         * prepared at all.
+         */
+        uint32_t ahead = index + (LVDS_HSTX_ACTIVE_LINE_BUFFERS - 1u);
         bool active_video;
         uint16_t y;
-        (void)lvds_hstx_line_addr_for_v(index, &active_video, &y);
-        if (active_video && ((uint32_t)y + 3u) < LVDS_HSTX_HEIGHT) {
-            uint16_t prepare_line = (uint16_t)(y + 3u);
-            compute_active_line(prepare_line, (uint8_t)(prepare_line % LVDS_HSTX_ACTIVE_LINE_BUFFERS));
+
+        if (ahead >= LVDS_HSTX_V_TOTAL) {
+            ahead -= LVDS_HSTX_V_TOTAL;
+        }
+        (void)lvds_hstx_line_addr_for_v(ahead, &active_video, &y);
+        if (active_video) {
+            compute_active_line(y, (uint8_t)(y % LVDS_HSTX_ACTIVE_LINE_BUFFERS));
         }
     }
 }

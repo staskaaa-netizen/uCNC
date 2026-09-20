@@ -27,6 +27,7 @@ CORE = $(wildcard $(SRC)/*.c) $(wildcard $(SRC)/core/*.c) \
        $(SRC)/hal/mcus/virtual/virtual_windows.c
 
 MODULES = $(SRC)/modules/g7_g8/parser_g7_g8.c \
+          $(SRC)/modules/cam_keyboard/cam_keyboard.c \
           $(SRC)/modules/g7x/g7x.c $(SRC)/modules/g7x/g7x_contour.c \
           $(SRC)/modules/g7x/g7x_source.c \
           $(SRC)/modules/nc/nc.c $(SRC)/modules/nc/nc_emit.c \

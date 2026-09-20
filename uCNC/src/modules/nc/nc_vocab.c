@@ -45,6 +45,91 @@ static const nc_vocab_entry_t g_nc_vocab[] = {
     { 973, 'P', "Preview mode" }
 };
 
+typedef struct {
+    int gcode;
+    const char *name;
+    const char *parameters;
+} nc_gcode_info_t;
+
+static const nc_gcode_info_t g_nc_gcodes[] = {
+    { 0, "Rapid move", "X Z" },
+    { 1, "Linear move", "X Z F C R" },
+    { 2, "Arc CW", "X Z R I K F" },
+    { 3, "Arc CCW", "X Z R I K F" },
+    { 4, "Dwell", "P" },
+    { 17, "XY plane", "" },
+    { 18, "XZ plane", "" },
+    { 19, "YZ plane", "" },
+    { 20, "Inch units", "" },
+    { 21, "Metric units", "" },
+    { 28, "Home", "X Z" },
+    { 30, "Home secondary", "X Z" },
+    { 33, "Spindle sync", "X Z K F" },
+    { 71, "OD roughing", "U R X Z F P Q N" },
+    { 72, "ID roughing", "W R X Z F P Q N" },
+    { 76, "Threading", "X Z P Q F I L R" },
+    { 90, "Absolute distance", "" },
+    { 91, "Incremental distance", "" },
+    { 94, "Feed per minute", "" },
+    { 95, "Feed per revolution", "" },
+    { 96, "Constant surface speed", "S" },
+    { 97, "Constant spindle speed", "S" },
+    { 970, "Preview extents", "X U Z W" },
+    { 971, "Stock setup", "X Z I E" },
+    { 972, "Chuck clamp", "C" },
+    { 973, "Preview mode", "P" }
+};
+
+const char *nc_vocab_gcode_name(int gcode)
+{
+    size_t i;
+    for (i = 0; i < sizeof(g_nc_gcodes) / sizeof(g_nc_gcodes[0]); i++) {
+        if (g_nc_gcodes[i].gcode == gcode) {
+            return g_nc_gcodes[i].name;
+        }
+    }
+    return 0;
+}
+
+const char *nc_vocab_gcode_parameters(int gcode)
+{
+    size_t i;
+    for (i = 0; i < sizeof(g_nc_gcodes) / sizeof(g_nc_gcodes[0]); i++) {
+        if (g_nc_gcodes[i].gcode == gcode) {
+            return g_nc_gcodes[i].parameters;
+        }
+    }
+    return 0;
+}
+
+const char *nc_vocab_gcode_template(int gcode)
+{
+    switch (gcode) {
+    case 0: return "G0 X0 Z0";
+    case 1: return "G1 X0 Z0 C0 R0";
+    case 2: return "G2 X0 Z0 R0 I0 K0 F0";
+    case 3: return "G3 X0 Z0 R0 I0 K0 F0";
+    case 4: return "G4 P0";
+    case 28: return "G28 X0 Z0";
+    case 30: return "G30 X0 Z0";
+    case 33: return "G33 X0 Z0 K0 F0";
+    case 71: return "G71 U0 R0 X0 Z0 F0 P0 Q0 N0";
+    case 72: return "G72 W0 R0 X0 Z0 F0 P0 Q0 N0";
+    case 76: return "G76 X0 Z0 P0 Q0 F0 I0 L0 R0";
+    case 90: return "G90";
+    case 91: return "G91";
+    case 94: return "G94";
+    case 95: return "G95";
+    case 96: return "G96 S0";
+    case 97: return "G97 S0";
+    case 970: return "G970 X0 U0 Z0 W0";
+    case 971: return "G971 X0 Z0 I0 E0";
+    case 972: return "G972 C0";
+    case 973: return "G973 P0";
+    default: return 0;
+    }
+}
+
 static int nc_vocab_line_gcode(const char *line)
 {
     nc_word_t words[12];

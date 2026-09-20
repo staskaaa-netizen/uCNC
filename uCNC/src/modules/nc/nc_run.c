@@ -8,6 +8,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static bool g_nc_run_active;
 static bool g_nc_run_hold;
@@ -24,8 +25,21 @@ static bool g_nc_run_stream_active;
 static bool g_nc_run_single_pending;
 static size_t g_nc_run_stream_end_line;
 
+/* One-shot blocks the panel sends on its own (a jog, a zero, a touch-off, a
+   spindle start). They travel on the same reader as the RUN stream, so they
+   cannot share its single line buffer: a jog is two blocks - the incremental
+   move and the G90 that puts the machine back - and writing the second one
+   over the first would leave the parser with only the G90. */
+#define NC_RUN_SEND_SLOTS 4
+static char g_nc_run_send_line[NC_RUN_SEND_SLOTS][NC_MAX_LINE_LEN + 2];
+static size_t g_nc_run_send_pos[NC_RUN_SEND_SLOTS];
+static size_t g_nc_run_send_len[NC_RUN_SEND_SLOTS];
+static uint8_t g_nc_run_send_head;
+static uint8_t g_nc_run_send_count;
+
 static bool nc_run_stream_load_line(void);
 static void nc_run_stream_clear(void);
+static void nc_run_send_pop(void);
 static bool nc_run_failed(void *args);
 static bool nc_run_parser_reset(void *args);
 CREATE_EVENT_LISTENER(cnc_parse_cmd_error, nc_run_failed);
@@ -33,6 +47,15 @@ CREATE_EVENT_LISTENER(parser_reset, nc_run_parser_reset);
 
 static uint8_t nc_run_stream_available(void)
 {
+    /* Panel blocks first: they are one block each and are already complete. */
+    while (g_nc_run_send_count > 0u) {
+        uint8_t slot = g_nc_run_send_head;
+
+        if (g_nc_run_send_pos[slot] < g_nc_run_send_len[slot]) {
+            return 1u;
+        }
+        nc_run_send_pop();
+    }
     if (g_nc_run_stream_pos < g_nc_run_stream_len) {
         return 1u;
     }
@@ -45,6 +68,14 @@ static uint8_t nc_run_stream_available(void)
 
 static uint8_t nc_run_stream_getc(void)
 {
+    while (g_nc_run_send_count > 0u) {
+        uint8_t slot = g_nc_run_send_head;
+
+        if (g_nc_run_send_pos[slot] < g_nc_run_send_len[slot]) {
+            return (uint8_t)g_nc_run_send_line[slot][g_nc_run_send_pos[slot]++];
+        }
+        nc_run_send_pop();
+    }
     if (g_nc_run_stream_pos >= g_nc_run_stream_len &&
         !nc_run_stream_load_line()) {
         return 0;
@@ -52,11 +83,61 @@ static uint8_t nc_run_stream_getc(void)
     return (uint8_t)g_nc_run_stream_line[g_nc_run_stream_pos++];
 }
 
+static void nc_run_send_clear(void)
+{
+    g_nc_run_send_head = 0u;
+    g_nc_run_send_count = 0u;
+    memset(g_nc_run_send_pos, 0, sizeof(g_nc_run_send_pos));
+    memset(g_nc_run_send_len, 0, sizeof(g_nc_run_send_len));
+}
+
+/* Retire the finished block. Once the reader has nothing of ours left it goes
+   back to the console, otherwise the panel would leave the serial input
+   pointed at a drained buffer after the first jog. */
+static void nc_run_send_pop(void)
+{
+    if (g_nc_run_send_count == 0u) {
+        return;
+    }
+    g_nc_run_send_head = (uint8_t)((g_nc_run_send_head + 1u) % NC_RUN_SEND_SLOTS);
+    g_nc_run_send_count--;
+    if (g_nc_run_send_count == 0u && !g_nc_run_stream_active &&
+        !g_nc_run_single_pending) {
+        grbl_stream_change(NULL);
+    }
+}
+
+static bool nc_run_send_push(const char *line)
+{
+    uint8_t slot;
+    int n;
+
+    if (g_nc_run_send_count >= NC_RUN_SEND_SLOTS) {
+        return false;
+    }
+    slot = (uint8_t)((g_nc_run_send_head + g_nc_run_send_count) % NC_RUN_SEND_SLOTS);
+    n = snprintf(g_nc_run_send_line[slot], sizeof(g_nc_run_send_line[slot]),
+                 "%s\n", line);
+    if (n <= 0) {
+        return false;
+    }
+    if (n >= (int)sizeof(g_nc_run_send_line[slot])) {
+        n = (int)sizeof(g_nc_run_send_line[slot]) - 1;
+        g_nc_run_send_line[slot][n - 1] = '\n';
+        g_nc_run_send_line[slot][n] = '\0';
+    }
+    g_nc_run_send_pos[slot] = 0;
+    g_nc_run_send_len[slot] = (size_t)n;
+    g_nc_run_send_count++;
+    return true;
+}
+
 static void nc_run_stream_clear(void)
 {
     bool was_active = g_nc_run_stream_active || g_nc_run_single_pending;
     g_nc_run_single_pending = false;
 
+    nc_run_send_clear();
     g_nc_run_stream_pos = 0;
     g_nc_run_stream_len = 0;
     g_nc_run_stream_line[0] = '\0';
@@ -249,28 +330,28 @@ void nc_run_set_line(const nc_document_t *doc, size_t line)
     g_nc_run_line = line;
 }
 
-void nc_run_send_line(const char *line)
+/* True while the RUN reader is holding program blocks. A panel block must not
+   cut into a program: the modal state it leaves behind (G90 after a jog) would
+   land in the middle of the cycle. */
+bool nc_run_streaming(void)
 {
-    int n;
+    return g_nc_run_stream_active;
+}
 
+bool nc_run_send_line(const char *line)
+{
     if (!nc_run_line_sendable(line)) {
-        return;
+        return false;
     }
-    n = snprintf(g_nc_run_stream_line, sizeof(g_nc_run_stream_line), "%s\n", line);
-    if (n <= 0) {
-        return;
+    if (!nc_run_send_push(line)) {
+        grbl_stream_printf("[MSG:NC SEND FULL %.96s]\r\n", line);
+        return false;
     }
-    if (n >= (int)sizeof(g_nc_run_stream_line)) {
-        n = (int)sizeof(g_nc_run_stream_line) - 1;
-        g_nc_run_stream_line[n - 1] = '\n';
-        g_nc_run_stream_line[n] = '\0';
-    }
-    g_nc_run_stream_pos = 0;
-    g_nc_run_stream_len = (size_t)n;
     grbl_stream_printf("[MSG:NC SEND %.96s]\r\n", line);
     grbl_stream_readonly(nc_run_stream_getc,
                          nc_run_stream_available,
                          nc_run_stream_clear);
+    return true;
 }
 
 bool nc_run_send_document_line(const nc_document_t *doc, size_t line)
@@ -299,7 +380,9 @@ bool nc_run_send_document_line(const nc_document_t *doc, size_t line)
         return true;
     }
 
-    nc_run_send_line(text);
+    if (!nc_run_send_line(text)) {
+        return false;
+    }
     g_nc_run_single_pending = true;
     g_nc_run_error = STATUS_OK;
     g_nc_run_last_sent_line = line;

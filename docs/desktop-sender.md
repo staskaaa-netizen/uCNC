@@ -57,9 +57,11 @@ Win32 COM transport, scripted fake-controller tests and CLI smoke checks
 
 On the UI side, `tools/nc_ui_win` runs the real panel layout on Windows: the NC
 screen code draws through the host LVDS backend, so the 800x600 layout, palette
-and fonts are the firmware's, and the machine keys (F1-F6 mode row, F7-F12 soft
-keys, 3x3 numeric pad) sit next to the emulated panel. `python
-tools/test_nc_ui.py` renders a frame headlessly for layout checks.
+and fonts are the firmware's, and the machine keys (F1-F5 mode row and the
+machine's 4x4 keypad) sit next to the emulated panel. `python
+tools/test_nc_ui.py` renders a panel frame and a whole-bench frame headlessly
+and runs the headless checks (`--fstest`, `--presettest`, `--streamtest`,
+`--padtest`).
 
 Next:
 
@@ -70,5 +72,6 @@ Next:
    threading-capable targets.
 3. Character-count streaming to keep the controller buffer full instead of one
    line per acknowledgement.
-4. Host filesystem driver so the desktop UI can reuse `nc_files`-style listing
-   and the document path handling instead of the stdio shim.
+4. ~~Host filesystem driver so the desktop UI can reuse `nc_files`-style
+   listing and the document path handling instead of the stdio shim.~~ Done:
+   `tools/nc_ui_win/host_fs.c` is a real `fs_t` driver for `/D`.

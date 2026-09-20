@@ -11,27 +11,11 @@ static uint32_t g_nc_module_last_draw_ms;
 
 static nc_visual_key_t nc_module_map_key(ui_key_t key)
 {
-    switch (key) {
-    case UI_KEY_DIGIT_0: return NC_VISUAL_KEY_DIGIT_0;
-    case UI_KEY_DIGIT_1: return NC_VISUAL_KEY_DIGIT_1;
-    case UI_KEY_DIGIT_2: return NC_VISUAL_KEY_DIGIT_2;
-    case UI_KEY_DIGIT_3: return NC_VISUAL_KEY_DIGIT_3;
-    case UI_KEY_DIGIT_4: return NC_VISUAL_KEY_DIGIT_4;
-    case UI_KEY_DIGIT_5: return NC_VISUAL_KEY_DIGIT_5;
-    case UI_KEY_DIGIT_6: return NC_VISUAL_KEY_DIGIT_6;
-    case UI_KEY_DIGIT_7: return NC_VISUAL_KEY_DIGIT_7;
-    case UI_KEY_DIGIT_8: return NC_VISUAL_KEY_DIGIT_8;
-    case UI_KEY_DIGIT_9: return NC_VISUAL_KEY_DIGIT_9;
-    case UI_KEY_BACKSPACE: return NC_VISUAL_KEY_BACKSPACE;
-    case UI_KEY_FINISH: return NC_VISUAL_KEY_FINISH;
-    case UI_KEY_CANCEL: return NC_VISUAL_KEY_MODE;
-    /* Up/Down walk between words with the same letter (an X finds the next X)
+    /* The screen owns what a key means, so the keypad only reports which key
+       was pressed; the screen's own table turns the character into an action.
+       B and C walk between words with the same letter (an X finds the next X)
        and never edit; outside a code view the screen falls back to stepping. */
-    case UI_KEY_PREV: return NC_VISUAL_KEY_FIELD_PREV;
-    case UI_KEY_NEXT: return NC_VISUAL_KEY_FIELD_NEXT;
-    case UI_KEY_ACCEPT: return NC_VISUAL_KEY_ACCEPT;
-    default: return NC_VISUAL_KEY_NONE;
-    }
+    return nc_visual_key_for_char(ui_key_char(key));
 }
 
 static void nc_module_poll_keyboard(void)
@@ -43,6 +27,9 @@ static void nc_module_poll_keyboard(void)
             nc_visual_handle_key(key);
         }
     }
+    /* The key that is still down is what keeps a MANUAL feed going: the panel
+       cancels the jog when the key comes up. */
+    nc_visual_hold_key(ui_input_keypad_held_key());
 }
 
 static bool nc_module_update(void *args)
@@ -52,6 +39,7 @@ static bool nc_module_update(void *args)
 
     (void)args;
     nc_module_poll_keyboard();
+    nc_visual_idle_tasks();
 
     now = mcu_millis();
     periodic = nc_visual_periodic_needed() &&

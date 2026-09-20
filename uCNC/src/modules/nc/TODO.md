@@ -556,15 +556,16 @@ NC supplies document access and UI, not a second cycle generator.
   **Next cuts, in this order:**
   1. `nc_pad.c`: the one 3x3 grid the MANUAL jog pad, the EDIT helper and the
      planned `3x3_path_builder.c` share - the drawing
-     (`nc_visual_draw_modal_items()`) and the item shape are already one, the
+     (`nc_draw_modal_items()`) and the item shape are already one, the
      cut is about where the nine entries and their meaning live;
   2. `nc_manual.c`: the MANUAL screen's own ~310 lines plus its jog/feed state;
   3. the editor and the key handling, which is what is left of `nc_visual.c`
      once 1 and 2 are out - that file is still over the 2k line mark at 3.5k;
-  4. only then the rename: the moved functions are still `nc_visual_draw_*()` in
-     `nc_draw.c` and the preview group still says `nc_visual_*` in
-     `nc_preview.c`. A rename is a separate commit because it hides a behaviour
-     change in a diff.
+  The rename was done before those cuts, as its own commit: the drawn functions
+  are `nc_draw_*()` in `nc_draw.c` and `nc_preview_*()` in `nc_preview.c`, and
+  `nc_visual_*()` now means what it says - a function of the screen file. It ran
+  alone so the diff showed nothing but names, and the frames were re-diffed
+  after it.
 
   The drawing half (`nc_draw`: text clipping and wrapping, the tool glyph
   geometry, chuck/stock hatching, the dimension callouts, the floating 3x3 grid
@@ -587,7 +588,7 @@ NC supplies document access and UI, not a second cycle generator.
 
   **And the 3x3 grid gets the same treatment: one visual, two users, a third
   later.** The drawing half is already shared -
-  `nc_visual_draw_modal_items()` paints both the MANUAL jog pad and the floating
+  `nc_draw_modal_items()` paints both the MANUAL jog pad and the floating
   helper - but each caller brings its own nine labels and its own state, so the
   meaning of a key lives in two places. Target: one unit
   (`nc_pad.c` / `.h`, inside this module, same "sources not a module" rule)

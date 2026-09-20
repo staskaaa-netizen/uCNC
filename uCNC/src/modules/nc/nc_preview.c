@@ -203,7 +203,7 @@ void nc_preview_collect(const nc_document_t *doc, nc_preview_info_t *p)
 }
 
 #if NC_PREVIEW_DIN_STYLE
-static void nc_visual_draw_din_layer(const nc_preview_ctx_t *ctx,
+static void nc_preview_din_layer(const nc_preview_ctx_t *ctx,
                                      const nc_preview_info_t *preview,
                                      int stock_left,
                                      int stock_top,
@@ -228,15 +228,15 @@ static void nc_visual_draw_din_layer(const nc_preview_ctx_t *ctx,
         dim_x = stock_right - 18;
     }
 
-    nc_visual_draw_centerline(stock_left - 34,
+    nc_draw_centerline(stock_left - 34,
                               stock_top,
                               stock_right + 18,
                               stock_top);
-    nc_visual_draw_centerline(z0_x,
+    nc_draw_centerline(z0_x,
                               stock_top - 26,
                               z0_x,
                               stock_bottom + 20);
-    nc_visual_draw_origin_marker(z0_x, stock_top);
+    nc_draw_origin_marker(z0_x, stock_top);
 
     /*lvds_draw_line(z0_x, stock_top, z0_x + 24, stock_top - 22, NC_VISUAL_DIM);
     lvds_draw_text(z0_x + 27,
@@ -255,17 +255,17 @@ static void nc_visual_draw_din_layer(const nc_preview_ctx_t *ctx,
 
     if (ctx->mode != NC_MODE_RUN) {
         snprintf(label, sizeof(label), "%.0f", preview->stock_x);
-        nc_visual_draw_diameter_dimension(dim_x,
+        nc_draw_diameter_dimension(dim_x,
                                           stock_top,
                                           stock_bottom,
                                           label);
     }
     if (ctx->mode != NC_MODE_RUN &&
         preview->stock_i > 0.0f && preview->stock_i < preview->stock_x) {
-        id_y = nc_visual_preview_x(preview, stock_top, stock_h, preview->stock_i);
-        nc_visual_draw_centerline(stock_left - 18, id_y, stock_right + 8, id_y);
+        id_y = nc_draw_preview_x(preview, stock_top, stock_h, preview->stock_i);
+        nc_draw_centerline(stock_left - 18, id_y, stock_right + 8, id_y);
         snprintf(label, sizeof(label), "%.0f", preview->stock_i);
-        nc_visual_draw_diameter_dimension(dim_x - 18,
+        nc_draw_diameter_dimension(dim_x - 18,
                                           stock_top,
                                           id_y,
                                           label);
@@ -273,7 +273,7 @@ static void nc_visual_draw_din_layer(const nc_preview_ctx_t *ctx,
 }
 #endif
 
-static void nc_visual_draw_contour_points(const nc_preview_ctx_t *ctx,
+static void nc_preview_contour_points(const nc_preview_ctx_t *ctx,
                                           const nc_document_t *doc,
                                           const nc_preview_info_t *preview,
                                           int z0_x,
@@ -317,21 +317,21 @@ static void nc_visual_draw_contour_points(const nc_preview_ctx_t *ctx,
         has_x = nc_preview_line_word_float(line, 'X', &x);
         has_z = nc_preview_line_word_float(line, 'Z', &z);
         if (has_x || has_z) {
-            int px = nc_visual_preview_z(preview, z0_x, stock_w, z);
-            int py = nc_visual_preview_x(preview, stock_top, stock_h, x);
+            int px = nc_draw_preview_z(preview, z0_x, stock_w, z);
+            int py = nc_draw_preview_x(preview, stock_top, stock_h, x);
             float feature = 0.0f;
             if (ctx->full ||
                 (ctx->mode == NC_MODE_RUN &&
                  !ctx->streaming &&
                  !ctx->hold &&
                  !cnc_get_exec_state(EXEC_RUN | EXEC_HOLD))) {
-                nc_visual_draw_contour_point_marker(px, py, i == doc->cursor_line);
+                nc_draw_contour_point_marker(px, py, i == doc->cursor_line);
             }
             snprintf(label, sizeof(label), "%.0f", x);
-            nc_visual_draw_x_point_dimension(x_dim, prev_x_py, py, stock_top, px, label);
+            nc_draw_x_point_dimension(x_dim, prev_x_py, py, stock_top, px, label);
             prev_x_py = py;
             snprintf(label, sizeof(label), "%.0f", z);
-            nc_visual_draw_z_point_dimension(prev_z_px, px, z0_x, stock_top, py, label);
+            nc_draw_z_point_dimension(prev_z_px, px, z0_x, stock_top, py, label);
             prev_z_px = px;
             if (nc_preview_line_word_float(line, 'R', &feature) && feature > 0.0001f) {
                 snprintf(label, sizeof(label), "R%.0f", feature);
@@ -343,7 +343,7 @@ static void nc_visual_draw_contour_points(const nc_preview_ctx_t *ctx,
         }
     }
     snprintf(label, sizeof(label), "%.0f", -preview->stock_visible_z);
-    nc_visual_draw_z_point_dimension(prev_z_px,
+    nc_draw_z_point_dimension(prev_z_px,
                                      stock_left,
                                      z0_x,
                                      stock_top,
@@ -361,7 +361,7 @@ static void nc_visual_draw_contour_points(const nc_preview_ctx_t *ctx,
 #endif
 }
 
-static void nc_visual_draw_emitted_preview(const nc_preview_ctx_t *ctx,
+static void nc_preview_emitted_preview(const nc_preview_ctx_t *ctx,
                                            const nc_document_t *doc,
                                            const nc_preview_info_t *preview,
                                            int z0_x,
@@ -415,7 +415,7 @@ static void nc_visual_draw_emitted_preview(const nc_preview_ctx_t *ctx,
                 drawn_lines++;
                 continue;
             }
-            (void)nc_visual_draw_emitted_motion_line(preview,
+            (void)nc_draw_emitted_motion_line(preview,
                                                      z0_x,
                                                      stock_w,
                                                      stock_top,
@@ -436,10 +436,10 @@ static void nc_visual_draw_emitted_preview(const nc_preview_ctx_t *ctx,
 
 static float nc_live_runtime_x_to_diam(float runtime_x)
 {
-    return nc_visual_absf(runtime_x) * 2.0f;
+    return nc_draw_absf(runtime_x) * 2.0f;
 }
 
-static bool nc_visual_live_tool_rect(const nc_preview_info_t *preview,
+static bool nc_preview_live_tool_rect(const nc_preview_info_t *preview,
                                      const nc_runtime_state_t *runtime,
                                      int z0_x,
                                      int stock_w,
@@ -466,19 +466,19 @@ static bool nc_visual_live_tool_rect(const nc_preview_info_t *preview,
         return false;
     }
 
-    sx = nc_visual_preview_z(preview, z0_x, stock_w, runtime->z);
-    sy = nc_visual_preview_x(preview, stock_top, stock_h, nc_live_runtime_x_to_diam(runtime->x));
-    sx = nc_visual_clampi(sx, 0, LVDS_HSTX_WIDTH - 1);
-    sy = nc_visual_clampi(sy, 44, LVDS_HSTX_HEIGHT - 1);
+    sx = nc_draw_preview_z(preview, z0_x, stock_w, runtime->z);
+    sy = nc_draw_preview_x(preview, stock_top, stock_h, nc_live_runtime_x_to_diam(runtime->x));
+    sx = nc_draw_clampi(sx, 0, LVDS_HSTX_WIDTH - 1);
+    sy = nc_draw_clampi(sy, 44, LVDS_HSTX_HEIGHT - 1);
 
     min_x = 0;
-    max_x = nc_visual_clampi(z0_x + stock_w + pad, 0, LVDS_HSTX_WIDTH - 1);
-    min_y = nc_visual_clampi(stock_top - pad, 44, LVDS_HSTX_HEIGHT - 1);
-    max_y = nc_visual_clampi(stock_top + stock_h + pad, 44, LVDS_HSTX_HEIGHT - 1);
-    x0 = nc_visual_clampi(sx - pad, min_x, max_x);
-    y0 = nc_visual_clampi(sy - pad, min_y, max_y);
-    x1 = nc_visual_clampi(sx + pad, min_x, max_x);
-    y1 = nc_visual_clampi(sy + pad, min_y, max_y);
+    max_x = nc_draw_clampi(z0_x + stock_w + pad, 0, LVDS_HSTX_WIDTH - 1);
+    min_y = nc_draw_clampi(stock_top - pad, 44, LVDS_HSTX_HEIGHT - 1);
+    max_y = nc_draw_clampi(stock_top + stock_h + pad, 44, LVDS_HSTX_HEIGHT - 1);
+    x0 = nc_draw_clampi(sx - pad, min_x, max_x);
+    y0 = nc_draw_clampi(sy - pad, min_y, max_y);
+    x1 = nc_draw_clampi(sx + pad, min_x, max_x);
+    y1 = nc_draw_clampi(sy + pad, min_y, max_y);
 
     if (rx) *rx = x0;
     if (ry) *ry = y0;
@@ -487,7 +487,7 @@ static bool nc_visual_live_tool_rect(const nc_preview_info_t *preview,
     return true;
 }
 
-static void nc_visual_draw_live_tool(const nc_preview_info_t *preview,
+static void nc_preview_live_tool(const nc_preview_info_t *preview,
                                      const nc_runtime_state_t *runtime,
                                      int z0_x,
                                      int stock_w,
@@ -510,8 +510,8 @@ static void nc_visual_draw_live_tool(const nc_preview_info_t *preview,
         return;
     }
 
-    sx = nc_visual_preview_z(preview, z0_x, stock_w, runtime->z);
-    sy = nc_visual_preview_x(preview, stock_top, stock_h, nc_live_runtime_x_to_diam(runtime->x));
+    sx = nc_draw_preview_z(preview, z0_x, stock_w, runtime->z);
+    sy = nc_draw_preview_x(preview, stock_top, stock_h, nc_live_runtime_x_to_diam(runtime->x));
     /* Inside the pane or not at all. A marker clamped to the whole screen is
        drawn over the header, the code pane or the footer when the axis is out
        of view - and because only the pane is redrawn every frame, that marker
@@ -522,14 +522,14 @@ static void nc_visual_draw_live_tool(const nc_preview_info_t *preview,
         return;
     }
 
-    if (nc_visual_live_tool_rect(preview, runtime, z0_x, stock_w, stock_top, stock_h, &rx, &ry, &rw, &rh)) {
+    if (nc_preview_live_tool_rect(preview, runtime, z0_x, stock_w, stock_top, stock_h, &rx, &ry, &rw, &rh)) {
         g_nc_live_tool_rect_x = rx;
         g_nc_live_tool_rect_y = ry;
         g_nc_live_tool_rect_w = rw;
         g_nc_live_tool_rect_h = rh;
         g_nc_live_tool_rect_valid = true;
     }
-    nc_visual_draw_tool_glyph(sx, sy, NC_LIVE_TOOL_GLYPH, tool, NC_VISUAL_PREVIEW_BG, false);
+    nc_draw_tool_glyph(sx, sy, NC_LIVE_TOOL_GLYPH, tool, NC_VISUAL_PREVIEW_BG, false);
 }
 
 static bool nc_live_stock_alloc(void)
@@ -576,11 +576,11 @@ static void nc_live_stock_reset(const nc_preview_info_t *preview,
         return;
     }
 
-    stock_w = nc_visual_clampi(stock_w, 1, NC_LIVE_STOCK_MAX_W);
-    stock_h = nc_visual_clampi(stock_h, 1, NC_LIVE_STOCK_MAX_H);
+    stock_w = nc_draw_clampi(stock_w, 1, NC_LIVE_STOCK_MAX_W);
+    stock_h = nc_draw_clampi(stock_h, 1, NC_LIVE_STOCK_MAX_H);
     memset(g_nc_live_stock_mask, 0, (size_t)NC_LIVE_STOCK_MAX_W * NC_LIVE_STOCK_MAX_H);
     if (preview->stock_i > 0.0f && preview->stock_x > 0.0f) {
-        material_top = nc_visual_clampi((int)((preview->stock_i / preview->stock_x) * (float)stock_h),
+        material_top = nc_draw_clampi((int)((preview->stock_i / preview->stock_x) * (float)stock_h),
                                         0,
                                         stock_h - 1);
     }
@@ -603,10 +603,10 @@ static void nc_live_stock_remove_rect(int x0, int y0, int x1, int y1)
     if (!g_nc_live_stock_mask || !g_nc_live_stock_ready) {
         return;
     }
-    x0 = nc_visual_clampi(x0, 0, g_nc_live_stock_w - 1);
-    x1 = nc_visual_clampi(x1, 0, g_nc_live_stock_w - 1);
-    y0 = nc_visual_clampi(y0, 0, g_nc_live_stock_h - 1);
-    y1 = nc_visual_clampi(y1, 0, g_nc_live_stock_h - 1);
+    x0 = nc_draw_clampi(x0, 0, g_nc_live_stock_w - 1);
+    x1 = nc_draw_clampi(x1, 0, g_nc_live_stock_w - 1);
+    y0 = nc_draw_clampi(y0, 0, g_nc_live_stock_h - 1);
+    y1 = nc_draw_clampi(y1, 0, g_nc_live_stock_h - 1);
     if (x1 < x0) {
         int t = x0;
         x0 = x1;
@@ -645,14 +645,14 @@ static void nc_live_stock_cut_sweep(const nc_preview_info_t *preview,
     if (!preview || !g_nc_live_stock_ready) {
         return;
     }
-    sx0 = nc_visual_preview_z(preview, z0_x, stock_w, z0) - stock_left;
-    sx1 = nc_visual_preview_z(preview, z0_x, stock_w, z1) - stock_left;
-    sy0 = nc_visual_preview_x(preview, stock_top, stock_h, x0) - stock_top;
-    sy1 = nc_visual_preview_x(preview, stock_top, stock_h, x1) - stock_top;
-    samples = nc_visual_absf((float)(sx1 - sx0)) > nc_visual_absf((float)(sy1 - sy0)) ?
-              nc_visual_absf((float)(sx1 - sx0)) :
-              nc_visual_absf((float)(sy1 - sy0));
-    samples = nc_visual_clampi(samples, 1, 80);
+    sx0 = nc_draw_preview_z(preview, z0_x, stock_w, z0) - stock_left;
+    sx1 = nc_draw_preview_z(preview, z0_x, stock_w, z1) - stock_left;
+    sy0 = nc_draw_preview_x(preview, stock_top, stock_h, x0) - stock_top;
+    sy1 = nc_draw_preview_x(preview, stock_top, stock_h, x1) - stock_top;
+    samples = nc_draw_absf((float)(sx1 - sx0)) > nc_draw_absf((float)(sy1 - sy0)) ?
+              nc_draw_absf((float)(sx1 - sx0)) :
+              nc_draw_absf((float)(sy1 - sy0));
+    samples = nc_draw_clampi(samples, 1, 80);
     for (i = 0; i <= samples; i++) {
         float t = (float)i / (float)samples;
         int sx = sx0 + (int)((float)(sx1 - sx0) * t);
@@ -719,10 +719,10 @@ static void nc_live_stock_draw(int stock_left,
     if (!g_nc_live_stock_mask || !g_nc_live_stock_ready) {
         return;
     }
-    clip_left = nc_visual_clampi(clip_left, 0, g_nc_live_stock_w - 1);
-    clip_right = nc_visual_clampi(clip_right, 0, g_nc_live_stock_w - 1);
-    y0 = nc_visual_clampi(clip_y - stock_top, 0, g_nc_live_stock_h - 1);
-    y1 = nc_visual_clampi(clip_y + clip_h - stock_top - 1, 0, g_nc_live_stock_h - 1);
+    clip_left = nc_draw_clampi(clip_left, 0, g_nc_live_stock_w - 1);
+    clip_right = nc_draw_clampi(clip_right, 0, g_nc_live_stock_w - 1);
+    y0 = nc_draw_clampi(clip_y - stock_top, 0, g_nc_live_stock_h - 1);
+    y1 = nc_draw_clampi(clip_y + clip_h - stock_top - 1, 0, g_nc_live_stock_h - 1);
     if (clip_right < clip_left || y1 < y0) {
         return;
     }
@@ -754,7 +754,7 @@ static void nc_live_stock_draw(int stock_left,
     }
 }
 
-static bool nc_visual_draw_live_stock(const nc_preview_ctx_t *ctx,
+static bool nc_preview_live_stock(const nc_preview_ctx_t *ctx,
                                       nc_preview_times_t *times,
                                       const nc_preview_info_t *preview,
                                       const nc_runtime_state_t *runtime,
@@ -803,7 +803,7 @@ static bool nc_visual_draw_live_stock(const nc_preview_ctx_t *ctx,
     }
     g_nc_live_stock_was_active = live_run || retain_stock;
     if (!g_nc_live_stock_ready) {
-        nc_visual_draw_text_clip(stock_left,
+        nc_draw_text_clip(stock_left,
                                  stock_top + 16,
                                  "Live stock needs PSRAM",
                                  28,
@@ -813,24 +813,24 @@ static bool nc_visual_draw_live_stock(const nc_preview_ctx_t *ctx,
         return true;
     }
     t0 = mcu_micros();
-    clear_y = nc_visual_clampi(stock_top - 24, 44, NC_FOOTER_Y - 1);
-    clear_h = nc_visual_clampi(stock_top + stock_h + 74 - clear_y, 1, NC_FOOTER_Y - clear_y);
+    clear_y = nc_draw_clampi(stock_top - 24, 44, NC_FOOTER_Y - 1);
+    clear_h = nc_draw_clampi(stock_top + stock_h + 74 - clear_y, 1, NC_FOOTER_Y - clear_y);
     lvds_draw_fill_rect(tool_panel_x, clear_y, tool_panel_w, clear_h, NC_VISUAL_PREVIEW_BG);
     t1 = mcu_micros();
     if (live_run) {
         nc_live_stock_update(preview, runtime, z0_x, stock_left, stock_w, stock_top, stock_h);
     }
-    nc_visual_draw_chuck(preview, stock_left, stock_top, stock_w, stock_h);
-    nc_visual_draw_chuck_relief(preview, stock_left, stock_top, stock_h);
+    nc_draw_chuck(preview, stock_left, stock_top, stock_w, stock_h);
+    nc_draw_chuck_relief(preview, stock_left, stock_top, stock_h);
     nc_live_stock_draw(stock_left, stock_top, stock_left, stock_top, stock_w, stock_h);
     t2 = mcu_micros();
 #if NC_PREVIEW_DIN_STYLE
     if (nc_preview_layer(NC_PREVIEW_LAYER_DIMS)) {
-        nc_visual_draw_din_layer(ctx, preview, stock_left, stock_top, stock_w, stock_h, z0_x);
+        nc_preview_din_layer(ctx, preview, stock_left, stock_top, stock_w, stock_h, z0_x);
     }
 #endif
     if (nc_preview_layer(NC_PREVIEW_LAYER_DIMS)) {
-        nc_visual_draw_contour_points(ctx, ctx->screen_doc,
+        nc_preview_contour_points(ctx, ctx->screen_doc,
                                           preview,
                                           z0_x,
                                           stock_left,
@@ -844,10 +844,10 @@ static bool nc_visual_draw_live_stock(const nc_preview_ctx_t *ctx,
     lvds_draw_text(z0_x - 12, stock_top - 34, "Z0", NC_VISUAL_DIM, NC_VISUAL_PREVIEW_BG, LVDS_FONT_NORMAL);
 #endif
     t3 = mcu_micros();
-    nc_visual_draw_live_tool(preview, runtime, z0_x, stock_w, stock_top, stock_h,
+    nc_preview_live_tool(preview, runtime, z0_x, stock_w, stock_top, stock_h,
                              tool_panel_x, tool_panel_y, tool_panel_w, pane_h, tool);
     if (draw_static_panel) {
-        nc_visual_draw_preview_tool_panel(tool_panel_x,
+        nc_draw_preview_tool_panel(tool_panel_x,
                                           tool_panel_y,
                                           tool_panel_w,
                                           58,
@@ -905,7 +905,7 @@ void nc_preview_draw(const nc_preview_ctx_t *ctx,
         if (clear_bg) {
             lvds_draw_fill_rect(x, y, w, h, NC_VISUAL_PREVIEW_BG);
         }
-        nc_visual_draw_text_clip(x + 12, y + 12, "Text file - no preview", 24,
+        nc_draw_text_clip(x + 12, y + 12, "Text file - no preview", 24,
                                  NC_VISUAL_DIM, NC_VISUAL_PREVIEW_BG,
                                  LVDS_FONT_NORMAL);
         return;
@@ -991,7 +991,7 @@ void nc_preview_draw(const nc_preview_ctx_t *ctx,
     times->collect += (t1 - t0) + (t3 - t2);
     times->clear += t2 - t1;
     if (ctx->mode == NC_MODE_RUN &&
-        nc_visual_draw_live_stock(ctx,
+        nc_preview_live_stock(ctx,
                                   times,
                                   &preview,
                                   runtime,
@@ -1010,12 +1010,12 @@ void nc_preview_draw(const nc_preview_ctx_t *ctx,
     }
 
     t0 = mcu_micros();
-    nc_visual_draw_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
-    nc_visual_draw_chuck_relief(&preview, stock_left, stock_top, stock_h);
+    nc_draw_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
+    nc_draw_chuck_relief(&preview, stock_left, stock_top, stock_h);
     if (nc_preview_layer(NC_PREVIEW_LAYER_STOCK) || !ctx->full) {
         lvds_draw_fill_rect(stock_left, stock_top, stock_w, stock_h, NC_VISUAL_PREVIEW_STOCK);
         if (preview.stock_i > 0.0f) {
-            int id_h = nc_visual_preview_x(&preview, stock_top, stock_h, preview.stock_i) - stock_top;
+            int id_h = nc_draw_preview_x(&preview, stock_top, stock_h, preview.stock_i) - stock_top;
             if (id_h > 0 && id_h < stock_h) {
                 lvds_draw_fill_rect(stock_left, stock_top, stock_w, id_h, NC_VISUAL_PREVIEW_BG);
             }
@@ -1024,11 +1024,11 @@ void nc_preview_draw(const nc_preview_ctx_t *ctx,
     t1 = mcu_micros();
 #if NC_PREVIEW_DIN_STYLE
     if (nc_preview_layer(NC_PREVIEW_LAYER_DIMS)) {
-        nc_visual_draw_din_layer(ctx, &preview, stock_left, stock_top, stock_w, stock_h, z0_x);
+        nc_preview_din_layer(ctx, &preview, stock_left, stock_top, stock_w, stock_h, z0_x);
     }
 #endif
     if (nc_preview_layer(NC_PREVIEW_LAYER_DIMS)) {
-        nc_visual_draw_contour_points(ctx,
+        nc_preview_contour_points(ctx,
                                       doc,
                                       &preview,
                                           z0_x,
@@ -1044,10 +1044,10 @@ void nc_preview_draw(const nc_preview_ctx_t *ctx,
 #endif
     t2 = mcu_micros();
     if (!ctx->full) {
-        nc_visual_draw_preview_tool_panel(x, y, w, h, have_tool ? &tool : NULL);
+        nc_draw_preview_tool_panel(x, y, w, h, have_tool ? &tool : NULL);
     }
     t3 = mcu_micros();
-    nc_visual_draw_emitted_preview(ctx, doc,
+    nc_preview_emitted_preview(ctx, doc,
                                    &preview,
                                    z0_x,
                                    stock_w,
@@ -1056,9 +1056,9 @@ void nc_preview_draw(const nc_preview_ctx_t *ctx,
                                    96u);
     t5 = mcu_micros();
     if (have_tool && !ctx->full) {
-        nc_visual_draw_live_tool(&preview, runtime, z0_x, stock_w, stock_top,
+        nc_preview_live_tool(&preview, runtime, z0_x, stock_w, stock_top,
                                  stock_h, x, y, w, h, &tool);
-        nc_visual_draw_preview_tool_panel(x, y, w, h, &tool);
+        nc_draw_preview_tool_panel(x, y, w, h, &tool);
     }
     times->stock += t1 - t0;
     times->geom += (t2 - t1) + (t5 - t3);

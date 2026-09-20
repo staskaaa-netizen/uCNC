@@ -2193,25 +2193,25 @@ static void nc_visual_draw_tool_screen(void)
 
     lvds_draw_fill_rect(18, table_y - 10, LVDS_HSTX_WIDTH - 36,
                         NC_PANE_BOTTOM - (table_y - 10), NC_VISUAL_BG);
-    nc_visual_draw_text_clip(28, table_y, "TOOL TABLE", 16, NC_VISUAL_TEXT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(28, table_y, "TOOL TABLE", 16, NC_VISUAL_TEXT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
     /* The header carries the file name; the table only counts its rows. */
     snprintf(buf, sizeof(buf), "%d tools", tool_count);
-    nc_visual_draw_text_clip(674, table_y, buf, 12, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(674, table_y, buf, 12, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
 
-    nc_visual_draw_text_clip(72, table_y + 28, "T", 4, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(120, table_y + 28, "RADIUS", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(190, table_y + 28, "ORIENT", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(260, table_y + 28, "FEED", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(326, table_y + 28, "FF", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(392, table_y + 28, "DOC", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(458, table_y + 28, "FDOC", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(524, table_y + 28, "RPM", 7, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(604, table_y + 28, "XOFF", 7, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    nc_visual_draw_text_clip(684, table_y + 28, "ZOFF", 7, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(72, table_y + 28, "T", 4, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(120, table_y + 28, "RADIUS", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(190, table_y + 28, "ORIENT", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(260, table_y + 28, "FEED", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(326, table_y + 28, "FF", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(392, table_y + 28, "DOC", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(458, table_y + 28, "FDOC", 6, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(524, table_y + 28, "RPM", 7, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(604, table_y + 28, "XOFF", 7, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(684, table_y + 28, "ZOFF", 7, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
     lvds_draw_line(28, table_y + 50, LVDS_HSTX_WIDTH - 28, table_y + 50, NC_VISUAL_DIM);
 
     if (tool_count == 0) {
-        nc_visual_draw_text_clip(44, table_y + 78, "No tool rows in this NC file. Press 1 to add T1.", 64,
+        nc_draw_text_clip(44, table_y + 78, "No tool rows in this NC file. Press 1 to add T1.", 64,
                                  NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
     }
 
@@ -2233,44 +2233,44 @@ static void nc_visual_draw_tool_screen(void)
         if (selected) {
             lvds_draw_fill_rect(24, y - 4, LVDS_HSTX_WIDTH - 48, 24, bg);
         }
-        nc_visual_draw_tool_glyph_centered(30, y - 3, 32, 18, &tool, bg, selected);
-        nc_visual_draw_tool_cell(line, 'T', 72, y, 4, fg, bg, tool_line == active_line && active_letter == 'T');
-        nc_visual_draw_tool_cell(line, 'R', 120, y, 6, fg, bg, tool_line == active_line && active_letter == 'R');
-        nc_visual_draw_tool_cell(line, 'O', 190, y, 6, fg, bg, tool_line == active_line && active_letter == 'O');
-        nc_visual_draw_tool_cell(line, 'F', 260, y, 6, fg, bg, tool_line == active_line && active_letter == 'F');
-        nc_visual_draw_tool_cell(line, 'Q', 326, y, 6, fg, bg, tool_line == active_line && active_letter == 'Q');
-        nc_visual_draw_tool_cell(line, 'D', 392, y, 6, fg, bg, tool_line == active_line && active_letter == 'D');
-        nc_visual_draw_tool_cell(line, 'E', 458, y, 6, fg, bg, tool_line == active_line && active_letter == 'E');
-        nc_visual_draw_tool_cell(line, 'S', 524, y, 7, fg, bg, tool_line == active_line && active_letter == 'S');
-        nc_visual_draw_tool_cell(line, 'X', 604, y, 7, fg, bg, tool_line == active_line && active_letter == 'X');
-        nc_visual_draw_tool_cell(line, 'Z', 684, y, 7, fg, bg, tool_line == active_line && active_letter == 'Z');
+        nc_draw_tool_glyph_centered(30, y - 3, 32, 18, &tool, bg, selected);
+        nc_draw_tool_cell(line, 'T', 72, y, 4, fg, bg, tool_line == active_line && active_letter == 'T');
+        nc_draw_tool_cell(line, 'R', 120, y, 6, fg, bg, tool_line == active_line && active_letter == 'R');
+        nc_draw_tool_cell(line, 'O', 190, y, 6, fg, bg, tool_line == active_line && active_letter == 'O');
+        nc_draw_tool_cell(line, 'F', 260, y, 6, fg, bg, tool_line == active_line && active_letter == 'F');
+        nc_draw_tool_cell(line, 'Q', 326, y, 6, fg, bg, tool_line == active_line && active_letter == 'Q');
+        nc_draw_tool_cell(line, 'D', 392, y, 6, fg, bg, tool_line == active_line && active_letter == 'D');
+        nc_draw_tool_cell(line, 'E', 458, y, 6, fg, bg, tool_line == active_line && active_letter == 'E');
+        nc_draw_tool_cell(line, 'S', 524, y, 7, fg, bg, tool_line == active_line && active_letter == 'S');
+        nc_draw_tool_cell(line, 'X', 604, y, 7, fg, bg, tool_line == active_line && active_letter == 'X');
+        nc_draw_tool_cell(line, 'Z', 684, y, 7, fg, bg, tool_line == active_line && active_letter == 'Z');
     }
 
     lvds_draw_line(18, detail_y, LVDS_HSTX_WIDTH - 18, detail_y, NC_VISUAL_DIM);
-    nc_visual_draw_text_clip(38, detail_y + 12, "Tool tip", 12, NC_VISUAL_TEXT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(38, detail_y + 12, "Tool tip", 12, NC_VISUAL_TEXT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
     lvds_draw_line(52, detail_y + 76, 142, detail_y + 76, NC_VISUAL_DIM);
     lvds_draw_line(96, detail_y + 34, 96, detail_y + 120, NC_VISUAL_DIM);
-    nc_visual_draw_text_clip(102, detail_y + 34, "X0", 4, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_SMALL);
-    nc_visual_draw_text_clip(122, detail_y + 82, "Z0", 4, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_SMALL);
+    nc_draw_text_clip(102, detail_y + 34, "X0", 4, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_SMALL);
+    nc_draw_text_clip(122, detail_y + 82, "Z0", 4, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_SMALL);
 
     if (selected_line >= 0) {
         nc_tool_t tool;
         const char *line = g_nc_visual_doc.lines[selected_line].text;
 
         (void)nc_tool_from_line(line, &tool);
-        nc_visual_draw_tool_glyph(96, detail_y + 76, 44, &tool, NC_VISUAL_BG, false);
+        nc_draw_tool_glyph(96, detail_y + 76, 44, &tool, NC_VISUAL_BG, false);
         snprintf(buf, sizeof(buf), "Line %d: %.48s", selected_line + 1, line);
-        nc_visual_draw_text_clip(170, detail_y + 18, buf, 70, NC_VISUAL_TEXT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-        nc_visual_draw_tool_param(line, 'T', "T", 170, detail_y + 44, 8, selected_line == active_line && active_letter == 'T');
-        nc_visual_draw_tool_param(line, 'O', "Orient", 170, detail_y + 64, 8, selected_line == active_line && active_letter == 'O');
-        nc_visual_draw_tool_param(line, 'R', "Radius", 170, detail_y + 84, 8, selected_line == active_line && active_letter == 'R');
-        nc_visual_draw_tool_param(line, 'D', "DOC", 170, detail_y + 104, 8, selected_line == active_line && active_letter == 'D');
-        nc_visual_draw_tool_param(line, 'E', "FDOC", 400, detail_y + 44, 8, selected_line == active_line && active_letter == 'E');
-        nc_visual_draw_tool_param(line, 'F', "FEED", 400, detail_y + 64, 8, selected_line == active_line && active_letter == 'F');
-        nc_visual_draw_tool_param(line, 'Q', "F_FEED", 400, detail_y + 84, 8, selected_line == active_line && active_letter == 'Q');
-        nc_visual_draw_tool_param(line, 'S', "RPM", 400, detail_y + 104, 8, selected_line == active_line && active_letter == 'S');
-        nc_visual_draw_tool_param(line, 'X', "XOFF", 618, detail_y + 44, 7, selected_line == active_line && active_letter == 'X');
-        nc_visual_draw_tool_param(line, 'Z', "ZOFF", 618, detail_y + 64, 7, selected_line == active_line && active_letter == 'Z');
+        nc_draw_text_clip(170, detail_y + 18, buf, 70, NC_VISUAL_TEXT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+        nc_draw_tool_param(line, 'T', "T", 170, detail_y + 44, 8, selected_line == active_line && active_letter == 'T');
+        nc_draw_tool_param(line, 'O', "Orient", 170, detail_y + 64, 8, selected_line == active_line && active_letter == 'O');
+        nc_draw_tool_param(line, 'R', "Radius", 170, detail_y + 84, 8, selected_line == active_line && active_letter == 'R');
+        nc_draw_tool_param(line, 'D', "DOC", 170, detail_y + 104, 8, selected_line == active_line && active_letter == 'D');
+        nc_draw_tool_param(line, 'E', "FDOC", 400, detail_y + 44, 8, selected_line == active_line && active_letter == 'E');
+        nc_draw_tool_param(line, 'F', "FEED", 400, detail_y + 64, 8, selected_line == active_line && active_letter == 'F');
+        nc_draw_tool_param(line, 'Q', "F_FEED", 400, detail_y + 84, 8, selected_line == active_line && active_letter == 'Q');
+        nc_draw_tool_param(line, 'S', "RPM", 400, detail_y + 104, 8, selected_line == active_line && active_letter == 'S');
+        nc_draw_tool_param(line, 'X', "XOFF", 618, detail_y + 44, 7, selected_line == active_line && active_letter == 'X');
+        nc_draw_tool_param(line, 'Z', "ZOFF", 618, detail_y + 64, 7, selected_line == active_line && active_letter == 'Z');
     }
 }
 
@@ -2352,7 +2352,7 @@ static void nc_visual_draw_tabs(const char *message,
         if (active) {
             lvds_draw_fill_rect(x, NC_TAB_Y + 2, w, NC_TAB_H - 5, NC_VISUAL_SELECT);
         }
-        nc_visual_draw_text_clip(x + 7,
+        nc_draw_text_clip(x + 7,
                                  NC_TAB_Y + 4,
                                  names[i],
                                  (w - 12) / NC_VISUAL_CHAR_W,
@@ -2363,7 +2363,7 @@ static void nc_visual_draw_tabs(const char *message,
     }
 
     /* Scroll hint: the MODE key walks the strip. */
-    nc_visual_draw_text_clip(LVDS_HSTX_WIDTH - 22,
+    nc_draw_text_clip(LVDS_HSTX_WIDTH - 22,
                              NC_TAB_Y + 4,
                              ">",
                              1,
@@ -2374,7 +2374,7 @@ static void nc_visual_draw_tabs(const char *message,
     /* The run state sits at the left of the message area; the message uses
        whatever is left before the hint. */
     if (state && state[0]) {
-        nc_visual_draw_text_clip(420, NC_TAB_Y + 4, state, 12,
+        nc_draw_text_clip(420, NC_TAB_Y + 4, state, 12,
                                  NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_NORMAL);
     }
 
@@ -2389,7 +2389,7 @@ static void nc_visual_draw_tabs(const char *message,
             len = cols;
         }
         if (len > 0) {
-            nc_visual_draw_text_clip(LVDS_HSTX_WIDTH - 26 - len * NC_VISUAL_CHAR_W,
+            nc_draw_text_clip(LVDS_HSTX_WIDTH - 26 - len * NC_VISUAL_CHAR_W,
                                      NC_TAB_Y + 4,
                                      message,
                                      len,
@@ -2435,12 +2435,12 @@ static void nc_visual_draw_header(const nc_snapshot_t *s)
        are left out there. */
     if (g_nc_visual_mode != NC_MODE_MANUAL) {
         /* Column 1: the work (nominal) position. */
-        nc_visual_draw_text_clip(col_work_x, hy + 4, "X", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_work_x, hy + 4, "X", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
         snprintf(buf, sizeof(buf), "%9.3f", (double)work[AXIS_X]);
-        nc_visual_draw_text_clip(col_work_x + 18, hy + 4, buf, 9, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
-        nc_visual_draw_text_clip(col_work_x, hy + 36, "Z", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_work_x + 18, hy + 4, buf, 9, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_work_x, hy + 36, "Z", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
         snprintf(buf, sizeof(buf), "%9.3f", (double)work[AXIS_Z]);
-        nc_visual_draw_text_clip(col_work_x + 18, hy + 36, buf, 9, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_work_x + 18, hy + 36, buf, 9, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
 
         /* Column 2: the machine figures, in their own cell and one font
            smaller, with the offset they differ by named above them. */
@@ -2448,27 +2448,27 @@ static void nc_visual_draw_header(const nc_snapshot_t *s)
             char offset[16];
 
             nc_visual_offset_label(offset, sizeof(offset));
-            nc_visual_draw_text_clip(col_mach_x, hy + 1, offset, 16,
+            nc_draw_text_clip(col_mach_x, hy + 1, offset, 16,
                                      NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_SMALL);
             snprintf(buf, sizeof(buf), "%8.3f", (double)(runtime ? runtime->x : 0.0f));
-            nc_visual_draw_text_clip(col_mach_x, hy + 11, buf, 8,
+            nc_draw_text_clip(col_mach_x, hy + 11, buf, 8,
                                      NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_NORMAL);
             snprintf(buf, sizeof(buf), "%8.3f", (double)(runtime ? runtime->z : 0.0f));
-            nc_visual_draw_text_clip(col_mach_x, hy + 43, buf, 8,
+            nc_draw_text_clip(col_mach_x, hy + 43, buf, 8,
                                      NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_NORMAL);
         }
 
         /* Column 3: feed and spindle. */
-        nc_visual_draw_text_clip(col_fs_x, hy + 4, "F", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_fs_x, hy + 4, "F", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
         snprintf(buf, sizeof(buf), "%8.1f", (double)(runtime ? runtime->feed : 0.0f));
-        nc_visual_draw_text_clip(col_fs_x + 18, hy + 4, buf, 8, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
-        nc_visual_draw_text_clip(col_fs_x, hy + 36, "S", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_fs_x + 18, hy + 4, buf, 8, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_fs_x, hy + 36, "S", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
         snprintf(buf, sizeof(buf), "%8u", runtime ? runtime->spindle : 0u);
-        nc_visual_draw_text_clip(col_fs_x + 18, hy + 36, buf, 8, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_fs_x + 18, hy + 36, buf, 8, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
     }
 
     snprintf(fps, sizeof(fps), "%u FPS", (unsigned)g_nc_visual_fps);
-    nc_visual_draw_text_clip(LVDS_HSTX_WIDTH - lvds_draw_text_width(fps, LVDS_FONT_SMALL) - 8,
+    nc_draw_text_clip(LVDS_HSTX_WIDTH - lvds_draw_text_width(fps, LVDS_FONT_SMALL) - 8,
                              hy + 6,
                              fps,
                              8,
@@ -2527,7 +2527,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
             const char *label = selected >= 0 ? nc_files_name(selected) : "no file picked";
 
             snprintf(buf, sizeof(buf), "PREVIEW %.28s", label);
-            nc_visual_draw_text_clip(NC_LEFT_PANE_X + 12,
+            nc_draw_text_clip(NC_LEFT_PANE_X + 12,
                                      NC_PANE_Y + 4,
                                      buf,
                                      34,
@@ -2551,16 +2551,16 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
         if (selected_file >= visible_files) {
             first_file = selected_file - visible_files + 1;
         }
-        nc_visual_draw_text_clip(NC_RIGHT_PANE_X + 12, NC_PANE_Y + 10, "NC FILES", 18, NC_VISUAL_ACCENT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-        nc_visual_draw_text_clip(NC_RIGHT_PANE_X + 96, NC_PANE_Y + 10, nc_files_cwd(), 32, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+        nc_draw_text_clip(NC_RIGHT_PANE_X + 12, NC_PANE_Y + 10, "NC FILES", 18, NC_VISUAL_ACCENT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+        nc_draw_text_clip(NC_RIGHT_PANE_X + 96, NC_PANE_Y + 10, nc_files_cwd(), 32, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
         if (count > 0 && selected_file >= 0) {
             snprintf(buf, sizeof(buf), "%d/%d", selected_file + 1, count);
-            nc_visual_draw_text_clip(NC_RIGHT_PANE_X + NC_RIGHT_PANE_W - 70, NC_PANE_Y + 10, buf, 8, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+            nc_draw_text_clip(NC_RIGHT_PANE_X + NC_RIGHT_PANE_W - 70, NC_PANE_Y + 10, buf, 8, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
         }
         if (!nc_files_ready()) {
-            nc_visual_draw_text_clip(NC_RIGHT_PANE_X + 16, NC_PANE_Y + 48, "File list not ready", 36, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+            nc_draw_text_clip(NC_RIGHT_PANE_X + 16, NC_PANE_Y + 48, "File list not ready", 36, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
         } else if (!count) {
-            nc_visual_draw_text_clip(NC_RIGHT_PANE_X + 16, NC_PANE_Y + 48, "No NC files found", 36, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+            nc_draw_text_clip(NC_RIGHT_PANE_X + 16, NC_PANE_Y + 48, "No NC files found", 36, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_NORMAL);
         }
         for (row = 0; row < count - first_file && row < visible_files; row++) {
             int file_index = first_file + row;
@@ -2573,7 +2573,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
             if (selected) {
                 lvds_draw_fill_rect(NC_RIGHT_PANE_X + 4, y - 4, NC_RIGHT_PANE_W - 8, 26, bg);
             }
-            nc_visual_draw_text_clip(NC_RIGHT_PANE_X + 16,
+            nc_draw_text_clip(NC_RIGHT_PANE_X + 16,
                                      y,
                                      buf,
                                      line_cols,
@@ -2589,7 +2589,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
                      nc_visual_new_file_ext());
             lvds_draw_fill_rect(NC_RIGHT_PANE_X + 8, NC_PANE_BOTTOM - 26,
                                 NC_RIGHT_PANE_W - 16, 22, NC_VISUAL_BG);
-            nc_visual_draw_text_clip(NC_RIGHT_PANE_X + 16,
+            nc_draw_text_clip(NC_RIGHT_PANE_X + 16,
                                      NC_PANE_BOTTOM - 24,
                                      buf,
                                      line_cols,
@@ -2619,7 +2619,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
                      "%s%s",
                      s->path[0] ? s->path : "(no file)",
                      s->dirty ? " *" : "");
-            nc_visual_draw_text_clip(NC_RIGHT_PANE_X + NC_LINE_TEXT_X_PAD,
+            nc_draw_text_clip(NC_RIGHT_PANE_X + NC_LINE_TEXT_X_PAD,
                                      NC_PANE_Y,
                                      buf,
                                      line_cols,
@@ -2658,7 +2658,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
 
                 lvds_draw_fill_rect(NC_RIGHT_PANE_X + 2, hint_y - 3, NC_RIGHT_PANE_W - 4, NC_VISUAL_ROW_H, NC_VISUAL_BG);
                 snprintf(buf, sizeof(buf), "%c  %s", g_nc_visual_doc.selected_word >= 0 ? '>' : ' ', s->selected_label);
-                nc_visual_draw_text_clip(NC_RIGHT_PANE_X + NC_LINE_TEXT_X_PAD,
+                nc_draw_text_clip(NC_RIGHT_PANE_X + NC_LINE_TEXT_X_PAD,
                                          hint_y,
                                          buf,
                                          line_cols,
@@ -2702,14 +2702,14 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
             /* Column captions, over the columns that are not self-describing. */
             char offset[16];
 
-            nc_visual_draw_text_clip(NC_MANUAL_COL_STOP, NC_PANE_Y + 2,
+            nc_draw_text_clip(NC_MANUAL_COL_STOP, NC_PANE_Y + 2,
                                      "STOP", 4, NC_VISUAL_DIM, NC_VISUAL_BG,
                                      LVDS_FONT_SMALL);
-            nc_visual_draw_text_clip(NC_MANUAL_COL_MACH, NC_PANE_Y + 2,
+            nc_draw_text_clip(NC_MANUAL_COL_MACH, NC_PANE_Y + 2,
                                      "MACHINE", 7, NC_VISUAL_DIM, NC_VISUAL_BG,
                                      LVDS_FONT_SMALL);
             nc_visual_offset_label(offset, sizeof(offset));
-            nc_visual_draw_text_clip(NC_MANUAL_COL_MACH + 54, NC_PANE_Y + 2,
+            nc_draw_text_clip(NC_MANUAL_COL_MACH + 54, NC_PANE_Y + 2,
                                      offset, 16, NC_VISUAL_ACCENT, NC_VISUAL_BG,
                                      LVDS_FONT_SMALL);
         }
@@ -2766,10 +2766,10 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
                cannot leave the tail of the last one behind. */
             lvds_draw_text(NC_MANUAL_COL_X, y, letters[i], dim, bg,
                            LVDS_FONT_LARGE);
-            nc_visual_draw_text_clip(NC_MANUAL_COL_POS, y, value, 9, fg, bg,
+            nc_draw_text_clip(NC_MANUAL_COL_POS, y, value, 9, fg, bg,
                                      LVDS_FONT_LARGE);
             if (machine[0]) {
-                nc_visual_draw_text_clip(NC_MANUAL_COL_MACH, y + 7, machine, 9,
+                nc_draw_text_clip(NC_MANUAL_COL_MACH, y + 7, machine, 9,
                                          picked ? NC_VISUAL_LINE_NO_SELECTED
                                                 : NC_VISUAL_TEXT,
                                          bg, LVDS_FONT_NORMAL);
@@ -2777,11 +2777,11 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
             if (i < 2) {
                 /* Two small rows in the same line: the stop itself, and how far
                    the axis still is from it. */
-                nc_visual_draw_text_clip(NC_MANUAL_COL_STOP, y + 1, stop, 9,
+                nc_draw_text_clip(NC_MANUAL_COL_STOP, y + 1, stop, 9,
                                          picked ? NC_VISUAL_LINE_NO_SELECTED
                                                 : NC_VISUAL_ACCENT,
                                          bg, LVDS_FONT_SMALL);
-                nc_visual_draw_text_clip(NC_MANUAL_COL_STOP, y + 12, room, 9,
+                nc_draw_text_clip(NC_MANUAL_COL_STOP, y + 12, room, 9,
                                          dim, bg, LVDS_FONT_SMALL);
             }
         }
@@ -2791,7 +2791,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
             snprintf(field, sizeof(field), "TOUCH %c = %s_",
                      nc_visual_manual_letter(),
                      g_nc_visual_manual_touch[0] ? g_nc_visual_manual_touch : "");
-            nc_visual_draw_text_clip(60, NC_PANE_Y + 268, field, 24,
+            nc_draw_text_clip(60, NC_PANE_Y + 268, field, 24,
                                      NC_VISUAL_ACCENT, NC_VISUAL_BG, LVDS_FONT_LARGE);
         }
         {
@@ -2804,7 +2804,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
             char line[28];
             int row;
 
-            nc_visual_draw_text_clip(value_x, NC_PANE_BOTTOM - 124, "1-    3+", 8,
+            nc_draw_text_clip(value_x, NC_PANE_BOTTOM - 124, "1-    3+", 8,
                                      NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_SMALL);
             for (row = 0; row < 2; row++) {
                 bool continuous = (row == 1);
@@ -2822,7 +2822,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
                     snprintf(line, sizeof(line), "STEP %.3f mm",
                              (double)nc_visual_manual_step_value());
                 }
-                nc_visual_draw_text_clip(value_x, y,
+                nc_draw_text_clip(value_x, y,
                                          line, 18,
                                          active ? NC_VISUAL_LINE_NO_SELECTED
                                                 : NC_VISUAL_DIM,
@@ -2861,7 +2861,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
                     NC_MANUAL_FLASH_MS) {
                 lit |= 1u << (g_nc_visual_manual_flash_key - '0');
             }
-            nc_visual_draw_modal_items(NC_RIGHT_PANE_X + NC_RIGHT_PANE_W - NC_MODAL_W - 8,
+            nc_draw_modal_items(NC_RIGHT_PANE_X + NC_RIGHT_PANE_W - NC_MODAL_W - 8,
                                        NC_PANE_BOTTOM - NC_MODAL_H - 6,
                                        g_nc_visual_manual_pad,
                                        sizeof(g_nc_visual_manual_pad) /
@@ -2876,7 +2876,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
     if (nc_text_edit_active(&g_nc_visual_edit)) {
         snprintf(buf, sizeof(buf), "EDIT %s", nc_text_edit_buffer(&g_nc_visual_edit));
         lvds_draw_fill_rect(20, 526, LVDS_HSTX_WIDTH - 40, 18, NC_VISUAL_BG);
-        nc_visual_draw_text_clip(34, 526, buf, 70, NC_VISUAL_ACCENT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+        nc_draw_text_clip(34, 526, buf, 70, NC_VISUAL_ACCENT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
     }
     if (g_nc_modal_active && !g_nc_modal_prefix) {
         int visible = s->cursor_visible_index;
@@ -2889,7 +2889,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
            carries the action name and will take the text. It hangs below that
            line instead of covering the line the user is reading. */
         keypad_y = NC_CODE_Y + (visible + 1) * NC_VISUAL_ROW_H - NC_MODAL_PAD;
-        keypad_y = nc_visual_clampi(keypad_y, NC_CODE_Y,
+        keypad_y = nc_draw_clampi(keypad_y, NC_CODE_Y,
                                     NC_PANE_BOTTOM - NC_MODAL_PAD -
                                     NC_MODAL_KEY_H * NC_MODAL_ROWS);
         /* Floating on the right, the way the machine's keypad sits beside the
@@ -2898,13 +2898,13 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
         modal_x = NC_RIGHT_PANE_X + NC_RIGHT_PANE_W - NC_MODAL_W - 8;
         /* The G/T field takes its digits on the line itself, so only a submenu
            has a helper to draw. */
-        nc_visual_draw_modal_items(modal_x, keypad_y, g_nc_modal_items,
+        nc_draw_modal_items(modal_x, keypad_y, g_nc_modal_items,
                                    g_nc_modal_count, 0u);
     }
     t3 = mcu_micros();
 
     nc_visual_footer_text(footer_text, sizeof(footer_text));
-    nc_visual_draw_footer_status("", footer_text);
+    nc_draw_footer_status("", footer_text);
     t4 = mcu_micros();
 
     g_nc_visual_frame_header_us += t1 - t0;

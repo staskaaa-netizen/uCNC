@@ -2,6 +2,8 @@
 # The list is the drawing vocabulary: each one touches no panel state (the
 # census that found this set is described in nc/TODO.md). Lines starting with
 # `!` are globals that must still exist in nc_visual.c afterwards.
+# The names are the ones at the time of the move: the same functions are
+# `nc_draw_*()` now (the rename came after, on its own).
 #
 # @region moves a contiguous run of #define lines into nc_layout.h, the panel
 # numbers both halves read (pane geometry, footer, 3x3 key size, preview

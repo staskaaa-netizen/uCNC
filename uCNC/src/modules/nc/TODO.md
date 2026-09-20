@@ -496,6 +496,30 @@ NC supplies document access and UI, not a second cycle generator.
   thousand-line moves are not done inside a working session's tail - a half
   applied extraction is the one outcome worse than the current file.
 
+  **First move done, second move needs a tested tool.** `nc_sim.c` is now
+  `nc_preview.c` / `.h` with `nc_preview_collect()` and
+  `nc_preview_line_word_float()` (commit `fa65ebae`): the preview's data half
+  under its own name, compiled with NC, not a module of its own.
+
+  The drawing half (`nc_draw`: text clipping and wrapping, the tool glyph
+  geometry, chuck/stock hatching, the dimension callouts, the floating 3x3 grid
+  and the footer strip - 38 functions, 1,244 lines of the 5,709) was attempted
+  by a script and reverted three times, each time leaving the file uncompilable.
+  The failures were all in the *extractor*, not the idea, and they say what the
+  tool needs before it is used on the real file:
+  - a definition's span ends at the first column-0 `}`; a *prototype* that spans
+    several lines has no `{` at all, and treating it as a definition swallows
+    everything up to the next `}` (the frame-timing globals went that way);
+  - `#define NC_FOOTER_LINES` has no `;`, so a scan that waits for one eats the
+    block after it;
+  - a typedef block must be matched to its own `};`, not to the next `;`.
+  So: build the extractor as a *tool* with its own dry run and a byte check of
+  the result (function count, lines moved, the globals still present), run it
+  against a copy first, and only then on `nc_visual.c` - and render the frames
+  immediately before the move, because a stale baseline makes the diff say
+  "changed" for a change that was already committed. That tool is the next
+  piece of work, not a bigger edit.
+
   **And the 3x3 grid gets the same treatment: one visual, two users, a third
   later.** The drawing half is already shared -
   `nc_visual_draw_modal_items()` paints both the MANUAL jog pad and the floating

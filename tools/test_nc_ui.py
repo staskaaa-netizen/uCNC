@@ -183,6 +183,25 @@ if __name__ == "__main__":
         print("FAIL the new-file field does not take the typed name")
         sys.exit(1)
 
+    # The editor's typed-key paths - also invisible to a frame dump, and where
+    # an extraction can hand a handler the key instead of its character.
+    # It types into the program and saves it, and the new-file check above left
+    # the state pointing at the file it created, so both go back first.
+    (root / "nc" / "files" / "facing.nc").write_bytes(
+        (fixtures / "facing.nc").read_bytes())
+    (root / "nc" / "files" / "12.nc").unlink(missing_ok=True)
+    (root / "nc_state.txt").write_text(
+        "MODE=EDIT\nEDIT=/D/nc/files/facing.nc\n", encoding="utf-8")
+    run = subprocess.run([str(exe), "--files", str(root), "--editortest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "editortest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL typed keys do not reach the word, the helper and the field")
+        sys.exit(1)
+    (root / "nc" / "files" / "facing.nc").write_bytes(
+        (fixtures / "facing.nc").read_bytes())
+
     # And the same file on screen. The remembered state points EDIT at it, which
     # is also how the machine reopens the last program after a reboot.
     (root / "nc_state.txt").write_text(

@@ -294,7 +294,6 @@ static bool nc_editor_modal_handle_key(nc_editor_ctx_t *ctx,
         *ctx->dirty = true;
         return true;
     }
-    ch = ch;
     if (ch == '0') {
         nc_editor_modal_cancel(ctx);
         *ctx->dirty = true;

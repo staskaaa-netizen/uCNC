@@ -684,7 +684,20 @@ NC supplies document access and UI, not a second cycle generator.
   `--newfiletest` (`tools/test_nc_ui.py` runs it): it opens the list, presses
   `5 NEW`, types `1 2`, commits with `#`, and loads `/D/nc/files/12.nc` back -
   then repeats it with `A` and proves no file was left behind. With the handler
-  passing the key on, the check passes; with the bug put back, it fails.
+        passing the key on, the check passes; with the bug put back, it fails.
+
+        The class had a second instance, found later by grepping the module for
+        `x = x;` self-assignments: the helper's submenu path kept `ch = ch;`,
+        the fossil of a line that used to read the key's character. It was
+        harmless there (the parameter already held it), but it is exactly the
+        shape that hid the first one, so it is gone. `--editortest` now covers
+        the whole class (`tools/test_nc_ui.py` runs it): a digit typed at a
+        selected word has to reach the line, a digit that picks a helper entry
+        has to run that entry, the G field has to take `1 D` and write the `G1`
+        template, and the footer's `*` has to delete through the editor - each
+        step proved by saving through the helper and reading the program back
+        off the card, so the check is on the document, not on what the panel
+        remembers. Putting the bug back fails it, which is how it was validated.
   The rename was done before those cuts, as its own commit: the drawn functions
   are `nc_draw_*()` in `nc_draw.c` and `nc_preview_*()` in `nc_preview.c`, and
   `nc_visual_*()` now means what it says - a function of the screen file. It ran

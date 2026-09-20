@@ -1573,6 +1573,156 @@ static int host_padtest(void)
     return 0;
 }
 
+/* Press a keypad character the way the machine sends it. */
+static void host_press(char key)
+{
+    nc_visual_handle_key(nc_visual_key_for_char(key));
+}
+
+/* The helper's SAVE entry lives in the OPS submenu: `1` opens it, `4` saves.
+   A word selection would swallow the digits, so the selection goes first. */
+static void host_editor_save(void)
+{
+    nc_visual_handle_key(NC_VISUAL_KEY_CANCEL);
+    host_press('1');
+    host_press('4');
+}
+
+/* Headless check of the editor's typed-key paths - the ones a frame dump cannot
+   see. A typed character has to reach the thing that acts on it:
+
+     1. a selected word takes the digits typed at it;
+     2. the floating helper takes the digit that picks an entry from a submenu;
+     3. the helper's field takes a digit and then the G-code template for it;
+     4. the footer keys reach the editor's insert and delete.
+
+   This is where the split can go wrong silently: a handler that keeps its own
+   copy of the key, or an entry that is handed the key instead of the character,
+   looks exactly like a working one until a key is pressed. Each step ends by
+   saving through the helper and reading the program back off the card, so the
+   check is on the document, not on what the panel remembers. */
+static int host_editortest(void)
+{
+    static const char *const program = "/D/nc/files/facing.nc";
+    nc_document_t before;
+    nc_document_t after;
+    size_t base_lines;
+    int failures = 0;
+    unsigned changed = 0u;
+    unsigned i;
+
+    host_init_core();
+    nc_visual_select_mode(NC_MODE_PROGRAM);
+    host_pump_idle(64u);
+
+    /* What the panel holds is the fixture: EDIT was pointed at it by the state
+       file the test runner writes. */
+    nc_document_init(&before);
+    if (nc_load_file(&before, program) != NC_OK) {
+        printf("editortest: FAIL cannot load %s\n", program);
+        return 1;
+    }
+    base_lines = before.line_count;
+
+    /* 1. a selected word takes the digits typed at it */
+    nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);     /* `D`: select the next word */
+    host_press('7');
+    host_editor_save();
+    nc_document_init(&after);
+    if (nc_load_file(&after, program) != NC_OK) {
+        puts("editortest: FAIL the edited program did not save");
+        failures++;
+    } else {
+        for (i = 0u; i < after.line_count && i < before.line_count; i++) {
+            if (strcmp(after.lines[i].text, before.lines[i].text) != 0) {
+                changed++;
+                if (!strchr(after.lines[i].text, '7')) {
+                    printf("editortest: FAIL the typed digit is not in line %u: \"%s\"\n",
+                           (unsigned)(i + 1u), after.lines[i].text);
+                    failures++;
+                }
+            }
+        }
+        if (!changed) {
+            puts("editortest: FAIL a digit typed at a selected word changed nothing");
+            failures++;
+        } else {
+            printf("editortest: a selected word took the typed digit\n");
+        }
+    }
+
+    /* 2. the helper takes the digit that picks an entry: OPS `1` is INS */
+    nc_visual_handle_key(NC_VISUAL_KEY_CANCEL);
+    host_press('1');
+    host_press('1');
+    host_editor_save();
+    nc_document_init(&after);
+    if (nc_load_file(&after, program) != NC_OK) {
+        puts("editortest: FAIL the program did not save after the helper ran");
+        failures++;
+    } else if (after.line_count != base_lines + 1u) {
+        printf("editortest: FAIL OPS `1 INS` left %u lines, wanted %u\n",
+               (unsigned)after.line_count, (unsigned)(base_lines + 1u));
+        failures++;
+    } else {
+        printf("editortest: the helper ran the entry its digit picked\n");
+    }
+
+    /* 3. the field takes a digit, then the template for the code it makes */
+    nc_visual_handle_key(NC_VISUAL_KEY_CANCEL);
+    host_press('3');                                /* `3 G`: the G-code field */
+    host_press('1');
+    nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);     /* `D`: take it */
+    host_editor_save();
+    nc_document_init(&after);
+    if (nc_load_file(&after, program) != NC_OK) {
+        puts("editortest: FAIL the program did not save after the G field");
+        failures++;
+    } else {
+        bool saw_g1 = false;
+
+        for (i = 0u; i < after.line_count; i++) {
+            if (strncmp(after.lines[i].text, "G1 ", 3) == 0 ||
+                strcmp(after.lines[i].text, "G1") == 0) {
+                saw_g1 = true;
+            }
+        }
+        if (!saw_g1) {
+            puts("editortest: FAIL the typed G code did not reach a template line");
+            failures++;
+        } else {
+            puts("editortest: the G field took G1 and wrote its template");
+        }
+    }
+
+    /* 4. the footer's own keys reach the editor: `*` deletes the line the
+       cursor is on (the blank the helper inserted above), so the program is
+       back to two lines more than the fixture - the blank from the helper and
+       the template line. */
+    nc_visual_handle_key(NC_VISUAL_KEY_CANCEL);
+    host_press('*');
+    host_editor_save();
+    nc_document_init(&after);
+    if (nc_load_file(&after, program) != NC_OK) {
+        puts("editortest: FAIL the program did not save after delete");
+        failures++;
+    } else if (after.line_count < base_lines) {
+        printf("editortest: FAIL delete left %u lines, the fixture has %u\n",
+               (unsigned)after.line_count, (unsigned)base_lines);
+        failures++;
+    } else {
+        printf("editortest: the footer key deleted through the editor\n");
+    }
+
+    if (failures) {
+        printf("editortest: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("editortest: PASS typed keys reach the word, the helper, the field and "
+         "the footer actions");
+    return 0;
+}
+
 /* Headless check of the editor's new-file field: the keys have to reach the
    name, the name has to reach the card, and the file that is created has to be
    the one the editor then holds.
@@ -1728,6 +1878,8 @@ int main(int argc, char **argv)
             return host_filetest();
         if (strcmp(argv[i], "--newfiletest") == 0)
             return host_newfiletest();
+        if (strcmp(argv[i], "--editortest") == 0)
+            return host_editortest();
     }
 
     memset(&wc, 0, sizeof(wc));

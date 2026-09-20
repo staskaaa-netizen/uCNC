@@ -1,8 +1,8 @@
-#include "nc_sim.h"
+#include "nc_preview.h"
 
 #include <string.h>
 
-bool nc_sim_line_word_float(const char *line, char letter, float *out)
+bool nc_preview_line_word_float(const char *line, char letter, float *out)
 {
     nc_word_t words[16];
     int count;
@@ -18,7 +18,7 @@ bool nc_sim_line_word_float(const char *line, char letter, float *out)
     return false;
 }
 
-void nc_sim_collect_preview(const nc_document_t *doc, nc_preview_info_t *p)
+void nc_preview_collect(const nc_document_t *doc, nc_preview_info_t *p)
 {
     float last_x = 0.0f;
     float last_z = 0.0f;
@@ -56,13 +56,13 @@ void nc_sim_collect_preview(const nc_document_t *doc, nc_preview_info_t *p)
         }
 
         if (g7x_command_is(line, "G971")) {
-            (void)nc_sim_line_word_float(line, 'X', &p->stock_x);
-            (void)nc_sim_line_word_float(line, 'Z', &p->stock_z);
-            (void)nc_sim_line_word_float(line, 'I', &p->stock_i);
-            (void)nc_sim_line_word_float(line, 'E', &p->stock_e);
+            (void)nc_preview_line_word_float(line, 'X', &p->stock_x);
+            (void)nc_preview_line_word_float(line, 'Z', &p->stock_z);
+            (void)nc_preview_line_word_float(line, 'I', &p->stock_i);
+            (void)nc_preview_line_word_float(line, 'E', &p->stock_e);
         }
         if (g7x_command_is(line, "G972")) {
-            (void)nc_sim_line_word_float(line, 'C', &p->chuck_c);
+            (void)nc_preview_line_word_float(line, 'C', &p->chuck_c);
         }
 
         cycle = g7x_cycle_from_line(line);
@@ -76,8 +76,8 @@ void nc_sim_collect_preview(const nc_document_t *doc, nc_preview_info_t *p)
             continue;
         }
 
-        has_x = nc_sim_line_word_float(line, 'X', &px);
-        has_z = nc_sim_line_word_float(line, 'Z', &pz);
+        has_x = nc_preview_line_word_float(line, 'X', &px);
+        has_z = nc_preview_line_word_float(line, 'Z', &pz);
         if (!have_last) {
             last_x = has_x ? px : p->stock_x;
             last_z = has_z ? pz : 0.0f;

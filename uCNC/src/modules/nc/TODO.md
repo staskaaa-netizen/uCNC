@@ -495,6 +495,21 @@ NC supplies document access and UI, not a second cycle generator.
   cut as the next, each with the frame dumps diffed before and after. Two
   thousand-line moves are not done inside a working session's tail - a half
   applied extraction is the one outcome worse than the current file.
+
+  **And the 3x3 grid gets the same treatment: one visual, two users, a third
+  later.** The drawing half is already shared -
+  `nc_visual_draw_modal_items()` paints both the MANUAL jog pad and the floating
+  helper - but each caller brings its own nine labels and its own state, so the
+  meaning of a key lives in two places. Target: one unit
+  (`nc_pad.c` / `.h`, inside this module, same "sources not a module" rule)
+  that takes nine `{ code, label, lit }` entries and draws the grid, with the
+  same input contract as the footer: the UI reports the **code** it pressed and
+  reads back the selected value - never the panel's internals. Its users:
+  MANUAL (the jog pad, labels from the manual table), EDIT (the floating helper,
+  labels from the inserted line's menu), and the planned `3x3_path_builder.c`
+  once that work starts (see the 3x3 path builder item above). This is a
+  consolidation of something already half-shared, not a new layer: if it cannot
+  be the two existing callers plus one struct, it is not done yet.
 - [ ] **Global editor note - steal the editor flow from Heidenhain TNC 415.**
   Field-by-field entry instead of prefilled lines: start a function, the control
   prompts the first required field (letter + description, no need to type the

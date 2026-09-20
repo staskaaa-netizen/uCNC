@@ -10,7 +10,7 @@
 #include "nc_palette.h"
 #include "nc_presets.h"
 #include "nc_run.h"
-#include "nc_sim.h"
+#include "nc_preview.h"
 #include "nc_state.h"
 #include "nc_text.h"
 #include "nc_tools.h"
@@ -1827,8 +1827,8 @@ static void nc_visual_draw_contour_points(const nc_document_t *doc,
             continue;
         }
 
-        has_x = nc_sim_line_word_float(line, 'X', &x);
-        has_z = nc_sim_line_word_float(line, 'Z', &z);
+        has_x = nc_preview_line_word_float(line, 'X', &x);
+        has_z = nc_preview_line_word_float(line, 'Z', &z);
         if (has_x || has_z) {
             int px = nc_visual_preview_z(preview, z0_x, stock_w, z);
             int py = nc_visual_preview_x(preview, stock_top, stock_h, x);
@@ -1846,10 +1846,10 @@ static void nc_visual_draw_contour_points(const nc_document_t *doc,
             snprintf(label, sizeof(label), "%.0f", z);
             nc_visual_draw_z_point_dimension(prev_z_px, px, z0_x, stock_top, py, label);
             prev_z_px = px;
-            if (nc_sim_line_word_float(line, 'R', &feature) && feature > 0.0001f) {
+            if (nc_preview_line_word_float(line, 'R', &feature) && feature > 0.0001f) {
                 snprintf(label, sizeof(label), "R%.0f", feature);
                 lvds_draw_text(px + 4, py - 16, label, NC_VISUAL_DIM, NC_VISUAL_PREVIEW_BG, LVDS_FONT_SMALL);
-            } else if (nc_sim_line_word_float(line, 'C', &feature) && feature > 0.0001f) {
+            } else if (nc_preview_line_word_float(line, 'C', &feature) && feature > 0.0001f) {
                 snprintf(label, sizeof(label), "C%.0f", feature);
                 lvds_draw_text(px + 4, py - 16, label, NC_VISUAL_DIM, NC_VISUAL_PREVIEW_BG, LVDS_FONT_SMALL);
             }
@@ -2068,8 +2068,8 @@ static bool nc_visual_draw_emitted_motion_line(const nc_preview_info_t *preview,
 
     x = *last_x;
     z = *last_z;
-    has_x = nc_sim_line_word_float(line, 'X', &x);
-    has_z = nc_sim_line_word_float(line, 'Z', &z);
+    has_x = nc_preview_line_word_float(line, 'X', &x);
+    has_z = nc_preview_line_word_float(line, 'Z', &z);
     if (!*have_last) {
         *last_x = has_x ? x : preview->stock_x;
         *last_z = has_z ? z : 0.0f;
@@ -2094,8 +2094,8 @@ static bool nc_visual_draw_emitted_motion_line(const nc_preview_info_t *preview,
         float r = 0.0f;
         float i_off = 0.0f;
         float k_off = 0.0f;
-        if ((nc_sim_line_word_float(line, 'I', &i_off) &&
-             nc_sim_line_word_float(line, 'K', &k_off) &&
+        if ((nc_preview_line_word_float(line, 'I', &i_off) &&
+             nc_preview_line_word_float(line, 'K', &k_off) &&
              nc_visual_draw_center_arc(preview,
                                        z0_x,
                                        stock_w,
@@ -2110,7 +2110,7 @@ static bool nc_visual_draw_emitted_motion_line(const nc_preview_info_t *preview,
                                        cmd == G7X_CONTOUR_ARC_CW,
                                        color,
                                        width)) ||
-            (nc_sim_line_word_float(line, 'R', &r) &&
+            (nc_preview_line_word_float(line, 'R', &r) &&
              nc_visual_draw_explicit_arc(preview,
                                          z0_x,
                                          stock_w,
@@ -2752,7 +2752,7 @@ static void nc_visual_draw_thin_preview(const nc_document_t *doc,
         t2 = t0;
         t3 = t0;
     } else {
-        nc_sim_collect_preview(doc, &preview);
+        nc_preview_collect(doc, &preview);
         t1 = mcu_micros();
         if (clear_bg) {
             lvds_draw_fill_rect(x, y, w, h, NC_VISUAL_PREVIEW_BG);

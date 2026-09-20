@@ -34,7 +34,7 @@ MODULES = $(SRC)/modules/g7_g8/parser_g7_g8.c \
           $(SRC)/modules/nc/nc_g7x.c $(SRC)/modules/nc/nc_files.c \
           $(SRC)/modules/nc/nc_feedback.c $(SRC)/modules/nc/nc_menu.c \
           $(SRC)/modules/nc/nc_palette.c $(SRC)/modules/nc/nc_presets.c \
-          $(SRC)/modules/nc/nc_run.c $(SRC)/modules/nc/nc_sim.c \
+          $(SRC)/modules/nc/nc_run.c $(SRC)/modules/nc/nc_preview.c \
           $(SRC)/modules/nc/nc_state.c $(SRC)/modules/nc/nc_text.c \
           $(SRC)/modules/nc/nc_tools.c $(SRC)/modules/nc/nc_vocab.c \
           $(SRC)/modules/nc/nc_visual.c \

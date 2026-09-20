@@ -184,6 +184,17 @@ Bench items, not software:
        in the file list, and later by `3x3_path_builder.c` when it wants the
        next file. The pad only chooses the file - what lands in the program is
        the call from step 1.
+
+       **And the first line is the program's name.** A short name like `42` says
+       nothing about what the file does, so the panel shows the program's own
+       first line back as its functional name while the digits are being typed
+       (`SETUP OD 42` on line 1 of `42.nc`), and the same in the file list next
+       to a typed jump. The read comes from the scratch document the file list's
+       preview already loads when the selection changes
+       (`nc_files_preview_sync`) - no second reader, and no card read per frame.
+       The convention is data, not syntax: nothing parses that line, the panel
+       only displays it, the program keeps an ordinary first row, and a file
+       whose first line is empty or unreadable just shows its name.
   - [ ] DXF reader/import path, including unit/scale handling and conversion
     into the shared path/document representation rather than a second dialect.
   - [ ] Expand threading support end to end: supported G33/G76 forms, editor

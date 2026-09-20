@@ -68,16 +68,22 @@ def definition_span(lines, start):
 
 def comment_top(lines, start):
     """First line of the comment block directly above `start`."""
-    top = start
-    while top > 0:
-        previous = lines[top - 1]
-        if previous.startswith('/*') or previous.startswith('//'):
-            return top - 1
-        if previous.startswith(' *') or previous.startswith(' */'):
-            top -= 1
-            continue
-        return top
-    return top
+    def is_comment_start(line):
+        stripped = line.lstrip()
+        return stripped.startswith('/*') or stripped.startswith('//')
+
+    top = start - 1
+    if top < 0 or not lines[top].strip():
+        return start
+    # The block's last line ends with a `*/` (or is a `//` line); anything else
+    # - a closing brace, a blank line - is not a comment and must not travel.
+    if not (lines[top].strip().endswith('*/') or lines[top].lstrip().startswith('//')):
+        return start
+    while top > 0 and not is_comment_start(lines[top]):
+        if not lines[top].strip():
+            break
+        top -= 1
+    return top if is_comment_start(lines[top]) else start
 
 
 def typedef_span(lines, start):

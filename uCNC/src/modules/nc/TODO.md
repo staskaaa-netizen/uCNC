@@ -583,12 +583,36 @@ NC supplies document access and UI, not a second cycle generator.
   `nc_ui_show.py` frames byte-identical, `test_g7x`, `test_nc_sender` and both
   firmware targets.
 
-  **Next:** what is left in `nc_visual.c` is the editor (file list, word
-  editing, the floating helper, the preset insert), the key handling and the
-  footer dispatch - 2.8k lines, still over the rule. The editor is the next
-  self-contained piece: `nc_editor.c` with the document, the cursor, the text
-  edit buffer and the modal helper, which is also what the Heidenhain field
-  flow above would land in.
+  **Fifth cut, first half done: the editor's typing.** `nc_editor.c` starts with
+  what the HELP + word editing owns outright - the draft a value is typed into
+  (`nc_text_edit_t`), the code buffer the helper types, the floating helper
+  itself (its menus, the line it inserted and the keys that drive it), the
+  selected-word edit path, and the drawing of the draft line and the helper
+  panel. `nc_visual.c` goes 2,816 -> 2,527 lines; `nc_editor.c` is 377.
+
+  The boundary: the document is *not* the editor's - it is the screen's buffer,
+  which RUN sends, TOOLS holds the tool table in and the preview reads - so it
+  is handed in with the status line and repaint flag in `nc_editor_ctx_t`. The
+  key map stays with the screen (the order a key is offered to the footer, the
+  modes, MANUAL and the editor is the screen's), which is why the editor answers
+  `nc_editor_modal_key()` where the screen offers the helper the key first and
+  `nc_editor_selected_word_key()` where its own sequence wants it. One thing
+  needed a note: the helper's menus hand their chosen entry *back* through
+  `ctx->follow`, because what a footer entry does is the screen's - the editor
+  never calls the screen.
+
+  Two smaller fixes came with it: `tools/nc_move_funcs.py` lifted a comment only
+  when its continuation lines began with `*`, so plain wrapped comments stayed
+  behind in the source file - and the frames caught a real mistake in the same
+  breath (the two keys the editor's entries take were passed in the wrong
+  order, which showed up as the helper opening instead of a digit being typed).
+
+  **The editor's other half is next:** the code-line and tool-row movement, the
+  file list and the open/new flows, the word/field key steps and the code pane
+  drawing (including the file list overlay). Then `nc_visual.c` is the screen
+  frame around the screens: tabs, header, notice, footer strip, key map, the
+  TOOLS pane, RUN arming and the frame stats - and the Heidenhain field flow
+  above lands in `nc_editor.c`.
   The rename was done before those cuts, as its own commit: the drawn functions
   are `nc_draw_*()` in `nc_draw.c` and `nc_preview_*()` in `nc_preview.c`, and
   `nc_visual_*()` now means what it says - a function of the screen file. It ran

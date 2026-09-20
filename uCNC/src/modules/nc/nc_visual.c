@@ -4,6 +4,7 @@
 #include "../../interface/grbl_stream.h"
 #include "nc.h"
 #include "nc_draw.h"
+#include "nc_editor.h"
 #include "nc_feedback.h"
 #include "nc_files.h"
 #include "nc_layout.h"
@@ -110,7 +111,6 @@ static uint32_t g_nc_visual_frame_preview_geom_us;
 static uint32_t g_nc_visual_frame_preview_tool_us;
 static size_t g_nc_visual_last_draw_run_line = (size_t)-1;
 static bool g_nc_visual_last_runtime_busy;
-static nc_text_edit_t g_nc_visual_edit;
 static bool g_nc_visual_new_file_active;
 static char g_nc_visual_new_file_name[NC_FILE_NAME_MAX];
 
@@ -189,7 +189,6 @@ static void nc_visual_serial_selected_file(void);
 static void nc_files_preview_sync(void);
 static size_t nc_visual_code_line(void);
 static bool nc_visual_can_edit_code(void);
-static const char *nc_visual_file_basename(const char *path);
 static void nc_visual_dispatch_footer_action(uint8_t action);
 static bool nc_visual_full_preview(void);
 
@@ -198,21 +197,22 @@ static void nc_visual_fps_tick(uint32_t snapshot_us,
                                uint32_t present_us,
                                uint32_t total_us);
 
+/* The editor's view of this screen: the document is the screen's, and so are the
+   status line and the repaint flag. `s` is the frame being drawn, which only the
+   editor's panels need. */
+static void nc_visual_editor_ctx(nc_editor_ctx_t *ctx, const nc_snapshot_t *s)
+{
+    ctx->doc = &g_nc_visual_doc;
+    ctx->snapshot = s;
+    ctx->editable = nc_visual_can_edit_code();
+    ctx->status = g_nc_visual_status;
+    ctx->status_size = sizeof(g_nc_visual_status);
+    ctx->dirty = &g_nc_visual_dirty;
+    ctx->follow = NC_FOOTER_ACTION_NONE;
+}
+
 static nc_mode_t g_nc_visual_mode = NC_MODE_MANUAL;
 static uint8_t g_nc_visual_selected_action = NC_FOOTER_ACTION_NONE;
-static bool g_nc_modal_active;
-static nc_footer_action_t g_nc_modal_parent;
-static const nc_footer_item_t *g_nc_modal_items;
-static size_t g_nc_modal_count;
-static const char *g_nc_modal_title;
-static char g_nc_gcode_buf[8];
-static size_t g_nc_modal_line;
-static char g_nc_modal_prefix;
-/* The helper is anchored to a line of its own, inserted under the cursor: the
-   line the choice will fill. Remember where it came from so cancelling puts
-   the cursor back and choosing writes exactly where the line stood. */
-static size_t g_nc_modal_origin_line;
-static const char *g_nc_modal_label;
 /* The editor's file-name row above line 1 can hold the cursor. */
 static bool g_nc_visual_name_selected;
 /* Screen idle time is tracked so the state store is written when the operator
@@ -785,7 +785,7 @@ static void nc_visual_move_tool_line(int delta)
     if (selected_line >= 0) {
         g_nc_visual_doc.cursor_line = (size_t)selected_line;
         g_nc_visual_doc.selected_word = -1;
-        nc_text_edit_clear(&g_nc_visual_edit);
+        nc_editor_clear_draft();
         snprintf(g_nc_visual_status,
                  sizeof(g_nc_visual_status),
                  "Tool %d/%d",
@@ -835,7 +835,7 @@ static void nc_visual_move_code_line(int delta)
         /* Drop the value selection: the movement keys must stay movement keys
            while the name row is the cursor. */
         g_nc_visual_doc.selected_word = -1;
-        nc_text_edit_clear(&g_nc_visual_edit);
+        nc_editor_clear_draft();
         g_nc_visual_status[0] = '\0';
         return;
     }
@@ -954,290 +954,22 @@ static void nc_visual_insert_preset_action(nc_preset_t preset,
     }
 }
 
-static bool nc_visual_handle_selected_word_edit(nc_visual_key_t key)
-{
-    char key_char = nc_visual_key_char(key);
 
-    if (nc_files_active() ||
-        !nc_visual_can_edit_code() ||
-        g_nc_visual_doc.selected_word < 0) {
-        return false;
-    }
 
-    if (nc_text_edit_handle_key(&g_nc_visual_doc,
-                                &g_nc_visual_edit,
-                                key_char,
-                                g_nc_visual_status,
-                                sizeof(g_nc_visual_status))) {
-        return true;
-    }
-    return false;
-}
 
-static void nc_visual_close_modal(void)
-{
-    g_nc_modal_active = false;
-    g_nc_modal_items = 0;
-    g_nc_modal_count = 0;
-    g_nc_modal_title = "";
-    g_nc_gcode_buf[0] = '\0';
-    g_nc_modal_line = (size_t)-1;
-    g_nc_modal_prefix = '\0';
-    g_nc_modal_label = 0;
-}
 
-static void nc_visual_modal_remove_line(void)
-{
-    if (g_nc_modal_line < g_nc_visual_doc.line_count) {
-        const char *text = g_nc_visual_doc.lines[g_nc_modal_line].text;
-        bool ours;
 
-        if (g_nc_modal_prefix) {
-            ours = text[0] == g_nc_modal_prefix &&
-                   (text[1] == '\0' ||
-                    strcmp(text + 1, g_nc_gcode_buf) == 0);
-        } else {
-            ours = g_nc_modal_label && strcmp(text, g_nc_modal_label) == 0;
-        }
-        if (ours) {
-            (void)nc_delete_line(&g_nc_visual_doc, g_nc_modal_line);
-            if (g_nc_modal_origin_line < g_nc_visual_doc.line_count) {
-                g_nc_visual_doc.cursor_line = g_nc_modal_origin_line;
-            } else if (g_nc_visual_doc.line_count > 0u) {
-                g_nc_visual_doc.cursor_line = g_nc_visual_doc.line_count - 1u;
-            } else {
-                g_nc_visual_doc.cursor_line = 0u;
-            }
-        }
-    }
-    g_nc_modal_line = (size_t)-1;
-    g_nc_modal_prefix = '\0';
-    g_nc_modal_label = 0;
-}
 
-static void nc_visual_modal_cancel(void)
-{
-    nc_visual_modal_remove_line();
-    nc_visual_close_modal();
-}
 
-/* Inserts the helper's own line under the cursor and puts the cursor on it, so
-   the panel hangs below the line the user is working with. */
-static bool nc_visual_modal_insert_line(const char *text)
-{
-    size_t origin = g_nc_visual_doc.cursor_line;
-    size_t at = origin + 1u;
 
-    if (at > g_nc_visual_doc.line_count) {
-        at = g_nc_visual_doc.line_count;
-    }
-    if (nc_insert_line(&g_nc_visual_doc, at, text) != NC_OK) {
-        strncpy(g_nc_visual_status, "Insert line failed", sizeof(g_nc_visual_status) - 1);
-        nc_visual_close_modal();
-        return false;
-    }
-    /* nc_insert_line leaves the cursor on the new line; keep the line it came
-       from so cancelling returns there. */
-    g_nc_modal_origin_line = origin;
-    g_nc_modal_line = at;
-    g_nc_visual_doc.selected_word = -1;
-    nc_text_edit_clear(&g_nc_visual_edit);
-    return true;
-}
 
-static void nc_visual_modal_begin_line(char prefix)
-{
-    char line[4];
 
-    snprintf(line, sizeof(line), "%c", prefix);
-    g_nc_modal_prefix = '\0';
-    g_nc_modal_label = 0;
-    g_nc_gcode_buf[0] = '\0';
-    if (!nc_visual_modal_insert_line(line)) {
-        return;
-    }
-    g_nc_modal_prefix = prefix;
-    g_nc_modal_active = true;
-    g_nc_modal_items = 0;
-    g_nc_modal_count = 0;
-    g_nc_modal_title = prefix == 'G' ? "GCODE" : "TOOL";
-    snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "%c", prefix);
-}
-
-/* The submenu case: the line carries the action name the panel used to draw as
-   its title, and doubles as the place the chosen text will be written. */
-static void nc_visual_modal_begin_label(const char *label)
-{
-    if (!label || !label[0]) {
-        return;
-    }
-    g_nc_modal_prefix = '\0';
-    g_nc_gcode_buf[0] = '\0';
-    if (!nc_visual_modal_insert_line(label)) {
-        return;
-    }
-    g_nc_modal_label = label;
-}
-
-static void nc_visual_modal_update_line(void)
-{
-    char text[16];
-
-    if (g_nc_modal_line >= g_nc_visual_doc.line_count || !g_nc_modal_prefix) {
-        return;
-    }
-    snprintf(text, sizeof(text), "%c%s", g_nc_modal_prefix, g_nc_gcode_buf);
-    (void)nc_set_line(&g_nc_visual_doc, g_nc_modal_line, text);
-}
-
-static void nc_visual_select_first_value(void)
-{
-    nc_word_t words[24];
-    int count;
-
-    if (g_nc_visual_doc.cursor_line >= g_nc_visual_doc.line_count) {
-        return;
-    }
-    count = nc_parse_words(g_nc_visual_doc.lines[g_nc_visual_doc.cursor_line].text,
-                           words,
-                           24);
-    if (count > 0) {
-        g_nc_visual_doc.selected_word = count > 1 ? 1 : 0;
-    }
-}
-
-static void nc_visual_open_modal(nc_footer_action_t parent)
-{
-    nc_visual_modal_cancel();
-    if (parent == NC_FOOTER_ACTION_GCODE) {
-        nc_visual_modal_begin_line('G');
-        g_nc_visual_dirty = true;
-        return;
-    }
-    g_nc_modal_active = true;
-    g_nc_modal_parent = parent;
-    g_nc_modal_items = nc_menu_submenu(parent, &g_nc_modal_count);
-    switch (parent) {
-    case NC_FOOTER_ACTION_OPS: g_nc_modal_title = "OPS"; break;
-    case NC_FOOTER_ACTION_TOOL_MENU: g_nc_modal_title = "TOOL"; break;
-    case NC_FOOTER_ACTION_G7X_MENU: g_nc_modal_title = "G7X"; break;
-    case NC_FOOTER_ACTION_SYNC_MENU: g_nc_modal_title = "THREAD"; break;
-    case NC_FOOTER_ACTION_PECK_MENU: g_nc_modal_title = "PECK"; break;
-    default: g_nc_modal_title = ""; break;
-    }
-    /* Give the helper the line it belongs to: the action name sits in that
-       line and the panel hangs under it, instead of floating over the line the
-       user is reading. Nothing is written into a document that cannot take
-       edits (RUN and the like) - the panel still shows. */
-    if (nc_visual_can_edit_code()) {
-        nc_visual_modal_begin_label(g_nc_modal_title);
-    }
-    g_nc_visual_dirty = true;
-}
-
-static bool nc_visual_modal_handle_key(nc_visual_key_t key)
-{
-    char ch;
-
-    if (!g_nc_modal_active) {
-        return false;
-    }
-    if (g_nc_modal_prefix) {
-        if (key == NC_VISUAL_KEY_CANCEL || key == NC_VISUAL_KEY_MODE) {
-            nc_visual_modal_cancel();
-            g_nc_visual_dirty = true;
-            return true;
-        }
-        ch = nc_visual_key_char(key);
-        if (ch >= '0' && ch <= '9') {
-            size_t len = strlen(g_nc_gcode_buf);
-            if (len + 1u < sizeof(g_nc_gcode_buf)) {
-                g_nc_gcode_buf[len] = ch;
-                g_nc_gcode_buf[len + 1u] = '\0';
-                nc_visual_modal_update_line();
-                snprintf(g_nc_visual_status, sizeof(g_nc_visual_status),
-                         "%c%s", g_nc_modal_prefix, g_nc_gcode_buf);
-            }
-            g_nc_visual_dirty = true;
-            return true;
-        }
-        if (key == NC_VISUAL_KEY_BACKSPACE) {
-            size_t len = strlen(g_nc_gcode_buf);
-            if (len > 0u) {
-                g_nc_gcode_buf[len - 1u] = '\0';
-                nc_visual_modal_update_line();
-            }
-            g_nc_visual_dirty = true;
-            return true;
-        }
-        if (key == NC_VISUAL_KEY_FINISH) {
-            nc_visual_modal_cancel();
-            g_nc_visual_dirty = true;
-            return true;
-        }
-        if (key == NC_VISUAL_KEY_ACCEPT) {
-            if (g_nc_modal_prefix == 'G' && g_nc_gcode_buf[0]) {
-                int code = atoi(g_nc_gcode_buf);
-                const char *name = nc_vocab_gcode_name(code);
-                const char *params = nc_vocab_gcode_parameters(code);
-                const char *template_line = nc_vocab_gcode_template(code);
-                const char *param_text = params ? params : "";
-                if (name) {
-                    (void)nc_set_line(&g_nc_visual_doc,
-                                      g_nc_modal_line,
-                                      template_line ? template_line : "");
-                    nc_visual_select_first_value();
-                    snprintf(g_nc_visual_status, sizeof(g_nc_visual_status),
-                             "G%d %s: %s", code, name, param_text);
-                } else {
-                    snprintf(g_nc_visual_status, sizeof(g_nc_visual_status),
-                             "Unknown G%d", code);
-                }
-            } else if (g_nc_modal_prefix == 'T') {
-                nc_visual_select_first_value();
-                snprintf(g_nc_visual_status, sizeof(g_nc_visual_status),
-                         "T%s", g_nc_gcode_buf);
-            }
-            nc_visual_close_modal();
-            g_nc_visual_dirty = true;
-            return true;
-        }
-        return true;
-    }
-    if (key == NC_VISUAL_KEY_CANCEL || key == NC_VISUAL_KEY_MODE) {
-        nc_visual_modal_cancel();
-        g_nc_visual_dirty = true;
-        return true;
-    }
-    ch = nc_visual_key_char(key);
-    if (ch == '0') {
-        nc_visual_modal_cancel();
-        g_nc_visual_dirty = true;
-        return true;
-    }
-    if (ch >= '1' && ch <= '9') {
-        size_t i;
-        for (i = 0; i < g_nc_modal_count; i++) {
-            if (g_nc_modal_items[i].key == ch) {
-                uint8_t action = g_nc_modal_items[i].action;
-                /* The labelled line only marked the spot. Drop it first so the
-                   chosen action writes exactly where it stood. */
-                nc_visual_modal_cancel();
-                if (action == NC_FOOTER_ACTION_TOOL_SELECT) {
-                    nc_visual_modal_begin_line('T');
-                } else {
-                    nc_visual_dispatch_footer_action(action);
-                }
-                g_nc_visual_dirty = true;
-                return true;
-            }
-        }
-    }
-    return true;
-}
 
 static void nc_visual_dispatch_footer_action(uint8_t action)
 {
+    nc_editor_ctx_t editor;
+
+    nc_visual_editor_ctx(&editor, 0);
     g_nc_visual_selected_action = action;
 
     switch (action) {
@@ -1247,10 +979,10 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
     case NC_FOOTER_ACTION_G7X_MENU:
     case NC_FOOTER_ACTION_SYNC_MENU:
     case NC_FOOTER_ACTION_PECK_MENU:
-        nc_visual_open_modal((nc_footer_action_t)action);
+        nc_editor_open_modal(&editor, action);
         return;
     case NC_FOOTER_ACTION_TOOL_SELECT:
-        nc_visual_modal_begin_line('T');
+        nc_editor_open_field(&editor, 'T');
         break;
     case NC_FOOTER_ACTION_TOOL_EDIT:
         strncpy(g_nc_visual_status, "Tool edit", sizeof(g_nc_visual_status) - 1);
@@ -1420,7 +1152,7 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
         } else if (g_nc_visual_mode != NC_MODE_TOOLS) {
             nc_visual_set_mode(NC_MODE_TOOLS);
             nc_files_set_active(false);
-            nc_text_edit_clear(&g_nc_visual_edit);
+            nc_editor_clear_draft();
             if (nc_state_load_document(g_nc_visual_mode, &g_nc_visual_doc)) {
                 if (g_nc_visual_doc.line_count && !nc_tool_line_is_tool(g_nc_visual_doc.lines[g_nc_visual_doc.cursor_line].text)) {
                     int first_line = -1;
@@ -1688,7 +1420,7 @@ void nc_visual_select_mode(nc_mode_t mode)
     g_nc_visual_selected_action = NC_FOOTER_ACTION_NONE;
     if (nc_visual_uses_file()) {
         nc_files_set_active(false);
-        nc_text_edit_clear(&g_nc_visual_edit);
+        nc_editor_clear_draft();
         if (nc_state_load_document(g_nc_visual_mode, &g_nc_visual_doc)) {
             if (g_nc_visual_mode == NC_MODE_RUN && !nc_run_active())
                 nc_run_set_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line);
@@ -2074,6 +1806,9 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
     uint32_t t2;
     uint32_t t3;
     uint32_t t4;
+    nc_editor_ctx_t editor;
+
+    nc_visual_editor_ctx(&editor, s);
 
     lvds_draw_fill_rect(0, 0, LVDS_HSTX_WIDTH, LVDS_HSTX_HEIGHT, NC_VISUAL_BG);
     t0 = mcu_micros();
@@ -2276,34 +2011,7 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
        and in EDIT's full-screen state the preview *is* the body, so the old
        "no controls on this screen" placeholder must not be painted over it. */
 
-    if (nc_text_edit_active(&g_nc_visual_edit)) {
-        snprintf(buf, sizeof(buf), "EDIT %s", nc_text_edit_buffer(&g_nc_visual_edit));
-        lvds_draw_fill_rect(20, 526, LVDS_HSTX_WIDTH - 40, 18, NC_VISUAL_BG);
-        nc_draw_text_clip(34, 526, buf, 70, NC_VISUAL_ACCENT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
-    }
-    if (g_nc_modal_active && !g_nc_modal_prefix) {
-        int visible = s->cursor_visible_index;
-        int keypad_y;
-        int modal_x;
-        if (visible < 0) {
-            visible = 0;
-        }
-        /* The helper belongs to the line under the cursor - the line that
-           carries the action name and will take the text. It hangs below that
-           line instead of covering the line the user is reading. */
-        keypad_y = NC_CODE_Y + (visible + 1) * NC_VISUAL_ROW_H - NC_MODAL_PAD;
-        keypad_y = nc_draw_clampi(keypad_y, NC_CODE_Y,
-                                    NC_PANE_BOTTOM - NC_MODAL_PAD -
-                                    NC_MODAL_KEY_H * NC_MODAL_ROWS);
-        /* Floating on the right, the way the machine's keypad sits beside the
-           screen, and pinned so the keys end at the pane bottom when the helper
-           line is too low to hang below it. */
-        modal_x = NC_RIGHT_PANE_X + NC_RIGHT_PANE_W - NC_MODAL_W - 8;
-        /* The G/T field takes its digits on the line itself, so only a submenu
-           has a helper to draw. */
-        nc_draw_modal_items(modal_x, keypad_y, g_nc_modal_items,
-                                   g_nc_modal_count, 0u);
-    }
+    nc_editor_draw_aids(&editor);
     t3 = mcu_micros();
 
     nc_visual_footer_text(footer_text, sizeof(footer_text));
@@ -2389,9 +2097,15 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
        be read or seeded once the machine has been running. This is the first
        point where the drive is expected to answer. */
     (void)nc_presets_sync();
+    nc_editor_ctx_t editor;
+    char key_ch = nc_visual_key_char(key);
     uint8_t footer_action;
 
-    if (nc_visual_modal_handle_key(key)) {
+    nc_visual_editor_ctx(&editor, 0);
+    if (nc_editor_modal_key(&editor, key, key_ch)) {
+        if (editor.follow != NC_FOOTER_ACTION_NONE) {
+            nc_visual_dispatch_footer_action(editor.follow);
+        }
         return;
     }
     if (!nc_files_active() && g_nc_visual_mode == NC_MODE_MANUAL) {
@@ -2475,7 +2189,7 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
         }
         /* Arrows never edit: drop any draft instead of applying it, so a stray
            decimal point cannot be pushed into the program. */
-        nc_text_edit_clear(&g_nc_visual_edit);
+        nc_editor_clear_draft();
         result = forward ? nc_select_same_word_next(&g_nc_visual_doc) :
                            nc_select_same_word_prev(&g_nc_visual_doc);
         if (result == NC_OK &&
@@ -2504,14 +2218,14 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
             nc_cursor_up(&g_nc_visual_doc);
         }
         g_nc_visual_doc.selected_word = -1;
-        nc_text_edit_clear(&g_nc_visual_edit);
+        nc_editor_clear_draft();
         g_nc_visual_status[0] = '\0';
         g_nc_visual_dirty = true;
         return;
     }
 
     if (key == NC_VISUAL_KEY_MODE) {
-        nc_text_edit_clear(&g_nc_visual_edit);
+        nc_editor_clear_draft();
         g_nc_visual_new_file_active = false;
         nc_visual_cycle_mode();
         g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
@@ -2519,7 +2233,7 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
         return;
     }
 
-    if (nc_visual_handle_selected_word_edit(key)) {
+    if (nc_editor_selected_word_key(&editor, key, key_ch)) {
         g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
         g_nc_visual_dirty = true;
         return;
@@ -2529,7 +2243,7 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
         (nc_files_active() ||
          nc_visual_is_code_view() ||
          g_nc_visual_mode == NC_MODE_TOOLS)) {
-        nc_text_edit_clear(&g_nc_visual_edit);
+        nc_editor_clear_draft();
         nc_visual_dispatch_footer_action(key == NC_VISUAL_KEY_PREV ? NC_FOOTER_ACTION_BACK : NC_FOOTER_ACTION_STEP);
         g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
         g_nc_visual_dirty = true;
@@ -2570,12 +2284,12 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
 
     switch (key) {
     case NC_VISUAL_KEY_PREV:
-        nc_text_edit_clear(&g_nc_visual_edit);
+        nc_editor_clear_draft();
         nc_cursor_up(&g_nc_visual_doc);
         g_nc_visual_status[0] = '\0';
         break;
     case NC_VISUAL_KEY_NEXT:
-        nc_text_edit_clear(&g_nc_visual_edit);
+        nc_editor_clear_draft();
         nc_cursor_down(&g_nc_visual_doc);
         g_nc_visual_status[0] = '\0';
         break;
@@ -2595,7 +2309,7 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
         }
         break;
     case NC_VISUAL_KEY_CANCEL:
-        nc_text_edit_clear(&g_nc_visual_edit);
+        nc_editor_clear_draft();
         g_nc_visual_doc.selected_word = -1;
         strncpy(g_nc_visual_status, "Selection cleared", sizeof(g_nc_visual_status) - 1);
         break;

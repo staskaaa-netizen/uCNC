@@ -32,7 +32,8 @@ MODULES = $(SRC)/modules/g7_g8/parser_g7_g8.c \
           $(SRC)/modules/g7x/g7x_source.c \
           $(SRC)/modules/nc/nc.c $(SRC)/modules/nc/nc_emit.c \
           $(SRC)/modules/nc/nc_g7x.c $(SRC)/modules/nc/nc_files.c \
-          $(SRC)/modules/nc/nc_feedback.c $(SRC)/modules/nc/nc_manual.c \
+          $(SRC)/modules/nc/nc_editor.c $(SRC)/modules/nc/nc_feedback.c \
+          $(SRC)/modules/nc/nc_manual.c \
           $(SRC)/modules/nc/nc_menu.c \
           $(SRC)/modules/nc/nc_palette.c $(SRC)/modules/nc/nc_presets.c \
           $(SRC)/modules/nc/nc_preview.c $(SRC)/modules/nc/nc_draw.c \

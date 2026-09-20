@@ -1117,3 +1117,261 @@ void nc_editor_draw_pane(nc_editor_ctx_t *ctx)
                                     NC_VISUAL_WORD_BG);
     }
 }
+
+
+/* --- the footer entries the editor owns ----------------------------------- */
+
+/* The actions that change the document or the list it comes from: the helper's
+   menus, the one-line inserts (a tool change, a spindle word, a cycle preset),
+   the file list with its open/new/delete/refresh, saving, and the cursor steps.
+
+   What a key does is the screen's to route; this answers "mine or not" so the
+   screen can offer the action to the next owner. */
+bool nc_editor_action(nc_editor_ctx_t *ctx, uint8_t action)
+{
+    switch (action) {
+    case NC_FOOTER_ACTION_OPS:
+    case NC_FOOTER_ACTION_TOOL_MENU:
+    case NC_FOOTER_ACTION_GCODE:
+    case NC_FOOTER_ACTION_G7X_MENU:
+    case NC_FOOTER_ACTION_SYNC_MENU:
+    case NC_FOOTER_ACTION_PECK_MENU:
+        nc_editor_open_modal(ctx, action);
+        return true;
+    case NC_FOOTER_ACTION_TOOL_SELECT:
+        nc_editor_open_field(ctx, 'T');
+        return true;
+    case NC_FOOTER_ACTION_TOOL_CHANGE:
+        if (nc_insert_line(ctx->doc, ctx->doc->cursor_line + 1u, "M6") == NC_OK) {
+            nc_cursor_down(ctx->doc);
+            strncpy(ctx->status, "Inserted M6 tool change", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_SPINDLE_ON:
+        if (nc_insert_line(ctx->doc, ctx->doc->cursor_line + 1u, "M3 S1000") == NC_OK) {
+            nc_cursor_down(ctx->doc);
+            strncpy(ctx->status, "Inserted M3 spindle on", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_SPINDLE_STOP:
+        if (nc_insert_line(ctx->doc, ctx->doc->cursor_line + 1u, "M5") == NC_OK) {
+            nc_cursor_down(ctx->doc);
+            strncpy(ctx->status, "Inserted M5 spindle stop", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_SPINDLE_CCW:
+        if (nc_insert_line(ctx->doc, ctx->doc->cursor_line + 1u, "M4 S1000") == NC_OK) {
+            nc_cursor_down(ctx->doc);
+            strncpy(ctx->status, "Inserted M4 spindle CCW", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_TAP:
+        if (nc_insert_preset_id(ctx->doc, 53)) {
+            nc_cursor_down(ctx->doc);
+            strncpy(ctx->status, "Inserted tap preset", ctx->status_size - 1);
+        } else {
+            strncpy(ctx->status, "Tap preset unavailable", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_THREAD_OD:
+        if (nc_insert_preset_id(ctx->doc, 51)) {
+            nc_cursor_down(ctx->doc);
+            strncpy(ctx->status, "Inserted G76 OD thread", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_THREAD_ID:
+        if (nc_insert_preset_id(ctx->doc, 52)) {
+            nc_cursor_down(ctx->doc);
+            strncpy(ctx->status, "Inserted G76 ID thread", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_PECK_DRILL:
+        if (nc_insert_preset_id(ctx->doc, 61)) {
+            nc_cursor_down(ctx->doc);
+            strncpy(ctx->status, "Inserted drill preset", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_PECK_PECK:
+        if (nc_insert_preset_id(ctx->doc, 62)) {
+            nc_cursor_down(ctx->doc);
+            strncpy(ctx->status, "Inserted peck preset", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_PECK_DWELL:
+        if (nc_insert_preset_id(ctx->doc, 63)) {
+            nc_cursor_down(ctx->doc);
+            strncpy(ctx->status, "Inserted dwell preset", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_FILE:
+        /* Opens the folder the open file lives in, so the list can land on it;
+           falls back to the NC folder when nothing is open. */
+        if (ctx->doc->path[0]) {
+            nc_editor_open_current_folder(ctx);
+        } else {
+            nc_editor_open_files(ctx, NC_FILES_DIR, true);
+        }
+        return true;
+    case NC_FOOTER_ACTION_FILES:
+        nc_editor_open_files(ctx, NULL, false);
+        return true;
+    case NC_FOOTER_ACTION_OPEN:
+        if (nc_files_active()) {
+            char path[NC_PATH_MAX];
+            nc_result_t r;
+            if (nc_files_selected_is_dir()) {
+                if (nc_files_enter_selected()) {
+                    snprintf(ctx->status, ctx->status_size, "Dir: %s", nc_files_cwd());
+                } else {
+                    strncpy(ctx->status, "Directory open failed", ctx->status_size - 1);
+                }
+                return true;
+            }
+            if (!nc_files_selected_path(path, sizeof(path))) {
+                strncpy(ctx->status, "No NC file selected", ctx->status_size - 1);
+                return true;
+            }
+            if (ctx->mode == NC_MODE_TOOLS &&
+                !nc_state_tool_path_supported(path)) {
+                strncpy(ctx->status, "TOOLS opens .t files only", ctx->status_size - 1);
+                return true;
+            }
+            /* The buffer is about to be reused for another file: put the edits
+               of the one that is open on the card first. */
+            if (!nc_editor_save_current(ctx) &&
+                !nc_editor_proceed_without_saving(ctx, NC_EDITOR_UNSAVED_OPEN)) {
+                strncpy(ctx->status, "Save failed - press again to open", ctx->status_size - 1);
+                return true;
+            }
+            r = nc_load_file(ctx->doc, path);
+            if (r == NC_OK) {
+                nc_files_set_active(false);
+                nc_editor_new_file_end(ctx);
+                nc_state_remember_path(ctx->mode, path);
+                nc_state_save();
+                snprintf(ctx->status, ctx->status_size, "Opened %s", nc_files_name(nc_files_selected()));
+            } else {
+                snprintf(ctx->status, ctx->status_size, "Open failed: %s", nc_result_text(r));
+            }
+        } else {
+            nc_files_set_active(true);
+            nc_editor_new_file_end(ctx);
+            if (nc_files_refresh(NULL)) {
+                nc_editor_serial_selected_file();
+                ctx->status[0] = '\0';
+            } else {
+                strncpy(ctx->status, "File list unavailable", ctx->status_size - 1);
+            }
+        }
+        return true;
+    case NC_FOOTER_ACTION_PRESET_OD:
+        nc_editor_insert_preset(ctx, NC_PRESET_OD, "Inserted OD preset", "OD preset failed");
+        return true;
+    case NC_FOOTER_ACTION_PRESET_ID:
+        nc_editor_insert_preset(ctx, NC_PRESET_ID, "Inserted ID preset", "ID preset failed");
+        return true;
+    case NC_FOOTER_ACTION_PRESET_FACE:
+        nc_editor_insert_preset(ctx, NC_PRESET_FACE, "Inserted FACE preset", "FACE preset failed");
+        return true;
+    case NC_FOOTER_ACTION_PRESET_LINE:
+        nc_editor_insert_preset(ctx, NC_PRESET_LINE, "Inserted line preset", "Line preset failed");
+        return true;
+    case NC_FOOTER_ACTION_PRESET_ARC:
+        nc_editor_insert_preset(ctx, NC_PRESET_ARC, "Inserted arc preset", "Arc preset failed");
+        return true;
+    case NC_FOOTER_ACTION_PRESET_SETUP:
+        nc_editor_insert_preset(ctx, NC_PRESET_SETUP, "Inserted setup preset", "Setup preset failed");
+        return true;
+    case NC_FOOTER_ACTION_PRESET_END:
+        nc_editor_insert_preset(ctx, NC_PRESET_END, "Inserted G80", "G80 preset failed");
+        return true;
+    case NC_FOOTER_ACTION_SAVE:
+        if (ctx->doc->path[0] && nc_save_file(ctx->doc, ctx->doc->path) == NC_OK) {
+            nc_state_remember_path(ctx->mode, ctx->doc->path);
+            nc_state_save();
+            strncpy(ctx->status, "Saved", ctx->status_size - 1);
+        } else {
+            strncpy(ctx->status, "Save needs an opened NC file", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_NEW:
+        if (nc_files_active()) {
+            nc_editor_new_file_begin(ctx);
+            return true;
+        }
+        nc_document_init(ctx->doc);
+        nc_insert_line(ctx->doc, 0, "");
+        strncpy(ctx->doc->path, "new.nc", sizeof(ctx->doc->path) - 1);
+        nc_state_remember_path(ctx->mode, ctx->doc->path);
+        nc_state_save();
+        strncpy(ctx->status, "New empty NC program", ctx->status_size - 1);
+        return true;
+    case NC_FOOTER_ACTION_INSERT:
+        if (nc_insert_line(ctx->doc, ctx->doc->cursor_line + 1, "") == NC_OK) {
+            nc_cursor_down(ctx->doc);
+            strncpy(ctx->status, "Inserted blank line", ctx->status_size - 1);
+        } else {
+            strncpy(ctx->status, "Insert failed", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_DELETE:
+        if (nc_files_active()) {
+            if (nc_files_delete_selected()) {
+                strncpy(ctx->status, "File deleted", ctx->status_size - 1);
+            } else {
+                strncpy(ctx->status, "Delete file failed", ctx->status_size - 1);
+            }
+            return true;
+        }
+        if (nc_delete_line(ctx->doc, ctx->doc->cursor_line) == NC_OK) {
+            strncpy(ctx->status, "Deleted line", ctx->status_size - 1);
+        } else {
+            strncpy(ctx->status, "Delete failed", ctx->status_size - 1);
+        }
+        return true;
+    case NC_FOOTER_ACTION_BACK:
+        if (nc_files_active()) {
+            nc_files_select_prev();
+            nc_editor_serial_selected_file();
+            strncpy(ctx->status, "File up", ctx->status_size - 1);
+        } else if (ctx->mode == NC_MODE_TOOLS) {
+            nc_editor_move_tool_line(ctx, -1);
+        } else {
+            nc_editor_move_line(ctx, -1);
+            nc_editor_serial_selected_line(ctx);
+        }
+        return true;
+    case NC_FOOTER_ACTION_STEP:
+        if (nc_files_active()) {
+            nc_files_select_next();
+            nc_editor_serial_selected_file();
+            strncpy(ctx->status, "File down", ctx->status_size - 1);
+        } else if (ctx->mode == NC_MODE_TOOLS) {
+            nc_editor_move_tool_line(ctx, 1);
+        } else {
+            nc_editor_move_line(ctx, 1);
+            nc_editor_serial_selected_line(ctx);
+        }
+        return true;
+    case NC_FOOTER_ACTION_REFRESH:
+        if (nc_files_refresh(NULL)) {
+            nc_editor_serial_selected_file();
+            snprintf(ctx->status, ctx->status_size, "Refreshed %s", nc_files_cwd());
+        } else {
+            strncpy(ctx->status, "Refresh failed", ctx->status_size - 1);
+        }
+        if (!nc_files_active()) {
+            nc_files_set_active(true);
+        }
+        return true;
+    case NC_FOOTER_ACTION_FIELD:
+        if (nc_select_next_word(ctx->doc) == NC_OK) {
+            strncpy(ctx->status, "Next word", ctx->status_size - 1);
+        } else {
+            strncpy(ctx->status, "No editable word here", ctx->status_size - 1);
+        }
+        return true;
+    default:
+        return false;
+    }
+}

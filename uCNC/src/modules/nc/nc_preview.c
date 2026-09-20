@@ -1064,3 +1064,29 @@ void nc_preview_draw(const nc_preview_ctx_t *ctx,
     times->geom += (t2 - t1) + (t5 - t3);
     times->tool += (t3 - t2) + (mcu_micros() - t5);
 }
+
+
+/* --- the footer entries the preview owns ---------------------------------- */
+
+/* The layer switches. The message that goes with the new state belongs to the
+   layer it describes, so the screen only has to show what it is handed.
+   Returns NULL when the action is not one of the preview's. */
+const char *nc_preview_action(uint8_t action)
+{
+    switch (action) {
+    case NC_FOOTER_ACTION_STOCK:
+        return nc_preview_toggle_layer(NC_PREVIEW_LAYER_STOCK)
+                   ? "Stock on" : "Stock outline";
+    case NC_FOOTER_ACTION_PATH:
+        return nc_preview_toggle_layer(NC_PREVIEW_LAYER_PATH)
+                   ? "Path on" : "Path hidden";
+    case NC_FOOTER_ACTION_ROUGH:
+        return nc_preview_toggle_layer(NC_PREVIEW_LAYER_ROUGH)
+                   ? "Rough on" : "Rough hidden";
+    case NC_FOOTER_ACTION_DIMS:
+        return nc_preview_toggle_layer(NC_PREVIEW_LAYER_DIMS)
+                   ? "Dimensions on" : "Dimensions hidden";
+    default:
+        return 0;
+    }
+}

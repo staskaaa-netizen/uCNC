@@ -627,7 +627,24 @@ NC supplies document access and UI, not a second cycle generator.
   back is `ctx->follow`: a helper menu entry names a footer action and the screen
   runs it, because what a footer entry does is the screen's.
 
-  **The check that this cut needed.** The frame dumps could not see the new-file
+  **Seventh cut done: the footer actions went to their owners.** The 430-line
+  `nc_visual_dispatch_footer_action()` was the largest thing left in the screen
+  file, and nearly every case belonged to something else. The document and file
+  actions - the helper's menus, the one-line inserts (a tool change, a spindle
+  word, a cycle preset by id), the file list with open/new/delete/refresh,
+  saving, the cursor steps - are `nc_editor_action()`; the four layer switches
+  are `nc_preview_action()`, which hands back the message that goes with the new
+  state; the axis/zero/touch entries were already `nc_manual_action()`. What is
+  left in the screen's dispatch is a router plus fourteen of the screen's own
+  cases: the TOOLS mode switch and its two stubs, RESET, FULL, VIEW, the RUN
+  keys (SINGLE, FROM, HOLD, STOP) and the SEND/CLEAR stubs.
+
+  `nc_visual.c` is 1,633 lines and `nc_editor.c` 1,377 - the module's two
+  biggest files are both inside the rule now, and the RUN keys and the TOOLS
+  mode switch are the pieces a later cut would hand to `nc_run.c` and
+  `nc_tools.c`.
+
+  **The check that the editor cut needed.** The frame dumps could not see the new-file
   field - it is only drawn while the file list is up - and the extraction had
   left the field handler with a local copy of the key character, so every digit
   was dropped and a nameless file was created. The bench now has

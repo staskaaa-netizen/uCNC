@@ -92,6 +92,10 @@ void nc_preview_draw(const nc_preview_ctx_t *ctx, int x, int y, int w, int h,
 bool nc_preview_layer(nc_preview_layer_t layer);
 bool nc_preview_toggle_layer(nc_preview_layer_t layer);
 
+/* A footer action the preview owns: the four layer switches. The message that
+   goes with the new state comes back with it, and NULL means "not mine". */
+const char *nc_preview_action(uint8_t action);
+
 /* The drawing context changed (a full frame is about to be drawn): the frame
    cache and the tool marker's rectangle no longer describe what is on the
    panel. */

@@ -615,174 +615,37 @@ static void nc_files_preview_sync(void)
 static void nc_visual_dispatch_footer_action(uint8_t action)
 {
     nc_editor_ctx_t editor;
+    nc_manual_screen_t manual;
+    const char *message;
 
     nc_visual_editor_ctx(&editor, 0);
+    nc_visual_manual_screen(&manual);
     g_nc_visual_selected_action = action;
 
-    switch (action) {
-    case NC_FOOTER_ACTION_OPS:
-    case NC_FOOTER_ACTION_TOOL_MENU:
-    case NC_FOOTER_ACTION_GCODE:
-    case NC_FOOTER_ACTION_G7X_MENU:
-    case NC_FOOTER_ACTION_SYNC_MENU:
-    case NC_FOOTER_ACTION_PECK_MENU:
-        nc_editor_open_modal(&editor, action);
+    /* Each footer entry has one owner. The screen asks them in turn and keeps
+       what is its own below: the mode changes, the RUN keys, the view toggle
+       and the entries that are still stubs. */
+    if (nc_editor_action(&editor, action)) {
         return;
-    case NC_FOOTER_ACTION_TOOL_SELECT:
-        nc_editor_open_field(&editor, 'T');
-        break;
+    }
+    message = nc_preview_action(action);
+    if (message) {
+        strncpy(g_nc_visual_status, message, sizeof(g_nc_visual_status) - 1);
+        return;
+    }
+    if (nc_manual_action(action, &manual)) {
+        return;
+    }
+
+    switch (action) {
     case NC_FOOTER_ACTION_TOOL_EDIT:
         strncpy(g_nc_visual_status, "Tool edit", sizeof(g_nc_visual_status) - 1);
-        break;
-    case NC_FOOTER_ACTION_TOOL_CHANGE:
-        if (nc_insert_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line + 1u, "M6") == NC_OK) {
-            nc_cursor_down(&g_nc_visual_doc);
-            strncpy(g_nc_visual_status, "Inserted M6 tool change", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_SPINDLE_ON:
-        if (nc_insert_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line + 1u, "M3 S1000") == NC_OK) {
-            nc_cursor_down(&g_nc_visual_doc);
-            strncpy(g_nc_visual_status, "Inserted M3 spindle on", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_SPINDLE_STOP:
-        if (nc_insert_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line + 1u, "M5") == NC_OK) {
-            nc_cursor_down(&g_nc_visual_doc);
-            strncpy(g_nc_visual_status, "Inserted M5 spindle stop", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_SPINDLE_CCW:
-        if (nc_insert_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line + 1u, "M4 S1000") == NC_OK) {
-            nc_cursor_down(&g_nc_visual_doc);
-            strncpy(g_nc_visual_status, "Inserted M4 spindle CCW", sizeof(g_nc_visual_status) - 1);
-        }
         break;
     case NC_FOOTER_ACTION_G7X_Q:
         strncpy(g_nc_visual_status, "G71 Q: numbered contour end", sizeof(g_nc_visual_status) - 1);
         break;
     case NC_FOOTER_ACTION_G7X_N:
         strncpy(g_nc_visual_status, "G71 N: numbered block", sizeof(g_nc_visual_status) - 1);
-        break;
-    case NC_FOOTER_ACTION_TAP:
-        if (nc_insert_preset_id(&g_nc_visual_doc, 53)) {
-            nc_cursor_down(&g_nc_visual_doc);
-            strncpy(g_nc_visual_status, "Inserted tap preset", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "Tap preset unavailable", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_THREAD_OD:
-        if (nc_insert_preset_id(&g_nc_visual_doc, 51)) {
-            nc_cursor_down(&g_nc_visual_doc);
-            strncpy(g_nc_visual_status, "Inserted G76 OD thread", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_THREAD_ID:
-        if (nc_insert_preset_id(&g_nc_visual_doc, 52)) {
-            nc_cursor_down(&g_nc_visual_doc);
-            strncpy(g_nc_visual_status, "Inserted G76 ID thread", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_PECK_DRILL:
-        if (nc_insert_preset_id(&g_nc_visual_doc, 61)) {
-            nc_cursor_down(&g_nc_visual_doc);
-            strncpy(g_nc_visual_status, "Inserted drill preset", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_PECK_PECK:
-        if (nc_insert_preset_id(&g_nc_visual_doc, 62)) {
-            nc_cursor_down(&g_nc_visual_doc);
-            strncpy(g_nc_visual_status, "Inserted peck preset", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_PECK_DWELL:
-        if (nc_insert_preset_id(&g_nc_visual_doc, 63)) {
-            nc_cursor_down(&g_nc_visual_doc);
-            strncpy(g_nc_visual_status, "Inserted dwell preset", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_FILE:
-        /* Opens the folder the open file lives in, so the list can land on it;
-           falls back to the NC folder when nothing is open. */
-        if (g_nc_visual_doc.path[0]) {
-            nc_editor_open_current_folder(&editor);
-        } else {
-            nc_editor_open_files(&editor, NC_FILES_DIR, true);
-        }
-        break;
-    case NC_FOOTER_ACTION_FILES:
-        nc_editor_open_files(&editor, NULL, false);
-        break;
-    case NC_FOOTER_ACTION_OPEN:
-        if (nc_files_active()) {
-            char path[NC_PATH_MAX];
-            nc_result_t r;
-            if (nc_files_selected_is_dir()) {
-                if (nc_files_enter_selected()) {
-                    snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Dir: %s", nc_files_cwd());
-                } else {
-                    strncpy(g_nc_visual_status, "Directory open failed", sizeof(g_nc_visual_status) - 1);
-                }
-                break;
-            }
-            if (!nc_files_selected_path(path, sizeof(path))) {
-                strncpy(g_nc_visual_status, "No NC file selected", sizeof(g_nc_visual_status) - 1);
-                break;
-            }
-            if (g_nc_visual_mode == NC_MODE_TOOLS &&
-                !nc_state_tool_path_supported(path)) {
-                strncpy(g_nc_visual_status, "TOOLS opens .t files only", sizeof(g_nc_visual_status) - 1);
-                break;
-            }
-            /* The buffer is about to be reused for another file: put the edits
-               of the one that is open on the card first. */
-            if (!nc_editor_save_current(&editor) &&
-                !nc_editor_proceed_without_saving(&editor, NC_EDITOR_UNSAVED_OPEN)) {
-                strncpy(g_nc_visual_status, "Save failed - press again to open", sizeof(g_nc_visual_status) - 1);
-                break;
-            }
-            r = nc_load_file(&g_nc_visual_doc, path);
-            if (r == NC_OK) {
-                nc_files_set_active(false);
-                nc_editor_new_file_end(&editor);
-                nc_state_remember_path(g_nc_visual_mode, path);
-                nc_state_save();
-                snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Opened %s", nc_files_name(nc_files_selected()));
-            } else {
-                snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Open failed: %s", nc_result_text(r));
-            }
-        } else {
-            nc_files_set_active(true);
-            nc_editor_new_file_end(&editor);
-            if (nc_files_refresh(NULL)) {
-                nc_editor_serial_selected_file();
-                g_nc_visual_status[0] = '\0';
-            } else {
-                strncpy(g_nc_visual_status, "File list unavailable", sizeof(g_nc_visual_status) - 1);
-            }
-        }
-        break;
-    case NC_FOOTER_ACTION_PRESET_OD:
-        nc_editor_insert_preset(&editor, NC_PRESET_OD, "Inserted OD preset", "OD preset failed");
-        break;
-    case NC_FOOTER_ACTION_PRESET_ID:
-        nc_editor_insert_preset(&editor, NC_PRESET_ID, "Inserted ID preset", "ID preset failed");
-        break;
-    case NC_FOOTER_ACTION_PRESET_FACE:
-        nc_editor_insert_preset(&editor, NC_PRESET_FACE, "Inserted FACE preset", "FACE preset failed");
-        break;
-    case NC_FOOTER_ACTION_PRESET_LINE:
-        nc_editor_insert_preset(&editor, NC_PRESET_LINE, "Inserted line preset", "Line preset failed");
-        break;
-    case NC_FOOTER_ACTION_PRESET_ARC:
-        nc_editor_insert_preset(&editor, NC_PRESET_ARC, "Inserted arc preset", "Arc preset failed");
-        break;
-    case NC_FOOTER_ACTION_PRESET_SETUP:
-        nc_editor_insert_preset(&editor, NC_PRESET_SETUP, "Inserted setup preset", "Setup preset failed");
-        break;
-    case NC_FOOTER_ACTION_PRESET_END:
-        nc_editor_insert_preset(&editor, NC_PRESET_END, "Inserted G80", "G80 preset failed");
         break;
     case NC_FOOTER_ACTION_TOOL:
         if (g_nc_visual_mode == NC_MODE_PROGRAM) {
@@ -824,74 +687,6 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
             strncpy(g_nc_visual_status, "Tool action stub", sizeof(g_nc_visual_status) - 1);
         }
         break;
-    case NC_FOOTER_ACTION_SAVE:
-        if (g_nc_visual_doc.path[0] && nc_save_file(&g_nc_visual_doc, g_nc_visual_doc.path) == NC_OK) {
-            nc_state_remember_path(g_nc_visual_mode, g_nc_visual_doc.path);
-            nc_state_save();
-            strncpy(g_nc_visual_status, "Saved", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "Save needs an opened NC file", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_NEW:
-        if (nc_files_active()) {
-            nc_editor_new_file_begin(&editor);
-            break;
-        }
-        nc_document_init(&g_nc_visual_doc);
-        nc_insert_line(&g_nc_visual_doc, 0, "");
-        strncpy(g_nc_visual_doc.path, "new.nc", sizeof(g_nc_visual_doc.path) - 1);
-        nc_state_remember_path(g_nc_visual_mode, g_nc_visual_doc.path);
-        nc_state_save();
-        strncpy(g_nc_visual_status, "New empty NC program", sizeof(g_nc_visual_status) - 1);
-        break;
-    case NC_FOOTER_ACTION_INSERT:
-        if (nc_insert_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line + 1, "") == NC_OK) {
-            nc_cursor_down(&g_nc_visual_doc);
-            strncpy(g_nc_visual_status, "Inserted blank line", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "Insert failed", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_DELETE:
-        if (nc_files_active()) {
-            if (nc_files_delete_selected()) {
-                strncpy(g_nc_visual_status, "File deleted", sizeof(g_nc_visual_status) - 1);
-            } else {
-                strncpy(g_nc_visual_status, "Delete file failed", sizeof(g_nc_visual_status) - 1);
-            }
-            break;
-        }
-        if (nc_delete_line(&g_nc_visual_doc, g_nc_visual_doc.cursor_line) == NC_OK) {
-            strncpy(g_nc_visual_status, "Deleted line", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "Delete failed", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_BACK:
-        if (nc_files_active()) {
-            nc_files_select_prev();
-            nc_editor_serial_selected_file();
-            strncpy(g_nc_visual_status, "File up", sizeof(g_nc_visual_status) - 1);
-        } else if (g_nc_visual_mode == NC_MODE_TOOLS) {
-            nc_editor_move_tool_line(&editor, -1);
-        } else {
-            nc_editor_move_line(&editor, -1);
-            nc_editor_serial_selected_line(&editor);
-        }
-        break;
-    case NC_FOOTER_ACTION_STEP:
-        if (nc_files_active()) {
-            nc_files_select_next();
-            nc_editor_serial_selected_file();
-            strncpy(g_nc_visual_status, "File down", sizeof(g_nc_visual_status) - 1);
-        } else if (g_nc_visual_mode == NC_MODE_TOOLS) {
-            nc_editor_move_tool_line(&editor, 1);
-        } else {
-            nc_editor_move_line(&editor, 1);
-            nc_editor_serial_selected_line(&editor);
-        }
-        break;
     case NC_FOOTER_ACTION_RESET:
         if (nc_files_active()) {
             /* BACK leaves the list in one press and puts the screen back the
@@ -914,17 +709,6 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
             }
         } else {
             strncpy(g_nc_visual_status, "Reset is stubbed", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
-    case NC_FOOTER_ACTION_REFRESH:
-        if (nc_files_refresh(NULL)) {
-            nc_editor_serial_selected_file();
-            snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Refreshed %s", nc_files_cwd());
-        } else {
-            strncpy(g_nc_visual_status, "Refresh failed", sizeof(g_nc_visual_status) - 1);
-        }
-        if (!nc_files_active()) {
-            nc_files_set_active(true);
         }
         break;
     case NC_FOOTER_ACTION_FULL:
@@ -963,30 +747,6 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
             nc_visual_run_arm(0, "Full run armed");
         }
         break;
-    case NC_FOOTER_ACTION_STOCK:
-        strncpy(g_nc_visual_status,
-                nc_preview_toggle_layer(NC_PREVIEW_LAYER_STOCK) ? "Stock on"
-                                                                : "Stock outline",
-                sizeof(g_nc_visual_status) - 1);
-        break;
-    case NC_FOOTER_ACTION_PATH:
-        strncpy(g_nc_visual_status,
-                nc_preview_toggle_layer(NC_PREVIEW_LAYER_PATH) ? "Path on"
-                                                               : "Path hidden",
-                sizeof(g_nc_visual_status) - 1);
-        break;
-    case NC_FOOTER_ACTION_ROUGH:
-        strncpy(g_nc_visual_status,
-                nc_preview_toggle_layer(NC_PREVIEW_LAYER_ROUGH) ? "Rough on"
-                                                                : "Rough hidden",
-                sizeof(g_nc_visual_status) - 1);
-        break;
-    case NC_FOOTER_ACTION_DIMS:
-        strncpy(g_nc_visual_status,
-                nc_preview_toggle_layer(NC_PREVIEW_LAYER_DIMS) ? "Dimensions on"
-                                                               : "Dimensions hidden",
-                sizeof(g_nc_visual_status) - 1);
-        break;
     case NC_FOOTER_ACTION_VIEW:
         g_nc_visual_show_code = !g_nc_visual_show_code;
         strncpy(g_nc_visual_status,
@@ -1020,25 +780,9 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
     case NC_FOOTER_ACTION_CLEAR:
         strncpy(g_nc_visual_status, "Clear is stubbed", sizeof(g_nc_visual_status) - 1);
         break;
-    case NC_FOOTER_ACTION_FIELD:
-        if (nc_select_next_word(&g_nc_visual_doc) == NC_OK) {
-            strncpy(g_nc_visual_status, "Next word", sizeof(g_nc_visual_status) - 1);
-        } else {
-            strncpy(g_nc_visual_status, "No editable word here", sizeof(g_nc_visual_status) - 1);
-        }
-        break;
     default:
-        /* The screen's own actions - the axis keys, ZERO and TOUCH - belong to
-           the screen that acts on them. */
-        {
-            nc_manual_screen_t manual;
-
-            nc_visual_manual_screen(&manual);
-            if (!nc_manual_action(action, &manual)) {
-                strncpy(g_nc_visual_status, "Action not available yet",
-                        sizeof(g_nc_visual_status) - 1);
-            }
-        }
+        strncpy(g_nc_visual_status, "Action not available yet",
+                sizeof(g_nc_visual_status) - 1);
         break;
     }
 }

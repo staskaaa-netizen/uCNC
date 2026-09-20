@@ -66,6 +66,11 @@ bool nc_editor_selected_word_key(nc_editor_ctx_t *ctx, nc_visual_key_t key, char
 /* The footer's menu entries (cycles, tools, G-code, ops) open the helper. */
 void nc_editor_open_modal(nc_editor_ctx_t *ctx, uint8_t action);
 
+/* A footer action the editor owns: the helper's menus, the one-line inserts,
+   the file list with open/new/delete/refresh, saving, and the cursor steps.
+   False when the action belongs to another owner. */
+bool nc_editor_action(nc_editor_ctx_t *ctx, uint8_t action);
+
 /* The G/T field: the line itself takes the digits, so there is no panel. */
 void nc_editor_open_field(nc_editor_ctx_t *ctx, char prefix);
 

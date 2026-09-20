@@ -52,9 +52,9 @@ def module_sources():
     g7x = SRC / "modules" / "g7x"
     lvds = SRC / "modules" / "lvds_renderer"
     names = ["nc.c", "nc_emit.c", "nc_g7x.c", "nc_files.c", "nc_feedback.c",
-             "nc_draw.c", "nc_menu.c", "nc_palette.c", "nc_presets.c", "nc_run.c",
-             "nc_preview.c", "nc_state.c", "nc_text.c", "nc_tools.c", "nc_vocab.c",
-             "nc_visual.c"]
+             "nc_draw.c", "nc_manual.c", "nc_menu.c", "nc_palette.c", "nc_presets.c",
+             "nc_run.c", "nc_preview.c", "nc_state.c", "nc_text.c", "nc_tools.c",
+             "nc_vocab.c", "nc_visual.c"]
     files = [nc / name for name in names]
     files += [g7x / "g7x.c", g7x / "g7x_contour.c", g7x / "g7x_source.c",
               SRC / "modules" / "cam_keyboard" / "cam_keyboard.c",

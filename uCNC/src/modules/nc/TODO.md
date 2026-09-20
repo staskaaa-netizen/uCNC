@@ -553,14 +553,42 @@ NC supplies document access and UI, not a second cycle generator.
   ones taken before the cut, and both firmware targets build. Still to verify on
   the machine, as before: the RUN live-stock path, which needs PSRAM.
 
-  **Next cuts, in this order:**
-  1. `nc_pad.c`: the one 3x3 grid the MANUAL jog pad, the EDIT helper and the
-     planned `3x3_path_builder.c` share - the drawing
-     (`nc_draw_modal_items()`) and the item shape are already one, the
-     cut is about where the nine entries and their meaning live;
-  2. `nc_manual.c`: the MANUAL screen's own ~310 lines plus its jog/feed state;
-  3. the editor and the key handling, which is what is left of `nc_visual.c`
-     once 1 and 2 are out - that file is still over the 2k line mark at 3.5k;
+  **Fourth cut done: MANUAL is a file.** `nc_manual.c` (771 lines) has the
+  screen's own state - the picked axis, the step and feed tables, the stop, the
+  spindle direction, the touch field, the pad table - its jog/feed/stop/zero/
+  touch/spindle functions, and its pane, drawn out of `nc_visual_draw_snapshot()`
+  as `nc_manual_draw()`. That branch was the biggest reason the screen file
+  stayed over the 2k rule: `nc_visual.c` is 2,816 lines now.
+
+  The boundary follows the preview's: the screen hands in the status line and
+  repaint flag (`nc_manual_screen_t`) and the frame's figures with the work
+  offset the readout is cut from (`nc_manual_view_t`), and MANUAL answers
+  `nc_manual_key()`, `nc_manual_action()` (its own footer entries: axis, zero,
+  touch), `nc_manual_hold()` for a key being held and `nc_manual_key_hint()` for
+  a shell that labels its own keypad. The key-to-character table stays in
+  `nc_visual.c` - a key and its character are passed together, so there is still
+  one table - and the work-offset cache stays there too, because the header
+  names the same offset the readout is cut from.
+
+  The 3x3 item above is settled with this: the MANUAL pad and the EDIT helper
+  already share one visual (`nc_draw_modal_items()`) and one item shape
+  (`nc_footer_item_t` with the lit mask); what each screen keeps is its own nine
+  entries and what they mean, which is the screen's business - a jog key and an
+  insert key have different actions, and pretending otherwise would mean a
+  callback table per screen for no gain. The planned `3x3_path_builder.c` is a
+  third user of the same drawing, not a third drawing.
+
+  Verified like the others: `tools/test_nc_ui.py` (including the feed and pad
+  checks, which press MANUAL keys), the five bench dumps and the twelve
+  `nc_ui_show.py` frames byte-identical, `test_g7x`, `test_nc_sender` and both
+  firmware targets.
+
+  **Next:** what is left in `nc_visual.c` is the editor (file list, word
+  editing, the floating helper, the preset insert), the key handling and the
+  footer dispatch - 2.8k lines, still over the rule. The editor is the next
+  self-contained piece: `nc_editor.c` with the document, the cursor, the text
+  edit buffer and the modal helper, which is also what the Heidenhain field
+  flow above would land in.
   The rename was done before those cuts, as its own commit: the drawn functions
   are `nc_draw_*()` in `nc_draw.c` and `nc_preview_*()` in `nc_preview.c`, and
   `nc_visual_*()` now means what it says - a function of the screen file. It ran

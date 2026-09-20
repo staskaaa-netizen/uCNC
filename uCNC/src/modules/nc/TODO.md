@@ -162,6 +162,28 @@ Bench items, not software:
 - [ ] **Large follow-up: build out the NC/CAM workflow.**
   - [ ] 3x3 path builder for creating/editing a usable tool path from the
     panel, with clear preview, insert, cancel and save behavior.
+  - [ ] **A line that calls another file, and the 3x3 as its file search.** Two
+    steps, in this order, because the second is useless without the first:
+    1. the link: one line that names another program on the card and calls it -
+       the subprogram/template case. RUN has to resolve the name to a path, load
+       it, run it and come back to the line after the call; the preview shows it
+       as the program it is, and a missing or unreadable file is an error on that
+       line, not a silent skip. The name is a file name, so it obeys the card's
+       short-name rule (`docs/sd-card-history.md`) and nothing else: no second
+       dialect, no `M98`-flavoured copy of the file list.
+    2. the search on top of it: the floating 3x3 in EDIT is already a number
+       pad, so a typed sequence is also a file name - `4` then `2` means the file
+       whose name is **exactly** `42` (`42.nc`). `#` takes the file it found and
+       the line gets the call; `*` (or `A`) backs out a digit; the footer shows
+       what is typed, the way it shows a typed word. The operator types the
+       number that is painted on the part or written on the drawing instead of
+       walking a list of a hundred short names.
+
+       The lookup belongs to `nc_files`, beside the list: one function that
+       turns a typed sequence into a path, asked by the pad, by a "type to jump"
+       in the file list, and later by `3x3_path_builder.c` when it wants the
+       next file. The pad only chooses the file - what lands in the program is
+       the call from step 1.
   - [ ] DXF reader/import path, including unit/scale handling and conversion
     into the shared path/document representation rather than a second dialect.
   - [ ] Expand threading support end to end: supported G33/G76 forms, editor

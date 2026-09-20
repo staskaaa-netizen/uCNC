@@ -501,6 +501,40 @@ NC supplies document access and UI, not a second cycle generator.
   `nc_preview_line_word_float()` (commit `fa65ebae`): the preview's data half
   under its own name, compiled with NC, not a module of its own.
 
+  **Second move done - the tool is the deliverable.** `tools/nc_move_funcs.py`
+  with `nc/tests/draw_functions.txt` (38 names, `!` survivors, one `@region`)
+  does the cut: spans from the grammar (a definition ends at the first column-0
+  `}`, a prototype is never a definition, a `typedef` ends at its own `};`),
+  every check before anything is written (each name defined once, no overlapping
+  spans, survivors still present, the moved text non-empty, braces balanced in
+  both halves), and `--check` to report the numbers without writing. What it
+  wrote: `nc_draw.c` / `nc_draw.h` hold the 38 drawing functions (1,244 lines),
+  `nc_layout.h` holds the 78 lines of numbers they read with them - pane
+  geometry, footer, 3x3 key size, preview limits, `NC_FOOTER_LINES` - and
+  `nc_visual.c` went from 5,708 lines to 4,366. The moved code reads the footer
+  items (`nc_menu.h`) and the numbers (`nc_layout.h`) through `nc_draw.h`;
+  nothing else changed, no caller was touched and the names stay `nc_visual_*`
+  for now, so the diff is a move and not a rename mixed into it.
+
+  Verified as a pure move: `tools/test_nc_ui.py` passes (preset, stream, pad,
+  feed, key, file), and `tmp/nc-ui-tests/*.bmp` - the frame, the 3x3 helper,
+  EDIT, the full-screen view and the `/D` listing - are byte-identical to dumps
+  taken immediately before the cut. Both firmware targets build. The two build
+  lists that name NC sources by hand were updated: `tools/nc_ui_win/Makefile`
+  and `tools/test_nc_ui.py`.
+
+  **Next cuts, in this order** - the tool takes its input as data, so each one
+  is the same move with a different list:
+  1. the preview renderer joins its data half in `nc_preview.c`:
+     `nc_visual_draw_thin_preview()`, `nc_visual_draw_emitted_preview()`, the
+     live stock, the dimension layer and the view flags it toggles;
+  2. `nc_pad.c`: the one 3x3 grid the MANUAL jog pad, the EDIT helper and the
+     planned `3x3_path_builder.c` share;
+  3. `nc_manual.c`: the MANUAL screen's own ~310 lines;
+  4. only then the rename the file now owns: the moved functions are still
+     `nc_visual_draw_*()` in `nc_draw.c`, and that is a separate commit because
+     a rename hides a behaviour change in a diff.
+
   The drawing half (`nc_draw`: text clipping and wrapping, the tool glyph
   geometry, chuck/stock hatching, the dimension callouts, the floating 3x3 grid
   and the footer strip - 38 functions, 1,244 lines of the 5,709) was attempted

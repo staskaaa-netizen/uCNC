@@ -1,0 +1,54 @@
+# Functions tools/nc_move_funcs.py moves out of nc_visual.c into nc_draw.c.
+# The list is the drawing vocabulary: each one touches no panel state (the
+# census that found this set is described in nc/TODO.md). Lines starting with
+# `!` are globals that must still exist in nc_visual.c afterwards.
+#
+# @region moves a contiguous run of #define lines into nc_layout.h, the panel
+# numbers both halves read (pane geometry, footer, 3x3 key size, preview
+# limits). It is one run from the first line named to the last, comments
+# included, so the file that stays does not keep half a block.
+@region NC_PREVIEW_ARC_MAX_STEPS NC_FONT_NORMAL_H
+nc_visual_absf
+nc_visual_clampi
+nc_visual_draw_text_clip
+nc_visual_wrap_lines
+nc_visual_preview_x
+nc_visual_preview_z
+nc_visual_directed_arc_sweep
+nc_visual_r_arc_center
+nc_visual_fill_triangle
+nc_visual_tool_tip_digit
+nc_visual_tool_orient_digits
+nc_visual_tool_keypad_point
+nc_visual_tool_edges
+nc_visual_tool_marker_line
+nc_visual_tool_polygon_points
+nc_visual_draw_tool_polygon
+nc_visual_draw_tool_glyph
+nc_visual_draw_tool_glyph_centered
+nc_visual_draw_tool_cell
+nc_visual_draw_tool_param
+nc_visual_draw_dashdot_line
+nc_visual_draw_centerline
+nc_visual_draw_origin_marker
+nc_visual_draw_chuck_hatching
+nc_visual_draw_arrowhead
+nc_visual_draw_diameter_dimension
+nc_visual_draw_z_point_dimension
+nc_visual_draw_x_point_dimension
+nc_visual_draw_contour_point_marker
+nc_visual_draw_chuck
+nc_visual_draw_chuck_relief
+nc_visual_draw_explicit_arc
+nc_visual_draw_center_arc
+nc_visual_draw_dashed_segment
+nc_visual_draw_emitted_motion_line
+nc_visual_draw_modal_items
+nc_visual_draw_footer_status
+nc_visual_draw_preview_tool_panel
+!g_nc_visual_doc
+!g_nc_visual_mode
+!g_nc_visual_frame_footer_us
+!g_nc_visual_acc_preview_collect_us
+!g_nc_visual_show_dims
+!NC_MAX_LINE_LEN

@@ -66,6 +66,7 @@ dkms.conf
 *.win
 virtualeeprom
 *.txt
+!uCNC/src/modules/nc/tests/draw_functions.txt
 
 # Other files
 *.dat

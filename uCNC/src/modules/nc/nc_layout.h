@@ -88,4 +88,11 @@
 /* Glyph height of the bitmap font the helper labels use. */
 #define NC_FONT_NORMAL_H 14
 
+/* Every key is cut at its top-right corner: the chamfer is a quarter of the
+   key's height, so the shape follows the button instead of being a fixed number
+   of pixels, and a short key is not all cut. The cut is page background - the
+   key's own colour does not grow a corner - and its edge is drawn like the rest
+   of the outline, so the key reads as one machined button. */
+#define NC_KEY_CHAMFER_DIVISOR 4
+
 #endif

@@ -27,6 +27,14 @@ Use this as a short hardware pass list while NC is still pre-alpha.
 - Header and footer spacing: with the tab strip in place the header still
   clears the code rows, and the footer keys sit on the bottom edge of the panel
   with no margin below them.
+- Footer key shape: every key is cut at its **top-right corner**, the cut being
+  a quarter of the key's height (`NC_KEY_CHAMFER_DIVISOR`) - the page background
+  shows through the cut, the cut's edge is drawn like the rest of the outline,
+  and the key's number still sits in the untouched top-left corner. On all eight
+  slots of every screen, including the filled ones (`STOCK`/`PATH`/`ROUGH`/
+  `DIM`): the cut must be square (a straight edge, not rounded), the same size on
+  every key of one strip, and a three-line label must stop before it instead of
+  running over the cut.
 - EDIT full screen (`# FULL`): the preview is the screen - it takes the whole
   body, with no code lines at all - and the strip shows the preview's own keys:
   `4 STOCK`, `5 PATH`, `6 ROUGH`, `7 DIM`, `# FULL`, and **no delete** (the

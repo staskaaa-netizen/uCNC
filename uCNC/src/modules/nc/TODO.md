@@ -131,6 +131,11 @@ Leftovers from this session, in the order they came up:
   label, so a renamed entry reads as renamed on the panel.
 - [ ] 3x3 helper: no animation. Decided ("skip animation, it is weird and
   slow") - the helper just appears under its line.
+- [ ] 3x3 helper keys still have square corners. The footer strip's keys are cut
+  at the top-right corner by a quarter of their height
+  (`NC_KEY_CHAMFER_DIVISOR`, `nc_draw_footer_status()`); decide whether the
+  helper's nine keys get the same cut, since they are meant to read as the same
+  white keys as the footer's. One call to the same shape, not a second drawing.
 - [ ] G7x `G80` end mark: the G7X submenu has `6 G80`; check it inserts where
   the operator expects, against "same as two N blocks of Fanuc style later".
 - [ ] PECK/DRILL/TAP wording and ownership: is `6` a linear cycle with pecking,

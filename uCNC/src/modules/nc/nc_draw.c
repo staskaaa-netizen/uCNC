@@ -1139,6 +1139,9 @@ void nc_draw_footer_status(const char *message, const char *footer_text)
         int bw = field_w - 3;
         int bh = NC_FOOTER_H - 4;
         int by = NC_FOOTER_Y;
+        /* The top-right corner is cut. Everything that has to stay inside the
+           key - the label's wrap width - is measured against the cut side. */
+        int chamfer = bh / NC_KEY_CHAMFER_DIVISOR;
         lvds_color_t button_bg = NC_VISUAL_FOOTER_BUTTON;
         lvds_color_t button_fg = NC_VISUAL_FOOTER_TEXT;
 
@@ -1176,6 +1179,17 @@ void nc_draw_footer_status(const char *message, const char *footer_text)
 
         lvds_draw_fill_rect(bx, by, bw, bh, button_bg);
         lvds_draw_rect(bx, by, bw, bh, NC_VISUAL_DIM);
+        if (chamfer > 0) {
+            /* Cut, not rounded: the corner is page background, and the edge of
+               the cut is drawn like the rest of the outline. */
+            nc_draw_fill_triangle(bx + bw - 1 - chamfer, by,
+                                  bx + bw - 1, by,
+                                  bx + bw - 1, by + chamfer,
+                                  NC_VISUAL_BG);
+            lvds_draw_line(bx + bw - 1 - chamfer, by,
+                           bx + bw - 1, by + chamfer,
+                           NC_VISUAL_DIM);
+        }
 
         {
             /* Footer keys are the same white keys as the 3x3 helper: the
@@ -1194,7 +1208,7 @@ void nc_draw_footer_status(const char *message, const char *footer_text)
                                LVDS_FONT_NORMAL);
                 indent += lvds_draw_text_width(key, LVDS_FONT_NORMAL) + 6;
             }
-            cols = (bw - indent - 4) / NC_VISUAL_CHAR_W;
+            cols = (bw - indent - 4 - chamfer) / NC_VISUAL_CHAR_W;
             n = nc_draw_wrap_lines(label, cols, lines);
             if (n > 0) {
                 block_y = by + (bh - n * line_h) / 2;

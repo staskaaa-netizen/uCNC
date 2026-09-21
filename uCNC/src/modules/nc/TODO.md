@@ -165,8 +165,58 @@ Bench items, not software:
 ## Next UI priorities (proposed; not implemented)
 
 - [ ] **Large follow-up: build out the NC/CAM workflow.**
-  - [ ] 3x3 path builder for creating/editing a usable tool path from the
-    panel, with clear preview, insert, cancel and save behavior.
+  - [ ] **3x3 path builder: the pad walks the contour.** Start it in a file of
+    its own when the work starts - `nc/path_builder.c` beside `nc_editor.c`,
+    sources inside the NC module, never a module and never inside g7x. What a
+    key means here is the panel's; the cycle the lines belong to (G71/G72/G73
+    and whatever the family grows) stays g7x's and is inserted through the same
+    vocabulary the helper already uses. The pad's drawing
+    (`nc_draw_modal_items()`), the marking of a word and the typing into it are
+    the editor's and are reused as they are - the builder owns one thing: where
+    the next point is and which word is waiting for a value.
+
+    The operator starts at the **stock corner plus clearance** - the corner is
+    the preview's own (`nc_preview_collect()` has the stock figures), the
+    clearance is a builder value - and every press appends one contour line to
+    the cycle block the cursor is in, with the cycle header before it and `G80`
+    kept after the last line:
+
+    | key | the line it writes |
+    | --- | --- |
+    | `4` | `G1` moving in Z: **X copied** from the current point, **Z marked** for entry |
+    | `6` | the opposite of `4`: the same line moving the other way in Z |
+    | `8` | `G1` moving in X: **Z copied**, **X marked** for entry |
+    | `2` | the opposite of `8`: the same line moving the other way in X |
+    | `7 9 1 3` | `G1` on a diagonal: **both words marked**, entered one after the other, prefilled with the current value plus 10 mm in the direction the key points |
+    | `5` | end of the drawing: close with `G0`, the path is finished |
+
+    Marked means what it already means in the editor: the word is selected, so
+    the digits and the field keys type into it (the TNC415 field flow lands
+    here). A copied axis is not entered at all, so the operator types only what
+    changed - which is the whole point of a two-axis lathe pad.
+
+    Decided by the operator (2026-09-21): the key map above, the start at the
+    stock corner plus clearance, and `5` closing with a rapid. To settle before
+    or while implementing:
+    1. which cycle family the builder writes: opened from a line (`4 G7X`
+       today), or asked (G71 rough / G72 finish / G73 pattern) - and what the
+       new g7x insert forms should be, one per family, not a second dialect;
+    2. the 10 mm the diagonals prefill: a builder step table like MANUAL's,
+       which needs a key of its own - `1` and `3` are diagonals here, so the
+       value keys MANUAL uses are taken;
+    3. cancel and undo: whether the lines the builder added can be dropped in
+       one step the way the helper's labelled line can, and what cancel means
+       when continuing an existing path;
+    4. continuing an existing block: the cursor inside a cycle block should
+       carry on from the last point of that block, not from the stock corner;
+    5. the preview: it reads the document as it is written, so the path shows
+       while it is built - nothing new to draw, but the built block has to stay
+       readable to the collector (`nc_preview_collect()`).
+
+    The interaction model is big enough to earn its own design note when the
+    work starts - `docs/nc-path-builder.md`, the way `docs/nc-editor-tnc415.md`
+    carries the field entry and `docs/nc-layout-v2.md` the layout - with this
+    item keeping the summary and the pointer.
   - [ ] **A line that calls another file, and the 3x3 as its file search.** Two
     steps, in this order, because the second is useless without the first:
     1. the link: one line that names another program on the card and calls it -

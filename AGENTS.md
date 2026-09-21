@@ -83,6 +83,36 @@ of the split.
 Evidence: `docs/history-project.md` (LeanCam at 10,879 lines versus NC at 6,638
 with G7x extracted).
 
+## 9. A small change does not earn a picture
+
+Applies to: anything whose result can be read in the source - a constant, a
+colour, one string, a flag, one line in a table, a one-word label.
+
+Compile it, run the tests, upload, and let the operator's eye on the glass be
+the check. Do not render frames for it, convert them, crop them, zoom them,
+build a contact sheet, or make a before/after picture. A wrong pixel in a change
+like that is a one-line fix on the next upload - it is fine for the first try to
+be wrong - while each picture costs the same attention as several one-line
+mistakes, and being handed a wall of images for a one-line change is its own
+kind of failure.
+
+Frames are for what the source cannot answer: a layout that moved, an element
+that was added, a redraw or a clear that leaves something behind, geometry that
+is computed rather than written down. Then render once, and look only at the
+region the change can reach - the strip, the pane, the corner - not the whole
+panel, and not a set of variants of it.
+
+Automated frame *comparison* is not affected: hashing frames, counting differing
+pixels or bounding the rows a change touched is cheap, runs unattended, and
+belongs in the verification - keep it for moves, renames and anything claimed to
+be pixel-identical.
+
+Evidence: the footer chamfer (2026-09-21) - a quarter of the key height, one
+line of geometry in one function - was checked with four generated pictures (a
+strip, a 4x zoom, a before/after pair and the filled-key strip) and three image
+inspections on top of the frame dumps. The operator's remark: this was a simple
+one-line change.
+
 ## Where to look before changing something
 
 | Area | Read first |

@@ -7,16 +7,19 @@ See [TESTING.md](TESTING.md) for NC-independent tests and serial bench programs.
 
 What a release of this fork carries, and what it does not claim:
 
-- **The machine firmware** - `pio run -e RP2350-LEANCAM-LVDS` builds the image
-  the lathe runs: this module, the NC screens and the LVDS panel.
-  `pio run -e RP2350-G7X-MODULE` builds the same module with no NC sources at
-  all, which is the target that proves it stands alone. Both are in the
-  release matrix of `.github/workflows/pio-release.yaml`.
 - **The PC programming station** - `tools/nc_ui_win` is the same NC screen,
-  keypad and G7x cycles on Windows, built by `tools/test_nc_ui.py` and attached
-  to the same release by the `station` job of
-  `.github/workflows/pio-release.yaml`; `.github/workflows/nc-ui-windows.yaml`
-  builds it and runs its checks on every push and pull request.
+  keypad and G7x cycles on Windows, and it is what a release carries:
+  `.github/workflows/nc-ui-release.yaml` builds it on a `v*` tag, runs
+  `tools/test_nc_ui.py`, packs it with `tools/pack_nc_ui.py` (the exe, the
+  README, the desktop-tools note and the demo card) and attaches the zip.
+  `.github/workflows/nc-ui-windows.yaml` builds and checks it on every push and
+  pull request.
+- **The machine firmware is built here, not published** -
+  `pio run -e RP2350-LEANCAM-LVDS` builds the image the lathe runs: this module,
+  the NC screens and the LVDS panel. `pio run -e RP2350-G7X-MODULE` builds the
+  same module with no NC sources at all, which is the target that proves it
+  stands alone. Neither is a release asset: the image only drives this machine's
+  HSTX-connected panel, so it is built and flashed from the bench.
 - **Software-verified** - `python tools/test_g7x.py all` (the generator, the NC
   emitter adapter, the real parser/planner/virtual-MCU integration with G33
   intercepted, and the standalone target), `python tools/test_nc_ui.py` (the

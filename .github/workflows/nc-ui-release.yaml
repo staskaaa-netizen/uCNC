@@ -1,0 +1,60 @@
+name: Programming Station Release (Windows)
+
+# A release of this fork is the PC programming station, and nothing else. The
+# RP2350 image is not published: it drives this machine's own HSTX-connected
+# LVDS panel, so a downloaded .uf2 is of no use anywhere but here - and it is
+# flashed from the bench anyway. The machine firmware is still built and
+# checked locally (`pio run -e RP2350-LEANCAM-LVDS`, `-e RP2350-G7X-MODULE`,
+# see AGENTS.md), and the station's own checks compile the NC, G7x and LVDS
+# sources the panel and the station share.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  station:
+    name: Build and release the station
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # MinGW-w64: the station links the firmware sources statically, so the
+      # released exe runs without the toolchain beside it.
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # The station is built, rendered and checked before it is packed: a
+      # release asset is never a build that has not run its own tests.
+      - name: Build the station and run its checks
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ steps.msys2.outputs.msys2-location }}\mingw64\bin;$env:PATH"
+          python tools/test_nc_ui.py
+
+      - name: Package the station
+        run: python tools/pack_nc_ui.py --skip-build
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: uCNC programming station ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: tools/nc_ui_win/dist/uCNC-programming-station-win64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

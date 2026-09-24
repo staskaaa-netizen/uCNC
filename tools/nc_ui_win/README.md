@@ -67,8 +67,9 @@ python tools\test_nc_ui.py     # builds, dumps a panel frame and a bench frame,
 ## What a release ships (the demo card)
 
 `python tools\pack_nc_ui.py` builds the station, runs its checks and writes
-`tools\nc_ui_win\dist\uCNC-programming-station-win64.zip` - the same zip the
-GitHub workflow attaches to a release:
+`tools\nc_ui_win\dist\uCNC-programming-station-win64.zip` - the same zip
+`.github/workflows/nc-ui-release.yaml` attaches to a `v*` release (the station
+is the whole of what a release carries; the RP2350 image is bench-only):
 
 ```text
 uCNC-programming-station.exe   the station (statically linked, no DLL needed)

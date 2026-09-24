@@ -73,12 +73,14 @@ headless check (`--fstest`, `--presettest`, `--streamtest`, `--padtest`,
 
 The station ships from GitHub: `.github/workflows/nc-ui-windows.yaml` builds it
 with MinGW-w64 on `windows-latest` and runs the checks on every push and pull
-request, and the `station` job of `.github/workflows/pio-release.yaml` builds the
-same zip and attaches `uCNC-programming-station-win64.zip` (the statically linked
-exe, its README and this note) to a `v*` release next to the board firmware -
-including the G7x machine image. The station keeps its card in an `nc-files`
-folder beside the exe unless `--files` names another one, so the downloaded zip
-runs where it is unpacked.
+request, and `.github/workflows/nc-ui-release.yaml` builds the same station on a
+`v*` tag and attaches `uCNC-programming-station-win64.zip` (the statically
+linked exe, its README and this note) to that release. The station is the whole
+of what a release carries: the RP2350 image drives this machine's own
+HSTX-connected panel, so it is built and flashed from the bench rather than
+published (`pio run -e RP2350-LEANCAM-LVDS`, see AGENTS.md). The station keeps
+its card in an `nc-files` folder beside the exe unless `--files` names another
+one, so the downloaded zip runs where it is unpacked.
 
 The zip is built by `tools/pack_nc_ui.py` (build, checks, pack - one owner, used
 by the workflows and by hand), and it carries the demo card with the station:

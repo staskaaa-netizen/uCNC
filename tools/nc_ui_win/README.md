@@ -54,6 +54,7 @@ build\nc_ui.exe --blocktest                      # RUN marks the block it runs
 build\nc_ui.exe --pacetest                       # one block, then wait
 build\nc_ui.exe --stoptest                       # the MANUAL stops are typed
 build\nc_ui.exe --spindletest                    # the spindle is the signals
+build\nc_ui.exe --files tmp\demo --demotest      # the demo seeds and expands
 ```
 
 ## Build and render a frame
@@ -62,6 +63,37 @@ build\nc_ui.exe --spindletest                    # the spindle is the signals
 python tools\test_nc_ui.py     # builds, dumps a panel frame and a bench frame,
                                # then runs the headless checks below
 ```
+
+## What a release ships (the demo card)
+
+`python tools\pack_nc_ui.py` builds the station, runs its checks and writes
+`tools\nc_ui_win\dist\uCNC-programming-station-win64.zip` - the same zip the
+GitHub workflow attaches to a release:
+
+```text
+uCNC-programming-station.exe   the station (statically linked, no DLL needed)
+README.md                      this file, the operator's usage
+desktop-sender.md              how the station fits the desktop tools
+examples\lathe-demo.nc         the program below
+examples\tool.t                the table it calls T2 from
+```
+
+`examples\` is also the station's first-run demo: a card with no program of its
+own is seeded from the folder beside the exe (`host_seed_card()`, once, without
+overwriting anything), so an unpacked zip opens with something to look at.
+`--files DIR` names another card; a card that already has a program is never
+touched.
+
+`lathe-demo.nc` is one of the machine's own runs, written down as a file: the
+preview setup rows, a tool and a spindle, one rapid, and two numbered `G71`
+ranges - each finished by its own `G70 P Q` - with an `R` round, a `C` chamfer
+and a straight finishing move. It is not a bench program: it is a program to
+open, walk with the cursor, preview and watch RUN send. `--demotest` checks it
+loads, scans as two cycles and expands, and that the seeding happens once.
+
+Every line in the demo is short enough for the panel's own line width
+(`NC_WRAP_LINE_LEN`, 46 characters): a longer line is wrapped with a tab and the
+screen shows two rows, which is fine for a program and ugly for a sample.
 
 `--dump out.bmp` writes the 800x600 panel frame - the firmware layout, nothing
 of the shell. `--dump-bench out.bmp` writes the whole 1100x600 bench: the panel
@@ -298,6 +330,12 @@ MODE key still cycles for the machine.
   (`tool_get_speed()`), so a running DRO over a dead signal fails here. What it
   proves is the wiring and the round trip; real rpm and the spindle being on at
   all are bench items.
+- `--demotest` checks the demo the release carries (`examples\`): a fresh card
+  is seeded from it exactly once and a card already in use is left alone, and
+  the sample program itself loads, scans as the two numbered `G71` ranges with
+  their `G70` finish cuts, resolves its `T2` from the demo's tool table and
+  expands through the emitter RUN and the preview share. A sample that is only
+  rows that look right fails here.
 - `--state` prints what the machine thinks it is doing after the keys and ticks
   have run (`exec`, `run`, `jog`, `hold`, `alarm`, `canceling`, the X/Z figures
   and the spindle, the planner/interpolator/reader fill). It is how a scripted
@@ -335,6 +373,7 @@ job the tests check.
 | `host_shell.h` (defined in `main.c`) | the emulated machine both the window and the checks drive: geometry, the keypad matrix, the mount root, `--keys`/`--ticks`, the main loop, the dumps |
 | `host_tests.c` | every headless check and `host_tests_run()` |
 | `host_spindle.h/.c` | the spindle read off the machine's own signals |
+| `examples/` | the demo card the release ships and a fresh station seeds itself from |
 | `host_fs.h/.c` | the `/D` driver over a PC folder |
 | `lvds_host.h/.c` | the host LVDS backend the firmware screen draws through |
 | `host_shim.c` | the small amounts of core the host build has to satisfy |

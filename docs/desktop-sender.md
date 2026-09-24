@@ -80,6 +80,13 @@ including the G7x machine image. The station keeps its card in an `nc-files`
 folder beside the exe unless `--files` names another one, so the downloaded zip
 runs where it is unpacked.
 
+The zip is built by `tools/pack_nc_ui.py` (build, checks, pack - one owner, used
+by the workflows and by hand), and it carries the demo card with the station:
+`examples/lathe-demo.nc`, a program one of the machine's own runs wrote down,
+and `examples/tool.t` for the tool it calls. A fresh station seeds its card from
+that folder once (`host_seed_card()`, `--demotest`), so an unpacked zip opens
+with a program to look at instead of an empty file list.
+
 Next:
 
 1. Wire the panel shell's RUN path to a real controller: NC RUN currently drives

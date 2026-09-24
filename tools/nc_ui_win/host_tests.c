@@ -3384,6 +3384,162 @@ static int host_spindletest(void)
     return 0;
 }
 
+/* The demo the station ships with: `examples\` beside the exe, which the
+   release zip unpacks with the station (`lathe-demo.nc`, the program an
+   operator ran on the machine; and `tool.t`, the table it calls T2 from).
+
+     1. a card with no program of its own is seeded from the examples;
+     2. a card that already has one is left alone - the operator's program, and
+        the edits in it, are not an upgrade's business;
+     3. and the demo program itself has to be a program: the panel's own loader,
+        block scan and expansion - not a file that merely looks like G-code. It
+        carries two numbered G71 ranges, each finished by its own `G70 P Q`, and
+        the expansion has to take both.
+
+   The examples folder is read where the checks are run from (the repository
+   root), so the file this checks is the file the zip carries. */
+static int host_demotest(void)
+{
+    static const char *const examples = "tools/nc_ui_win/examples";
+    static const char *const program = "/D/nc/files/lathe-demo.nc";
+    static const char *const tool_file = "/D/nc/files/tool.t";
+    static char lines[HOST_EMIT_MAX][NC_MAX_LINE_LEN];
+    nc_document_t doc;
+    nc_document_t tool_doc;
+    nc_tool_t tool;
+    g7x_result_t err = G7X_OK;
+    size_t emitted = 0u;
+    size_t blocks = 0u;
+    size_t finishes = 0u;
+    size_t i;
+    int copied;
+    int failures = 0;
+
+    /* 1. a fresh card gets the examples that ship beside the station. */
+    copied = host_seed_card(g_files_root, examples);
+    printf("demotest: seeded the empty card with %d files\n", copied);
+    if (copied != 2) {
+        puts("demotest: FAIL the card was not seeded from the examples");
+        return 1;
+    }
+
+    /* 2. the demo is a program, read the way the panel reads it: the loader,
+       the block scan (two numbered ranges) and the shared expansion. */
+    host_init_core();
+    nc_document_init(&doc);
+    nc_document_init(&tool_doc);
+    if (nc_load_file(&doc, program) != NC_OK || doc.line_count == 0u) {
+        puts("demotest: FAIL the demo program does not load");
+        return 1;
+    }
+    printf("demotest: the demo is %u lines\n", (unsigned)doc.line_count);
+
+    for (i = 0u; i < doc.line_count; i++) {
+        uint32_t p = 0u;
+        uint32_t q = 0u;
+        float g = 0.0f;
+
+        if (nc_g7x_line_is_header(doc.lines[i].text)) {
+            size_t start = 0u;
+            size_t end = 0u;
+
+            blocks++;
+            if (!nc_g7x_block_containing(&doc, i, &start, &end) || start != i ||
+                end <= i) {
+                printf("demotest: FAIL the cycle on line %u has no block\n",
+                       (unsigned)(i + 1u));
+                failures++;
+                continue;
+            }
+            if (!nc_g7x_line_range(doc.lines[i].text, &p, &q)) {
+                printf("demotest: FAIL the cycle on line %u names no range\n",
+                       (unsigned)(i + 1u));
+                failures++;
+            }
+            i = end;                          /* the block owns its rows */
+            continue;
+        }
+        if (nc_line_word_float(doc.lines[i].text, 'G', &g) && g == 70.0f) {
+            finishes++;
+        }
+    }
+    if (blocks != 2u || finishes != 2u) {
+        printf("demotest: FAIL the demo has %u cycles and %u finish cuts\n",
+               (unsigned)blocks, (unsigned)finishes);
+        failures++;
+    }
+    if (nc_load_file(&tool_doc, tool_file) != NC_OK ||
+        !nc_tool_by_number(&tool_doc, 2, &tool) ||
+        tool.r != 3.0f || tool.orient != 176) {
+        printf("demotest: FAIL the demo's T2 is not the R3 O176 tool "
+               "(r=%.2f o=%d)\n", (double)tool.r, tool.orient);
+        failures++;
+    }
+
+    /* The expansion RUN and the preview share: a row the generator refuses
+       fails here, not on the glass. */
+    if (!host_emit_lines(&doc, lines, HOST_EMIT_MAX, &emitted, &err)) {
+        printf("demotest: FAIL the demo does not expand (g7x error %d)\n",
+               (int)err);
+        failures++;
+    } else {
+        printf("demotest: the demo expands to %u moves\n", (unsigned)emitted);
+        if (emitted < 40u) {
+            puts("demotest: FAIL the expansion is too short to be both cycles");
+            failures++;
+        }
+    }
+
+    /* 3. a card in use is the operator's: the program already on it is not
+       replaced, and an upgrade does not rewrite it. */
+    if (!host_fs_write_text(program, "(my program)\nG0 X1\n")) {
+        puts("demotest: FAIL cannot write to the seeded card");
+        return 1;
+    }
+    copied = host_seed_card(g_files_root, examples);
+    if (copied != 0) {
+        printf("demotest: FAIL the station overwrote a card in use (%d files)\n",
+               copied);
+        failures++;
+    } else {
+        fs_file_t *fp = fs_open(program, "r");
+        char text[64];
+        size_t used = 0u;
+
+        text[0] = '\0';
+        if (!fp) {
+            puts("demotest: FAIL the operator's program left the card");
+            failures++;
+        } else {
+            while (used + 1u < sizeof(text) && fs_available(fp)) {
+                char c;
+
+                if (fs_read(fp, (uint8_t *)&c, 1u) != 1u) {
+                    break;
+                }
+                if (c != '\r') {
+                    text[used++] = c;
+                }
+            }
+            fs_close(fp);
+            text[used] = '\0';
+            if (strncmp(text, "(my program)", 12) != 0) {
+                printf("demotest: FAIL the card in use reads \"%s\"\n", text);
+                failures++;
+            } else {
+                puts("demotest: the card in use was left alone");
+            }
+        }
+    }
+
+    if (failures) {
+        printf("demotest: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("demotest: PASS the demo seeds a fresh card and expands as a program");
+    return 0;
+}
+
 /* A key that changes what the panel shows has to ask for a repaint - the
    screen's dirty flag is what the module's update hook watches.
 
@@ -3602,6 +3758,8 @@ int host_tests_run(int argc, char **argv)
             return host_feedtest();
         if (strcmp(argv[i], "--spindletest") == 0)
             return host_spindletest();
+        if (strcmp(argv[i], "--demotest") == 0)
+            return host_demotest();
         if (strcmp(argv[i], "--state") == 0)
             return host_state();
         if (strcmp(argv[i], "--keytest") == 0)

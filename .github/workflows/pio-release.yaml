@@ -151,18 +151,12 @@ jobs:
           python tools/test_nc_ui.py
 
       - name: Package the station
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item tmp/nc-ui-tests/nc_ui.exe dist/uCNC-programming-station.exe
-          Copy-Item tools/nc_ui_win/README.md dist/README.md
-          Copy-Item docs/desktop-sender.md dist/desktop-sender.md
-          Compress-Archive -Path dist/* -DestinationPath uCNC-programming-station-win64.zip -Force
+        run: python tools/pack_nc_ui.py --skip-build
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v3
         with:
-          files: uCNC-programming-station-win64.zip
+          files: tools/nc_ui_win/dist/uCNC-programming-station-win64.zip
           tag_name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

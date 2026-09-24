@@ -42,6 +42,7 @@
    nc_ui --runtest        RUN's FROM and FULL send the program
    nc_ui --stoptest       the MANUAL stops are typed, taken and respected
    nc_ui --spindletest    the spindle runs from the machine's own signals
+   nc_ui --demotest       the demo card seeds once, and the demo expands
    nc_ui --blocktest      the mark is the line in play and its cycle block, and
                           it stays on the unit that ran
    nc_ui --pacetest       RUN gives one block and waits for the machine
@@ -646,6 +647,85 @@ void host_files_root_beside_exe(const char *argv0)
     *slash = '\0';
     snprintf(g_files_root, sizeof(g_files_root), "%s\\nc-files", path);
 }
+
+/* Where the demo files sit: `examples\` beside the exe, the folder the release
+   zip unpacks next to the station. */
+static void host_examples_beside_exe(char *out, size_t out_sz)
+{
+    char path[260];
+    char *slash;
+
+    if (!out || out_sz == 0u) {
+        return;
+    }
+    if (GetModuleFileNameA(NULL, path, (DWORD)sizeof(path)) == 0u) {
+        snprintf(out, out_sz, "examples");
+        return;
+    }
+    slash = strrchr(path, '\\');
+    if (slash) {
+        *slash = '\0';
+    } else {
+        snprintf(path, sizeof(path), ".");
+    }
+    snprintf(out, out_sz, "%s\\examples", path);
+}
+
+/* The demo card - see host_shell.h. A card with a program of its own is the
+   operator's, so it is not touched at all: only a card with no `.nc` in it is
+   seeded, and only with files that are not there yet. */
+int host_seed_card(const char *root, const char *examples)
+{
+    char dest_dir[260];
+    char path[260];
+    WIN32_FIND_DATAA find;
+    HANDLE scan;
+    int copied = 0;
+
+    if (!root || !*root || !examples || !*examples) {
+        return 0;
+    }
+    snprintf(dest_dir, sizeof(dest_dir), "%s\\nc\\files", root);
+    /* Any program already on the card means the card is in use. */
+    snprintf(path, sizeof(path), "%s\\*.nc", dest_dir);
+    scan = FindFirstFileA(path, &find);
+    if (scan != INVALID_HANDLE_VALUE) {
+        FindClose(scan);
+        return 0;
+    }
+    snprintf(path, sizeof(path), "%s\\*", examples);
+    scan = FindFirstFileA(path, &find);
+    if (scan == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+    /* The driver expects the folders to be there (`host_fs_mount()` makes them
+       itself when it mounts, which is after this runs). */
+    snprintf(path, sizeof(path), "%s\\nc", root);
+    (void)CreateDirectoryA(root, NULL);
+    (void)CreateDirectoryA(path, NULL);
+    (void)CreateDirectoryA(dest_dir, NULL);
+    do {
+        char src[260];
+        char dst[260];
+        const char *dot;
+
+        if (find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            continue;
+        }
+        dot = strrchr(find.cFileName, '.');
+        if (!dot || (_stricmp(dot, ".nc") != 0 && _stricmp(dot, ".t") != 0)) {
+            continue;
+        }
+        snprintf(src, sizeof(src), "%s\\%s", examples, find.cFileName);
+        snprintf(dst, sizeof(dst), "%s\\%s", dest_dir, find.cFileName);
+        if (CopyFileA(src, dst, TRUE)) {
+            copied++;
+        }
+    } while (FindNextFileA(scan, &find));
+    FindClose(scan);
+    return copied;
+}
+
 char g_key_script[160];
 unsigned g_ticks;
 char g_files_root[260];
@@ -918,6 +998,16 @@ int main(int argc, char **argv)
         if (result >= 0) {
             return result;
         }
+    }
+
+    /* The window: give a fresh card the demo the release ships beside the exe,
+       then run the panel on it. */
+    {
+        char examples[260];
+
+        host_examples_beside_exe(examples, sizeof(examples));
+        (void)host_seed_card(g_files_root[0] ? g_files_root : "nc-files",
+                             examples);
     }
 
     memset(&wc, 0, sizeof(wc));

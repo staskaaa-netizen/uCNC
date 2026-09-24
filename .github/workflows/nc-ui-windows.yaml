@@ -44,24 +44,21 @@ jobs:
       # `tools/test_nc_ui.py` is the tool's build *and* run script: it compiles
       # the station, renders a panel frame, and runs every headless check
       # (filesystem, presets, keypad, spindle signal, feed, editor, path builder,
-      # RUN). A station that does not check out does not ship.
+      # RUN, the demo card). A station that does not check out does not ship.
       - name: Build the station and run its checks
         shell: pwsh
         run: |
           $env:PATH = "${{ steps.msys2.outputs.msys2-location }}\mingw64\bin;$env:PATH"
           python tools/test_nc_ui.py
 
+      # The zip a release carries: the station, its README, the desktop-tools
+      # note and the demo card (`tools/pack_nc_ui.py`, the same script a person
+      # runs by hand - the checks have just run, so it only packs).
       - name: Package the station
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item tmp/nc-ui-tests/nc_ui.exe dist/uCNC-programming-station.exe
-          Copy-Item tools/nc_ui_win/README.md dist/README.md
-          Copy-Item docs/desktop-sender.md dist/desktop-sender.md
-          Compress-Archive -Path dist/* -DestinationPath uCNC-programming-station-win64.zip -Force
+        run: python tools/pack_nc_ui.py --skip-build
 
       - name: Upload the built station
         uses: actions/upload-artifact@v7
         with:
           name: uCNC-programming-station-win64
-          path: uCNC-programming-station-win64.zip
+          path: tools/nc_ui_win/dist/uCNC-programming-station-win64.zip

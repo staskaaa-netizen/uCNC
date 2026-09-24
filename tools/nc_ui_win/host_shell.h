@@ -54,6 +54,13 @@ extern unsigned g_ticks;
    from. `argv0` is only a fallback for the rare `GetModuleFileNameA()` miss. */
 void host_files_root_beside_exe(const char *argv0);
 
+/* The demo the station ships with: the files in `examples` (the release zip
+   carries `examples\` beside the exe) are copied into `<root>\nc\files` while
+   that card has no program of its own - a station that was just unpacked opens
+   with something to look at. A card that already holds a `.nc` is left alone,
+   and nothing is overwritten. Returns how many files were placed. */
+int host_seed_card(const char *root, const char *examples);
+
 /* Replays the machine's own key path - the keypad's characters through
    nc_visual_key_for_char(), the mode keys, `HOLD`/`RELEASE` and `WAIT<n>` - so
    what a dump shows is what the panel shows after the same presses. */

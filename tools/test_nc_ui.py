@@ -178,6 +178,23 @@ if __name__ == "__main__":
         print("FAIL the spindle does not run from the machine's own signals")
         sys.exit(1)
 
+    # The demo the station ships with (tools/nc_ui_win/examples): a fresh card
+    # is seeded from it once, and the sample program itself has to load, scan
+    # and expand the way the panel does it.
+    root = OUT / "demo-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--demotest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "demotest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL the demo does not seed the card or expand as a program")
+        sys.exit(1)
+    for name in ("lathe-demo.nc", "tool.t"):
+        if not (root / "nc" / "files" / name).exists():
+            print(f"FAIL the demo card has no {name}")
+            sys.exit(1)
+
     run = subprocess.run([str(exe), "--keytest"], capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "keytest: PASS" not in run.stdout:

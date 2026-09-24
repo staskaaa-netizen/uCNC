@@ -71,10 +71,16 @@ virtualeeprom
 # Other files
 *.dat
 *.zip
+# The built Windows station (tools/pack_nc_ui.py) is kept in the tree as well,
+# so it can be taken straight from the repository and not only from a release.
+!tools/nc_ui_win/dist/*.zip
 *.nc
 !uCNC/src/modules/nc/tests/fixtures/*.nc
 !tools/nc_sender/tests/*.nc
 !uCNC/src/modules/g7x/tests/serial/*.nc
+# The station's demo card: the sample program a release ships and a fresh
+# station seeds its card from.
+!tools/nc_ui_win/examples/*.nc
 tmp/
 
 # VSCode

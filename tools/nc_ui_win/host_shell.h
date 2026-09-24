@@ -41,6 +41,13 @@ extern const char g_pad_keys[PAD_ROWS][PAD_COLS + 1];
 
 bool host_key_meaning(char key, nc_visual_key_meaning_t *meaning);
 
+/* The machine keypad key a PC key stands for when that does not depend on the
+   keyboard layout (`W` and Delete are the keypad's `#`, Enter is `D`, Esc is
+   `A`, Backspace is `*`); 0 for every other key. The window completes the map
+   with the digits and, through Windows, the letters and symbols the layout
+   decides. */
+char host_pc_machine_key(unsigned vk);
+
 /* Where `/D` is mounted: `--files DIR`, else `nc-files` beside the exe. The
    checks set it through `--files` before anything mounts. */
 extern char g_files_root[260];

@@ -1040,7 +1040,12 @@ static int host_streamtest(void)
         the machine - cannot reach that entry at all.
 
    The third one is what the old pad did wrong: it mapped its cells to footer
-   positions, so MANUAL's B/C/D and the skipped slots sent the wrong key. */
+   positions, so MANUAL's B/C/D and the skipped slots sent the wrong key.
+
+   It also pins the PC keys that stand for a keypad key without asking the
+   keyboard layout (`host_pc_machine_key()`), because the machine's finish key
+   is `#`: a key that needs Shift+3 on most layouts and AltGr on the rest is not
+   reachable, so `W` carries it. */
 /* The footer is a strip of fixed slots: more than NC_FOOTER_SLOTS and the keys
    shrink and move between screens, so a screen that needs fewer entries leaves
    them empty instead. `D` (accept) and `0` (file) keep their slot because the
@@ -1113,6 +1118,37 @@ static int host_padtest(void)
         nc_visual_key_for_char('\0') != NC_VISUAL_KEY_NONE) {
         puts("padtest: FAIL a key outside the keypad was accepted");
         failures++;
+    }
+    /* The PC keys that stand for a keypad key without asking the layout: the
+       machine's `#` is on `W` (and Delete), because `#` needs Shift+3 on most
+       layouts and AltGr on the rest - the finish key has to be reachable. */
+    {
+        static const struct {
+            unsigned vk;
+            char key;
+        } pc[] = {
+            { 'W', '#' },
+            { VK_DELETE, '#' },
+            { VK_RETURN, 'D' },
+            { VK_ESCAPE, 'A' },
+            { VK_BACK, '*' },
+            /* A digit is the layout's and a letter like Q is nobody's: the
+               fixed map must not answer for them. */
+            { '9', 0 },
+            { 'Q', 0 }
+        };
+        size_t k;
+
+        (void)pc;
+        for (k = 0u; k < sizeof(pc) / sizeof(pc[0]); k++) {
+            char got = host_pc_machine_key(pc[k].vk);
+
+            if (got != pc[k].key) {
+                printf("padtest: FAIL PC key 0x%02x sends '%c', not '%c'\n",
+                       pc[k].vk, got ? got : '?', pc[k].key);
+                failures++;
+            }
+        }
     }
     for (row = 0; row < PAD_ROWS; row++) {
         if (strcmp(g_pad_keys[row], machine[row]) != 0) {

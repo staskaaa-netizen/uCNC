@@ -215,7 +215,15 @@ The PC keyboard maps the same way: F1-F4 modes; digits and the numeric pad; `*`,
 `#` and `A`-`D` as the keypad's own keys (asked of the keyboard layout, so they
 work on any layout); the arrows move by word on a code screen and step the field
 or pick the axis where the screen has fields; Enter = `D`, Esc = `A`,
-Backspace = `*`, Del = `#`; `-`/`.` sign and point.
+Backspace = `*`, `-`/`.` sign and point.
+
+The keypad's `#` - the finish key - is on **`W`**, because `#` cannot be trusted
+as a PC key: it needs Shift+3 on most layouts and AltGr on the rest, and on some
+there is no key for it at all. Delete sends it too, and the layout's own `#`
+still works where it exists (`host_pc_machine_key()` is the map that does not
+ask Windows). Nothing else on the keyboard is taken: a letter that is not `A`-`D`
+or `W` types nothing here, so the program text is still written on the machine's
+keypad and the screen's own 3x3.
 
 `nc_visual_select_mode()` was added to the NC module for this shell so the
 F1-F4 keys jump straight to a mode instead of cycling with the MODE key; the

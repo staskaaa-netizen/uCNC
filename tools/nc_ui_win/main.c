@@ -224,20 +224,35 @@ static void host_send_button(const host_button_t *button)
         nc_visual_select_mode(button->mode);
 }
 
-/* The machine keypad key a PC key stands for, 0 for the keys only the host has
-   (arrows, sign, point). Asked of the keyboard layout, so `*`, `#` and the
-   letters A-D work on any layout. */
-static char host_machine_key_for_vk(WPARAM vk, LPARAM lp)
+/* The machine keypad keys a PC key stands for when the key has the same meaning
+   on every layout - the fixed half of the map below, and what the checks pin.
+   `W` is the keypad's finish key on a PC keyboard: `#` needs Shift+3 on most
+   layouts and AltGr on the rest, so the machine's `#` gets a letter of its own
+   here. `#` and Delete still send it where the layout can produce them. */
+char host_pc_machine_key(unsigned vk)
 {
-    BYTE state[256];
-    WORD chars[2];
-
     switch (vk) {
     case VK_RETURN: return 'D';
     case VK_ESCAPE: return 'A';
     case VK_BACK:   return '*';
     case VK_DELETE: return '#';
+    case 'W':       return '#';
     default: break;
+    }
+    return 0;
+}
+
+/* The machine keypad key a PC key stands for, 0 for the keys only the host has
+   (arrows, sign, point). The rest is asked of the keyboard layout, so `*`, `#`
+   and the letters A-D work on any layout. */
+static char host_machine_key_for_vk(WPARAM vk, LPARAM lp)
+{
+    BYTE state[256];
+    WORD chars[2];
+    char fixed = host_pc_machine_key((unsigned)vk);
+
+    if (fixed) {
+        return fixed;
     }
     if (vk >= '0' && vk <= '9')
         return (char)vk;
@@ -469,7 +484,7 @@ static void host_draw_side(HDC dc)
     SelectObject(dc, small);
     {
         static const char *const help_keys[] = {
-            "F1-F4", "arrows", "Enter", "Esc", "Backspace", "Del", "- ."
+            "F1-F4", "arrows", "Enter", "Esc", "Backspace", "W / Del", "- ."
         };
         static const char *const help_means[] = {
             "modes", "word / field", "accept (D)", "cancel / mode (A)",

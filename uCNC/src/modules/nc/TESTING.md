@@ -56,8 +56,11 @@ Use this as a short hardware pass list while NC is still pre-alpha.
   frame back and asserts both labels **and the fault block's four edges** (red
   over the message area; no red over F/S, over the FPS/hint column, or over the
   state corner), so the layout is checked as drawn, not as intended.
-- The run state (`IDLE`, `ACTIVE`, `HOLD`) sits in the tab strip, left of the
-  message area; the plain idle "RUN" is left out - the tab already says RUN.
+- The run state is said **once**: in the DRO's own corner (`uCNC IDLE`, `RUN`,
+  `HOLD`, `JOG`, `DOOR`, `ALARM` and the rest - `nc_visual_state_label()`). The
+  tab strip carries the screen names and, at its right end, the message; it must
+  not repeat the state the corner already has (it used to say `IDLE` in the
+  middle of the strip as well).
 - The DRO wears the panel's **green** (`NC_VISUAL_HEADER_RUN`, the palette's
   `green` - the 16-colour table is full, so a running colour has to be one the
   panel already owns) while the machine is in a run - including a held one, and
@@ -185,8 +188,8 @@ Use this as a short hardware pass list while NC is still pre-alpha.
   in RUN, choosing where `2 FROM` starts.
   - With it, a one-shot step (`1 SINGLE`) no longer leaves the panel believing a
     run is active: the run state for a step is the machine's own "there is motion
-    left", so the DRO goes back to grey and the strip says `RUN IDLE` when the
-    step is done, instead of staying lit until the next reset.
+    left", so the DRO goes back to grey and its corner reads `IDLE` when the step
+    is done, instead of staying lit until the next reset.
 - **The RUN sender is paced, one block at a time** (bench: "g7x sends one
   command and wait till buffer is empty. pause here is ok and proper"). The old
   sender handed the reader the whole program at once, so the marked line ran

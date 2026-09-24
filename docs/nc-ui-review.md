@@ -37,8 +37,11 @@ single model, and it should be agreed before more keys or menus are added:
 
 What exists and works:
 
-- the header shows the state (`RUN`, `RUN ACTIVE`, `RUN HOLD`, `RUN IDLE`) from
-  `nc_visual_run_state_text()`, including the controller's own `EXEC_HOLD` flag;
+- the DRO's own corner shows the state (`uCNC IDLE` / `RUN` / `HOLD` / `JOG` /
+  `DOOR` / `ALARM`, `nc_visual_state_label()`), including the controller's own
+  `EXEC_HOLD` flag. It is the panel's only state word: the tab strip used to say
+  `RUN ACTIVE`/`RUN IDLE` in the middle as well, and that duplicate is gone
+  (`nc_visual_run_state_text()` went with it);
 - `HOLD` is a real toggle: `nc_run_toggle_hold()` plus a status line
   (`RUN hold` / `RUN resumed`);
 - `FR OM`/`SINGLE`/`RUN` arm and start from the cursor line; `RESET` cancels.

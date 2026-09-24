@@ -2856,9 +2856,9 @@ static int host_blocktest(void)
     }
 
     /* A single step is not a program run: when the machine has run it the panel
-       has to be idle again - the DRO's colour and the strip's `RUN IDLE` follow
-       this one answer - and the mark stands on the line that ran, not on the one
-       the sender moved on to. */
+       has to be idle again - the DRO's colour and its state word follow this one
+       answer - and the mark stands on the line that ran, not on the one the
+       sender moved on to. */
     nc_visual_handle_key(NC_VISUAL_KEY_FIELD_PREV);   /* back onto the rapid */
     if (nc_run_line() != outside) {
         printf("blocktest: FAIL the line keys left RUN on line %u, wanted %u\n",

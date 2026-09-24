@@ -143,9 +143,8 @@ static bool nc_visual_runtime_busy(const nc_runtime_state_t *runtime)
 }
 
 /* Is the machine in a run? A run that is held is still a run, and the panel's
-   own stream counts as one from the moment it starts, so this is the same
-   question the tab strip answers with "RUN ACTIVE"/"RUN HOLD" - one definition,
-   so the DRO's colour and the strip's words cannot disagree. */
+   own stream counts as one from the moment it starts. One definition, so the
+   DRO's green and the state word in its corner (RUN, HOLD) cannot disagree. */
 static bool nc_visual_running(const nc_runtime_state_t *runtime)
 {
     return nc_visual_runtime_busy(runtime) || nc_run_active() || nc_run_hold();
@@ -327,24 +326,6 @@ static void nc_visual_set_mode(nc_mode_t mode)
 
 
 
-
-
-static const char *nc_visual_run_state_text(const nc_runtime_state_t *runtime)
-{
-    if (g_nc_visual_mode != NC_MODE_RUN) {
-        return nc_menu_mode_name(g_nc_visual_mode);
-    }
-    if (nc_run_hold() || (runtime && (runtime->exec_state & EXEC_HOLD))) {
-        return "RUN HOLD";
-    }
-    if (nc_visual_running(runtime)) {
-        return "RUN ACTIVE";
-    }
-    if (nc_run_done()) {
-        return "RUN IDLE";
-    }
-    return "RUN";
-}
 
 
 /* Footer entries that are switches (not actions). Their highlight must show the
@@ -1081,28 +1062,17 @@ static const char *nc_visual_notice(char *buf,
 }
 
 /* The screen names across the top. Every screen is reachable with the MODE key,
-   so the strip is a position marker plus that hint, not a menu to click. */
+   so the strip is a position marker plus that hint, not a menu to click. The
+   run state is not repeated here: the DRO's own corner carries it (`uCNC IDLE`
+   and the rest), once, on the band the figures are on. */
 static void nc_visual_draw_tabs(const char *message,
                                 lvds_color_t message_fg)
 {
     static const char *const names[NC_MODE_COUNT] = {
         "MANUAL", "EDIT", "TOOLS", "RUN"
     };
-    const char *state = "";
     int x = 8;
     int i;
-
-    if (g_nc_visual_mode == NC_MODE_RUN) {
-        /* "RUN IDLE" -> "IDLE": the tab already says RUN. */
-        nc_runtime_state_t rt;
-        const char *text;
-
-        nc_state_runtime(&rt);
-        text = nc_visual_run_state_text(&rt);
-        if (strncmp(text, "RUN ", 4u) == 0) {
-            state = text + 4u;
-        }
-    }
 
     lvds_draw_fill_rect(0, NC_TAB_Y, LVDS_HSTX_WIDTH, NC_TAB_H, NC_VISUAL_HEADER);
 
@@ -1134,18 +1104,11 @@ static void nc_visual_draw_tabs(const char *message,
                              NC_VISUAL_HEADER,
                              LVDS_FONT_NORMAL);
 
-    /* The run state sits at the left of the message area; the message uses
-       whatever is left before the hint. */
-    if (state && state[0]) {
-        nc_draw_text_clip(420, NC_TAB_Y + 4, state, 12,
-                                 NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_NORMAL);
-    }
-
-    /* The message area, in the empty right side of the strip. */
+    /* The message area, in the empty right side of the strip: it starts where
+       the screen names end, and the run state is not written here (the DRO's
+       corner has it). */
     if (message && message[0]) {
-        int cols = (LVDS_HSTX_WIDTH - 26 - 420 -
-                    lvds_draw_text_width(state ? state : "", LVDS_FONT_NORMAL)) /
-                   NC_VISUAL_CHAR_W;
+        int cols = (LVDS_HSTX_WIDTH - 26 - 420) / NC_VISUAL_CHAR_W;
         int len = (int)strlen(message);
 
         if (len > cols) {

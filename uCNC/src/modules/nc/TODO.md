@@ -266,7 +266,7 @@ The rest of the panel pass that followed:
      (`RUN owns the line` in the strip's message area) and work again when the
      machine is idle. The one-shot path stopped setting the *program* run flag as
      part of the same fix, so a single step no longer leaves the DRO green and the
-     strip saying `RUN ACTIVE` until the next reset - the panel's "it does not
+     corner saying `RUN` until the next reset - the panel's "it does not
      shout when it is not needed" rule, which that flag was breaking.
   - `--blocktest` now uses a fixture with a P/Q block *and* the `G70` below it,
     and walks EDIT and RUN through all three cases (inside the cycle, on the
@@ -678,8 +678,9 @@ header band is filled with `NC_VISUAL_HEADER_RUN` (`yellow`, the colour the
 selections and values already use) while the machine is in a run - held counts,
 the run is not over - and with its own grey otherwise. The tab strip above keeps
 its grey. One definition of "running" (`nc_visual_running()`), the same one the
-strip's `RUN ACTIVE` uses, so the band and the words cannot disagree. Nothing
-moved but the fill colour; the figures stay dark and read on both.
+DRO's own state word uses, so the band and the word in its corner cannot
+disagree. Nothing moved but the fill colour; the figures stay dark and read on
+both.
 
 The criterion behind it, as the bench put it: **it does not shout when it is not
 needed** (2026-09-22). The loud colour is spent only on the state that is

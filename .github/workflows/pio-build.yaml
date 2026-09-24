@@ -72,6 +72,8 @@ jobs:
           - STM32F4-SKR-Pro-V1_2
           - RP2040-PICO
           - RP2350-PICO2
+          - RP2350-LEANCAM-LVDS
+          - RP2350-G7X-MODULE
           - ESP32-Wemos-D1-R32
           - LPC176X-SKR-v1_4-TURBO
           - STM32F1-MKS-Robin-Nano-V1_2

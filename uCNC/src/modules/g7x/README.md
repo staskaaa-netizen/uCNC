@@ -14,7 +14,9 @@ What a release of this fork carries, and what it does not claim:
   release matrix of `.github/workflows/pio-release.yaml`.
 - **The PC programming station** - `tools/nc_ui_win` is the same NC screen,
   keypad and G7x cycles on Windows, built by `tools/test_nc_ui.py` and attached
-  to the same release by `.github/workflows/nc-ui-windows.yaml`.
+  to the same release by the `station` job of
+  `.github/workflows/pio-release.yaml`; `.github/workflows/nc-ui-windows.yaml`
+  builds it and runs its checks on every push and pull request.
 - **Software-verified** - `python tools/test_g7x.py all` (the generator, the NC
   emitter adapter, the real parser/planner/virtual-MCU integration with G33
   intercepted, and the standalone target), `python tools/test_nc_ui.py` (the

@@ -67,6 +67,8 @@ jobs:
           - AVR-MKS-GEN-L-V1
           - SAMD21-Arduino-Zero
           - RP2350-PICO2
+          - RP2350-LEANCAM-LVDS
+          - RP2350-G7X-MODULE
           - ESP32-S3
           - ESP32-C3
 
@@ -112,6 +114,55 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.boards }}.zip
+          tag_name: ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The Windows programming station rides the same release as the board
+  # firmware: the NC screen, the keypad and the G7x cycles for a PC
+  # (tools/nc_ui_win). It needs the release to exist first, so it is a job of
+  # this workflow rather than a second workflow racing the release creation.
+  station:
+    name: Build Programming Station (Windows)
+    runs-on: windows-latest
+    needs: create_release
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Build the station and run its checks
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ steps.msys2.outputs.msys2-location }}\mingw64\bin;$env:PATH"
+          python tools/test_nc_ui.py
+
+      - name: Package the station
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item tmp/nc-ui-tests/nc_ui.exe dist/uCNC-programming-station.exe
+          Copy-Item tools/nc_ui_win/README.md dist/README.md
+          Copy-Item docs/desktop-sender.md dist/desktop-sender.md
+          Compress-Archive -Path dist/* -DestinationPath uCNC-programming-station-win64.zip -Force
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v3
+        with:
+          files: uCNC-programming-station-win64.zip
           tag_name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

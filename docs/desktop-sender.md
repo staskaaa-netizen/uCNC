@@ -72,11 +72,13 @@ headless check (`--fstest`, `--presettest`, `--streamtest`, `--padtest`,
 `--pacetest`, `--stoptest`, ...). Its README is the operator's usage.
 
 The station ships from GitHub: `.github/workflows/nc-ui-windows.yaml` builds it
-with MinGW-w64 on `windows-latest`, runs the checks, and attaches
-`uCNC-programming-station-win64.zip` (the statically linked exe and its README)
-to every `v*` release next to the board firmware. The station keeps its card in
-an `nc-files` folder beside the exe unless `--files` names another one, so the
-downloaded zip runs where it is unpacked.
+with MinGW-w64 on `windows-latest` and runs the checks on every push and pull
+request, and the `station` job of `.github/workflows/pio-release.yaml` builds the
+same zip and attaches `uCNC-programming-station-win64.zip` (the statically linked
+exe, its README and this note) to a `v*` release next to the board firmware -
+including the G7x machine image. The station keeps its card in an `nc-files`
+folder beside the exe unless `--files` names another one, so the downloaded zip
+runs where it is unpacked.
 
 Next:
 

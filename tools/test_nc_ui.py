@@ -36,6 +36,29 @@ FLAGS = ["-std=gnu11", "-O1", "-w",
 LDFLAGS = ["-mwindows", "-static", "-lgdi32", "-luser32", "-lcomdlg32"]
 
 
+def fail(message, detail=""):
+    """Report a failure the way CI can see it.
+
+    A plain line for whoever reads the log, and - when this runs in GitHub
+    Actions - an `::error::` annotation carrying the first useful line of the
+    detail. The annotation is what shows on the run and in the API, so a failure
+    can be diagnosed without the log (which needs rights this repository's
+    readers may not have)."""
+    print(message)
+    if os.environ.get("GITHUB_ACTIONS"):
+        text = " / ".join((detail or message).split())
+        print(f"::error title=nc_ui::{text[:1500]}")
+    sys.exit(1)
+
+
+def check(run, wanted, message):
+    """Run the station once and insist on the line a passing check prints."""
+    print(run.stdout.strip())
+    if run.returncode or wanted not in run.stdout:
+        fail(f"FAIL {message}",
+             run.stdout[-1500:] or run.stderr[-1500:] or f"exit {run.returncode}")
+
+
 def core_sources():
     files = []
     for directory in ("", "core", "interface", "hal/kinematics", "hal/tools",
@@ -75,11 +98,14 @@ def build():
                *module_sources()]
     cmd = [os.environ.get("CC", "gcc"), *FLAGS, *[str(p) for p in sources],
            "-o", str(EXE), *LDFLAGS]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError as missing:
+        fail(f"FAIL no C compiler: {cmd[0]} ({missing})",
+             "put gcc on PATH, or set CC to the compiler's path")
     (OUT / "build.log").write_text(result.stdout + result.stderr)
     if result.returncode:
-        print(result.stderr[-8000:])
-        sys.exit(1)
+        fail("FAIL the station did not build", result.stderr[-1500:])
     return EXE
 
 
@@ -90,12 +116,10 @@ if __name__ == "__main__":
     run = subprocess.run([str(exe), "--dump", str(frame)], capture_output=True,
                          text=True)
     if run.returncode:
-        print(run.stdout[-4000:])
-        print(run.stderr[-4000:])
-        sys.exit(1)
+        fail("FAIL the station did not render a frame",
+             run.stdout[-1500:] or run.stderr[-1500:])
     if not frame.exists() or frame.stat().st_size < 54:
-        print("FAIL no frame written")
-        sys.exit(1)
+        fail("FAIL no frame written")
     print(f"nc_ui: built and rendered {frame}")
 
     modal = OUT / "modal.bmp"
@@ -104,9 +128,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     if run.returncode or not modal.exists() or modal.stat().st_size < 54:
         print(run.stdout[-2000:])
-        print(run.stderr[-4000:])
-        print("FAIL the 3x3 helper did not render")
-        sys.exit(1)
+        fail("FAIL the 3x3 helper did not render",
+             run.stdout[-1500:] or run.stderr[-1500:])
     print(f"nc_ui: 3x3 helper rendered {modal}")
 
     root = OUT / "presets-root"
@@ -115,37 +138,32 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "presettest: OK" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL preset file contract")
-        sys.exit(1)
+        fail("FAIL preset file contract",
+             run.stdout[-1500:] or run.stderr[-1500:])
     if not (root / "presets.txt").exists():
-        print(f"FAIL {root / 'presets.txt'} was not created")
-        sys.exit(1)
+        fail(f"FAIL {root / 'presets.txt'} was not created")
 
     run = subprocess.run([str(exe), "--files", str(OUT / "stream-root"),
                           "--streamtest"], capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "streamtest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL the panel's one-shot blocks did not reach the reader")
-        sys.exit(1)
+        fail("FAIL the panel's one-shot blocks did not reach the reader",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     run = subprocess.run([str(exe), "--files", str(OUT / "pad-root"),
                           "--padtest"], capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "padtest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL the keypad does not match the machine's key row")
-        sys.exit(1)
+        fail("FAIL the keypad does not match the machine's key row",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # The legend the editor shows for the word under the cursor: every word the
     # panel writes into a line must say what it is, not "NC word".
     run = subprocess.run([str(exe), "--vocabtest"], capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "vocabtest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL a word the panel writes has no legend")
-        sys.exit(1)
+        fail("FAIL a word the panel writes has no legend",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # The labels: a fault in the message area is white on red, and the
     # controller's state sits in the DRO's bottom-right corner.
@@ -156,17 +174,15 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "labeltest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL the error label or the DRO state is not drawn")
-        sys.exit(1)
+        fail("FAIL the error label or the DRO state is not drawn",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     run = subprocess.run([str(exe), "--files", str(OUT / "feed-root"),
                           "--feedtest"], capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "feedtest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL a held key does not feed to the stop")
-        sys.exit(1)
+        fail("FAIL a held key does not feed to the stop",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # The station's spindle, off the machine's own signals (PWM0/DOUT0) rather
     # than an encoder the desktop does not have.
@@ -174,9 +190,8 @@ if __name__ == "__main__":
                           "--spindletest"], capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "spindletest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL the spindle does not run from the machine's own signals")
-        sys.exit(1)
+        fail("FAIL the spindle does not run from the machine's own signals",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # The demo the station ships with (tools/nc_ui_win/examples): a fresh card
     # is seeded from it once, and the sample program itself has to load, scan
@@ -187,13 +202,11 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "demotest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL the demo does not seed the card or expand as a program")
-        sys.exit(1)
+        fail("FAIL the demo does not seed the card or expand as a program",
+             run.stdout[-1500:] or run.stderr[-1500:])
     for name in ("lathe-demo.nc", "tool.t"):
         if not (root / "nc" / "files" / name).exists():
-            print(f"FAIL the demo card has no {name}")
-            sys.exit(1)
+            fail(f"FAIL the demo card has no {name}")
 
     # The window composes the bench in one bitmap and blits it whole, and keeps
     # the strip in it until the strip changes: that is what stopped it blinking
@@ -202,16 +215,14 @@ if __name__ == "__main__":
                           "--painttest"], capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "painttest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL the bench is not composed once and blitted whole")
-        sys.exit(1)
+        fail("FAIL the bench is not composed once and blitted whole",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     run = subprocess.run([str(exe), "--keytest"], capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "keytest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL a keypad key does not decode on both edges")
-        sys.exit(1)
+        fail("FAIL a keypad key does not decode on both edges",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # The operator's own program and tool table, kept with the NC module
     # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
@@ -229,9 +240,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "filetest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL the NC program and its tool table do not check out")
-        sys.exit(1)
+        fail("FAIL the NC program and its tool table do not check out",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # The editor's new-file field: a path the frame dumps cannot see, because
     # the field is only drawn while the file list is up.
@@ -239,9 +249,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "newfiletest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL the new-file field does not take the typed name")
-        sys.exit(1)
+        fail("FAIL the new-file field does not take the typed name",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # The editor's typed-key paths - also invisible to a frame dump, and where
     # an extraction can hand a handler the key instead of its character.
@@ -256,9 +265,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "editortest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL typed keys do not reach the word, the helper and the field")
-        sys.exit(1)
+        fail("FAIL typed keys do not reach the word, the helper and the field",
+             run.stdout[-1500:] or run.stderr[-1500:])
     (root / "nc" / "files" / "facing.nc").write_bytes(
         (fixtures / "facing.nc").read_bytes())
 
@@ -270,9 +278,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "buildertest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL the path builder does not write the contour it walks")
-        sys.exit(1)
+        fail("FAIL the path builder does not write the contour it walks",
+             run.stdout[-1500:] or run.stderr[-1500:])
     (root / "nc" / "files" / "facing.nc").write_bytes(
         (fixtures / "facing.nc").read_bytes())
 
@@ -283,9 +290,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "dirtytest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL a key that moves the RUN cursor does not ask for a repaint")
-        sys.exit(1)
+        fail("FAIL a key that moves the RUN cursor does not ask for a repaint",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # RUN's FROM and FULL have to send the program: they only armed the run and
     # the machine never received a character.
@@ -293,9 +299,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "runtest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL RUN's FROM/FULL do not send the program")
-        sys.exit(1)
+        fail("FAIL RUN's FROM/FULL do not send the program",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # What RUN marks on the pane: the line the sender is on is bright and the
     # cycle block it belongs to is pale, and both go away when the mark leaves
@@ -305,9 +310,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "blocktest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL RUN does not mark the line and the block it belongs to")
-        sys.exit(1)
+        fail("FAIL RUN does not mark the line and the block it belongs to",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # The sender is paced: one unit at a time, waiting for the machine. That is
     # what keeps the mark on the code that is cutting instead of on the line the
@@ -316,9 +320,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "pacetest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL RUN does not pace the program to the machine")
-        sys.exit(1)
+        fail("FAIL RUN does not pace the program to the machine",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # The MANUAL stops: typed on the pad, taken from the setup with `D`, and
     # respected by a step and a feed on both sides.
@@ -327,9 +330,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "stoptest: PASS" not in run.stdout:
-        print(run.stderr[-4000:])
-        print("FAIL the MANUAL stops are not typed, taken and respected")
-        sys.exit(1)
+        fail("FAIL the MANUAL stops are not typed, taken and respected",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     # And the same file on screen. The remembered state points EDIT at it, which
     # is also how the machine reopens the last program after a reboot.
@@ -342,9 +344,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     if run.returncode or not edit.exists() or edit.stat().st_size < 54:
         print(run.stdout[-2000:])
-        print(run.stderr[-4000:])
-        print("FAIL the program did not render in EDIT")
-        sys.exit(1)
+        fail("FAIL the program did not render in EDIT",
+             run.stdout[-1500:] or run.stderr[-1500:])
 
     view = OUT / "facing-view.bmp"
     run = subprocess.run([str(exe), "--files", str(root), "--keys", "#",
@@ -352,9 +353,8 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     if run.returncode or not view.exists() or view.stat().st_size < 54:
         print(run.stdout[-2000:])
-        print(run.stderr[-4000:])
-        print("FAIL the program did not render on the panel")
-        sys.exit(1)
+        fail("FAIL the program did not render on the panel",
+             run.stdout[-1500:] or run.stderr[-1500:])
     print(f"nc_ui: {fixtures / 'facing.nc'} rendered in EDIT {edit} "
           f"and in the full-screen view {view}")
 
@@ -368,12 +368,10 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     if run.returncode or not view_w.exists() or view_w.stat().st_size < 54:
         print(run.stdout[-2000:])
-        print(run.stderr[-4000:])
-        print("FAIL the PC key W did not render the view")
-        sys.exit(1)
+        fail("FAIL the PC key W did not render the view",
+             run.stdout[-1500:] or run.stderr[-1500:])
     if view.read_bytes() != view_w.read_bytes():
-        print("FAIL 'W' and '#' draw different frames on EDIT (VIEW)")
-        sys.exit(1)
+        fail("FAIL 'W' and '#' draw different frames on EDIT (VIEW)")
     print(f"nc_ui: 'W' and '#' are the same key on EDIT: {view_w} is identical")
 
     # The card root as the list shows it: the text files sit beside the programs
@@ -385,7 +383,6 @@ if __name__ == "__main__":
                          capture_output=True, text=True)
     if run.returncode or not listing.exists() or listing.stat().st_size < 54:
         print(run.stdout[-2000:])
-        print(run.stderr[-4000:])
-        print("FAIL the file list did not render")
-        sys.exit(1)
+        fail("FAIL the file list did not render",
+             run.stdout[-1500:] or run.stderr[-1500:])
     print(f"nc_ui: /D listing rendered {listing}")

@@ -37,6 +37,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Which toolchain this is, in the log, before anything can fail on it.
+      - name: Show the toolchain
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ steps.msys2.outputs.msys2-location }}\mingw64\bin;$env:PATH"
+          gcc --version | Select-Object -First 1
+          python --version
+
       # The station is built, rendered and checked before it is packed: a
       # release asset is never a build that has not run its own tests.
       - name: Build the station and run its checks

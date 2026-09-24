@@ -41,6 +41,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Show the toolchain
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ steps.msys2.outputs.msys2-location }}\mingw64\bin;$env:PATH"
+          gcc --version | Select-Object -First 1
+          python --version
+
       # `tools/test_nc_ui.py` is the tool's build *and* run script: it compiles
       # the station, renders a panel frame, and runs every headless check
       # (filesystem, presets, keypad, spindle signal, feed, editor, path builder,

@@ -667,6 +667,20 @@ static int host_filetest(void)
     return 0;
 }
 
+/* Which build this is. The station has no version resource, so the answer is
+   its own file's timestamp and size (host_build_text()) - the same figures
+   Explorer shows, which is what tells the exe that was just built from one
+   that was copied, zipped or left over from an earlier run. The window title
+   carries the same line. */
+static int host_version(void)
+{
+    char build[80];
+
+    host_build_text(build, sizeof(build));
+    printf("nc_ui: uCNC programming station (PC), built %s\n", build);
+    return 0;
+}
+
 /* Print what the machine thinks it is doing after the keys and ticks have run:
    the states a scripted feed depends on, and the figures the panel reads. */
 static int host_state(void)
@@ -3806,6 +3820,8 @@ int host_tests_run(int argc, char **argv)
             return host_demotest();
         if (strcmp(argv[i], "--state") == 0)
             return host_state();
+        if (strcmp(argv[i], "--version") == 0)
+            return host_version();
         if (strcmp(argv[i], "--keytest") == 0)
             return host_keytest();
         if (strcmp(argv[i], "--filetest") == 0)

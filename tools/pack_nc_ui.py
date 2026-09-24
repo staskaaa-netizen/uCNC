@@ -16,18 +16,40 @@ something to look at.
 
     python tools/pack_nc_ui.py                # build, check, pack into dist/
     python tools/pack_nc_ui.py --skip-build   # pack what is already built
+
+`--skip-build` refuses to pack an exe that is older than the sources it was
+built from: the one thing this must never do is ship last night's station under
+this morning's name. The exe's own timestamp and size are printed, and are what
+`nc_ui.exe --version` and the window title report, so a station someone has can
+be matched against the one in the zip.
 """
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import zipfile
+import datetime
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "tools" / "nc_ui_win"
 EXE = ROOT / "tmp" / "nc-ui-tests" / "nc_ui.exe"
 DIST = TOOL / "dist"
 ZIP = DIST / "uCNC-programming-station-win64.zip"
+
+
+def sources():
+    """Every file the station is built from: the tool's own, and the firmware
+    sources it compiles (the same set tools/test_nc_ui.py hands the compiler)."""
+    files = [p for p in TOOL.iterdir() if p.suffix in (".c", ".h")]
+    files.append(TOOL / "Makefile")
+    for src in (ROOT / "uCNC" / "src").rglob("*"):
+        if src.suffix in (".c", ".h"):
+            files.append(src)
+    return [p for p in files if p.exists()]
+
+
+def build_time(path):
+    return datetime.datetime.fromtimestamp(path.stat().st_mtime)
 
 
 def main(argv):
@@ -38,6 +60,12 @@ def main(argv):
             return 1
     if not EXE.exists():
         print(f"pack: {EXE} is not there - build the station first")
+        return 1
+    newest = max(build_time(p) for p in sources())
+    if build_time(EXE) < newest:
+        print(f"pack: {EXE.name} is from {build_time(EXE):%Y-%m-%d %H:%M:%S}, "
+              f"older than {newest:%Y-%m-%d %H:%M:%S} in the sources - build it "
+              f"(drop --skip-build) instead of packing yesterday's station")
         return 1
 
     staging = DIST / "station"
@@ -61,6 +89,8 @@ def main(argv):
 
     with zipfile.ZipFile(ZIP) as archive:
         names = archive.namelist()
+    print(f"pack: the station in it was built {build_time(EXE):%Y-%m-%d %H:%M:%S}"
+          f" ({EXE.stat().st_size} bytes)")
     print(f"pack: {ZIP} ({ZIP.stat().st_size} bytes)")
     for name in names:
         print(f"pack:   {name}")

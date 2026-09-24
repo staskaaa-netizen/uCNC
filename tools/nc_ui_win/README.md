@@ -64,6 +64,26 @@ python tools\test_nc_ui.py     # builds, dumps a panel frame and a bench frame,
                                # then runs the headless checks below
 ```
 
+There is one build of the station in this tree and it is the one the checks and
+the pack use: `tmp\nc-ui-tests\nc_ui.exe`. The tool's own `Makefile` writes a
+second, `build\nc_ui.exe`, for building the window alone (`mingw32-make` in
+`tools\nc_ui_win`) - both are rebuilt from the same sources, and both are stale
+the moment a source changes, so rebuild rather than copy an exe around.
+
+**Which build is this?** The station has no version resource, so its own file is
+the answer:
+
+```powershell
+nc_ui.exe --version            # built 2026-09-25 00:03:10, 639199 bytes
+```
+
+The window title carries the same line, and `tools\pack_nc_ui.py` prints it for
+the exe it puts in the zip. Those are the figures Explorer shows under
+Properties - if the station you are looking at was built earlier than the
+sources, it is an old copy. `pack_nc_ui.py --skip-build` refuses to pack an exe
+that is older than the sources, so a release cannot quietly carry last night's
+binary.
+
 ## What a release ships (the demo card)
 
 `python tools\pack_nc_ui.py` builds the station, runs its checks and writes
@@ -358,6 +378,9 @@ MODE key still cycles for the machine.
   feed is checked without opening the window - a feed only starts from a
   standing axis, so `Wait for stop` with `run=1` means the previous jog was
   still moving.
+- `--version` prints which build the exe is (its own file's timestamp and size,
+  the same line the window title carries). It answers "is this the station I
+  just built, or a copy from last night?" without opening the window.
 
 ## Screenshot show
 

@@ -90,6 +90,12 @@ void host_pump_idle(unsigned max_iterations);
 /* Write the emulated panel (800x600, the firmware layout alone) as a .bmp. */
 int host_dump(const char *path);
 
+/* Which build this exe is: its own file's timestamp and size, what Windows
+   shows in Properties. A station that was just built and one left over from an
+   earlier run are told apart by the window title or by `--version` - nothing of
+   it is drawn on the emulated panel, which stays the machine's. */
+void host_build_text(char *out, size_t out_sz);
+
 /* Write the whole bench - the emulated panel and the operator's strip beside it
    - as a .bmp: the picture the window paints, so the key row and the usage
    lines are reviewable (and diffable) without opening the window. */

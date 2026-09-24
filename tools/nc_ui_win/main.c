@@ -29,11 +29,15 @@
    nc_ui --files DIR      mount DIR as the /D drive (default: the `nc-files`
                           folder beside the exe, so a shortcut works)
    nc_ui [--keys LIST] --dump out.bmp
-                          press LIST (comma separated: the keypad's own keys
-                          `0`-`9`, `*`, `#`, `A`-`D`, the modes F1-F4, or named
-                          keys ACCEPT/NEXT/PREV/FINISH/BACK/CANCEL/MODE/UP/
-                          DOWN/LEFT/RIGHT/MINUS/DOT) before rendering, so a
-                          screen that only appears after input can be checked
+                           press LIST (comma separated: the keypad's own keys
+                           `0`-`9`, `*`, `#`, `A`-`D`, the PC keys with a fixed
+                           meaning (`W`, Delete, Enter, Esc, Backspace), the
+                           modes F1-F4, or named keys ACCEPT/NEXT/PREV/FINISH/
+                           BACK/CANCEL/MODE/UP/DOWN/LEFT/RIGHT/MINUS/DOT)
+                           before rendering, so a screen that only appears after
+                           input can be checked
+   nc_ui --state          print what the machine is doing now
+   nc_ui --version        print which build this exe is
    nc_ui --fstest         list /D through the firmware fs_* API
    nc_ui --presettest     check the /D/presets.txt contract
    nc_ui --streamtest     check the panel's one-shot blocks reach the reader
@@ -741,6 +745,34 @@ int host_seed_card(const char *root, const char *examples)
     return copied;
 }
 
+/* Which build this exe is - see host_shell.h. The station has no version
+   resource, so its own file is the answer: the timestamp and size Explorer
+   shows in Properties, which is what tells a fresh build from one that was
+   copied around for a day. */
+void host_build_text(char *out, size_t out_sz)
+{
+    WIN32_FILE_ATTRIBUTE_DATA info;
+    FILETIME local;
+    SYSTEMTIME st;
+    char path[260];
+
+    if (!out || out_sz == 0u) {
+        return;
+    }
+    out[0] = '\0';
+    if (GetModuleFileNameA(NULL, path, (DWORD)sizeof(path)) == 0u ||
+        !GetFileAttributesExA(path, GetFileExInfoStandard, &info) ||
+        !FileTimeToLocalFileTime(&info.ftLastWriteTime, &local) ||
+        !FileTimeToSystemTime(&local, &st)) {
+        snprintf(out, out_sz, "unknown build");
+        return;
+    }
+    snprintf(out, out_sz, "%04u-%02u-%02u %02u:%02u:%02u, %lu bytes",
+             (unsigned)st.wYear, (unsigned)st.wMonth, (unsigned)st.wDay,
+             (unsigned)st.wHour, (unsigned)st.wMinute, (unsigned)st.wSecond,
+             (unsigned long)info.nFileSizeLow);
+}
+
 char g_key_script[160];
 unsigned g_ticks;
 char g_files_root[260];
@@ -1045,11 +1077,22 @@ int main(int argc, char **argv)
     if (!RegisterClassA(&wc))
         return 1;
 
-    hwnd = CreateWindowExA(0, wc.lpszClassName,
-                           "uCNC programming station (PC)",
-                           WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME,
-                           CW_USEDEFAULT, CW_USEDEFAULT,
-                           WIN_W + 16, WIN_H + 60, NULL, NULL, wc.hInstance, NULL);
+    /* The title carries the build, so the window itself says which station this
+       is - `--version` prints the same line for a script. */
+    {
+        char build[80];
+        char title[128];
+
+        host_build_text(build, sizeof(build));
+        snprintf(title, sizeof(title), "uCNC programming station (PC) - %s",
+                 build);
+        hwnd = CreateWindowExA(0, wc.lpszClassName,
+                               title,
+                               WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME,
+                               CW_USEDEFAULT, CW_USEDEFAULT,
+                               WIN_W + 16, WIN_H + 60, NULL, NULL, wc.hInstance,
+                               NULL);
+    }
     if (!hwnd)
         return 1;
 

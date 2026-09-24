@@ -213,6 +213,18 @@ nc_result_t nc_load_file(nc_document_t *doc, const char *path)
             return NC_ERR_IO;
         }
 
+        /* The line ending is the newline; a carriage return before it is not
+           part of the line. A program written on a PC editor - or checked out
+           by git on Windows, which is where the station's demo comes from -
+           arrives as CRLF, and the CR used to be carried into the line and then
+           into the wrap loop, which could not consume it: it inserted a tab line
+           per pass until the document hit its line limit, so a CRLF file could
+           not be opened at all. A lone CR (an old Mac file) is dropped with it
+           rather than treated as a break, so CRLF does not become a blank line. */
+        if (c == '\r') {
+            continue;
+        }
+
         if (c == '\n') {
             buf[used] = '\0';
             r = nc_insert_line(doc, doc->line_count, buf);
@@ -345,6 +357,15 @@ nc_result_t nc_insert_line(nc_document_t *doc, size_t line_index, const char *te
             max_body = NC_MAX_LINE_LEN - prefix;
         }
         n = nc_wrapped_chunk_len(p, max_body);
+        if (n == 0u && *p != '\0') {
+            /* A chunk that measures empty, with text still there, has nothing
+               left that it can carry: without this the loop re-inserted the
+               same text until the document ran out of lines, which is how a
+               stray carriage return failed with "too many NC lines" instead of
+               being skipped. An empty string is not this case - that is one
+               empty line, and the caller asked for it. */
+            break;
+        }
 
         if (prefix) {
             chunk[0] = '\t';

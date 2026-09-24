@@ -381,7 +381,11 @@ MODE key still cycles for the machine.
   the sample program itself loads, scans as the two numbered `G71` ranges with
   their `G70` finish cuts, resolves its `T2` from the demo's tool table and
   expands through the emitter RUN and the preview share. A sample that is only
-  rows that look right fails here.
+  rows that look right fails here. It also rewrites the demo on the card with
+  Windows line endings and requires it to load as the same document: a CRLF
+  program used to fail with `too many NC lines` (the loader carried the CR into
+  the wrap loop), which is how the first release run of this workflow failed -
+  a git checkout on Windows hands the demo over as CRLF.
 - `--state` prints what the machine thinks it is doing after the keys and ticks
   have run (`exec`, `run`, `jog`, `hold`, `alarm`, `canceling`, the X/Z figures
   and the spindle, the planner/interpolator/reader fill). It is how a scripted

@@ -669,6 +669,53 @@ static int host_filetest(void)
     return 0;
 }
 
+/* Rewrite a card file with Windows line endings, the way a PC editor (or a git
+   checkout on Windows) leaves a program. False when it cannot be read or
+   written. */
+static bool host_crlf_file(const char *path)
+{
+    char text[NC_MAX_LINE_LEN * 32];
+    fs_file_t *fp;
+    size_t used = 0u;
+    size_t i;
+
+    fp = fs_open(path, "r");
+    if (!fp) {
+        return false;
+    }
+    while (used + 1u < sizeof(text) && fs_available(fp)) {
+        char c;
+
+        if (fs_read(fp, (uint8_t *)&c, 1u) != 1u) {
+            break;
+        }
+        if (c != '\r') {
+            text[used++] = c;
+        }
+    }
+    fs_close(fp);
+    text[used] = '\0';
+
+    fp = fs_open(path, "w");
+    if (!fp) {
+        return false;
+    }
+    for (i = 0u; i < used; i++) {
+        if (text[i] == '\n' &&
+            fs_write(fp, (const uint8_t *)"\r\n", 2u) != 2u) {
+            fs_close(fp);
+            return false;
+        }
+        if (text[i] != '\n' &&
+            fs_write(fp, (const uint8_t *)&text[i], 1u) != 1u) {
+            fs_close(fp);
+            return false;
+        }
+    }
+    fs_close(fp);
+    return true;
+}
+
 /* Compare one band of two composed benches: the rows of `bytes` bytes starting
    at `from` in each row (the composite is 32bpp and top-down, so a column band
    is a per-row run). */
@@ -3607,9 +3654,14 @@ static int host_demotest(void)
     host_init_core();
     nc_document_init(&doc);
     nc_document_init(&tool_doc);
-    if (nc_load_file(&doc, program) != NC_OK || doc.line_count == 0u) {
-        puts("demotest: FAIL the demo program does not load");
-        return 1;
+    {
+        nc_result_t loaded = nc_load_file(&doc, program);
+
+        if (loaded != NC_OK || doc.line_count == 0u) {
+            printf("demotest: FAIL the demo program does not load (%s, %u lines)\n",
+                   nc_result_text(loaded), (unsigned)doc.line_count);
+            return 1;
+        }
     }
     printf("demotest: the demo is %u lines\n", (unsigned)doc.line_count);
 
@@ -3669,7 +3721,34 @@ static int host_demotest(void)
         }
     }
 
-    /* 3. a card in use is the operator's: the program already on it is not
+    /* 3. the same program with Windows line endings - a PC editor, or a git
+       checkout on Windows, which is where this very file comes from - has to
+       load as the same document. The loader used to carry the CR into the line,
+       and the wrap loop could not consume it: it inserted a tab line per pass
+       until the document hit its line limit, so a CRLF program could not be
+       opened at all. */
+    if (!host_crlf_file(program)) {
+        puts("demotest: FAIL cannot put the demo back with CRLF endings");
+        return 1;
+    }
+    {
+        nc_document_t crlf;
+        nc_result_t loaded;
+
+        nc_document_init(&crlf);
+        loaded = nc_load_file(&crlf, program);
+        if (loaded != NC_OK || crlf.line_count != doc.line_count) {
+            printf("demotest: FAIL a CRLF program loads as %u lines (%s), "
+                   "not %u\n", (unsigned)crlf.line_count,
+                   nc_result_text(loaded), (unsigned)doc.line_count);
+            failures++;
+        } else {
+            printf("demotest: the same demo with CRLF endings loads as %u "
+                   "lines\n", (unsigned)crlf.line_count);
+        }
+    }
+
+    /* 4. a card in use is the operator's: the program already on it is not
        replaced, and an upgrade does not rewrite it. */
     if (!host_fs_write_text(program, "(my program)\nG0 X1\n")) {
         puts("demotest: FAIL cannot write to the seeded card");

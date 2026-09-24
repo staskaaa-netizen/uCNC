@@ -263,6 +263,17 @@ Use this as a short hardware pass list while NC is still pre-alpha.
 
 - File manager lists only valid files/folders.
 - Open an NC file in EDIT and RUN independently, and check EDIT keeps it across the full-screen toggle.
+- Line endings: a program written on a PC editor - or checked out by git on
+  Windows, which is where the station's demo comes from - arrives as CRLF, and
+  it has to load as the same document an LF file does. It did not: the loader
+  carried the CR into the line, and the wrap loop could not consume it, so it
+  inserted a tab line per pass until the document hit its line limit and the
+  file failed with `too many NC lines`. The loader drops the CR now (a lone CR
+  is dropped too, not treated as a break, so CRLF does not become a blank line)
+  and the wrap loop stops when a chunk measures empty with text still there.
+  Software-verified: `tests/test_nc_ui.py --demotest` loads the demo, rewrites
+  it on the card with CRLF endings and requires the same line count; and
+  `--filetest` passes on a CRLF copy of the NC fixture.
 - `0` opens the file list on EDIT, TOOLS and RUN (no footer slot, by design);
   MANUAL's `0 ZERO` still wins there. In the list, browse up to the card root:
   the text files (`presets.txt`) must be listed beside the programs.

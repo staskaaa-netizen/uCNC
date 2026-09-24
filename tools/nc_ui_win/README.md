@@ -111,11 +111,12 @@ back to back drops the ones past that).
 
 A screen that only appears after input can be dumped too: `--keys` replays the
 machine's own key path - the keypad's own key characters (`0`-`9`, `*`, `#`,
-`A`-`D`), the modes `F1`-`F5`, and named keys such as `ACCEPT`, `NEXT`,
-`FINISH`, `BACK`, `CANCEL`, `MODE`, `UP`, `DOWN`, `LEFT`, `RIGHT`, `MINUS`,
-`DOT` - before the frame is drawn. `HOLD<key>` presses a machine key and keeps
-it down, `RELEASE` lets it go, so a held feed can be scripted as well; `WAIT<n>`
-runs the machine for `n` ticks first.
+`A`-`D`), the modes `F1`-`F5`, the PC keys that have a fixed meaning (`W` for
+the keypad's `#`, Delete, Enter, Esc, Backspace), and named keys such as
+`ACCEPT`, `NEXT`, `FINISH`, `BACK`, `CANCEL`, `MODE`, `UP`, `DOWN`, `LEFT`,
+`RIGHT`, `MINUS`, `DOT` - before the frame is drawn. `HOLD<key>` presses a
+machine key and keeps it down, `RELEASE` lets it go, so a held feed can be
+scripted as well; `WAIT<n>` runs the machine for `n` ticks first.
 
 ```powershell
 # MANUAL: stop at X0, eight X+ steps, continuous feed, feed 500 -> 50, hold X-
@@ -224,6 +225,12 @@ still works where it exists (`host_pc_machine_key()` is the map that does not
 ask Windows). Nothing else on the keyboard is taken: a letter that is not `A`-`D`
 or `W` types nothing here, so the program text is still written on the machine's
 keypad and the screen's own 3x3.
+
+`W` is not a second key: it is the machine's `#`, so every screen's meaning for
+that key applies - on EDIT it is the footer's `VIEW` (the whole-body preview), in
+a value field it is `OK`, on MANUAL it is step/feed, with the builder up it is
+the step size. `tools/test_nc_ui.py` presses both and compares the frames: the
+picture `W` draws on EDIT is byte-identical to the one `#` draws.
 
 `nc_visual_select_mode()` was added to the NC module for this shell so the
 F1-F4 keys jump straight to a mode instead of cycling with the MODE key; the

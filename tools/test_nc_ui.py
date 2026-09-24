@@ -347,6 +347,24 @@ if __name__ == "__main__":
     print(f"nc_ui: {fixtures / 'facing.nc'} rendered in EDIT {edit} "
           f"and in the full-screen view {view}")
 
+    # `W` is the pad's `#` on a PC keyboard, and on EDIT that key is VIEW: the
+    # two frames have to be the same picture, down to the pixel (the panel and
+    # the strip both), or the key the operator presses is not the key the
+    # machine gets.
+    view_w = OUT / "facing-view-w.bmp"
+    run = subprocess.run([str(exe), "--files", str(root), "--keys", "W",
+                          "--dump-bench", str(view_w)],
+                         capture_output=True, text=True)
+    if run.returncode or not view_w.exists() or view_w.stat().st_size < 54:
+        print(run.stdout[-2000:])
+        print(run.stderr[-4000:])
+        print("FAIL the PC key W did not render the view")
+        sys.exit(1)
+    if view.read_bytes() != view_w.read_bytes():
+        print("FAIL 'W' and '#' draw different frames on EDIT (VIEW)")
+        sys.exit(1)
+    print(f"nc_ui: 'W' and '#' are the same key on EDIT: {view_w} is identical")
+
     # The card root as the list shows it: the text files sit beside the programs
     # (the preset file included), which is what `0` opens on the machine.
     listing = OUT / "root-list.bmp"

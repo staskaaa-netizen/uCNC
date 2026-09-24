@@ -1119,23 +1119,27 @@ static int host_padtest(void)
         puts("padtest: FAIL a key outside the keypad was accepted");
         failures++;
     }
-    /* The PC keys that stand for a keypad key without asking the layout: the
-       machine's `#` is on `W` (and Delete), because `#` needs Shift+3 on most
-       layouts and AltGr on the rest - the finish key has to be reachable. */
+    /* The PC keys that stand for a keypad key without asking the layout. `W`
+       carries the machine's `#`, because `#` needs Shift+3 on most layouts and
+       AltGr on the rest: the key has to be reachable, and it stays the same key
+       the machine sends - `nc_visual_key_for_char()` is what turns it into the
+       screen's own key, so on EDIT `W` is VIEW (the footer's `#`), in a value
+       field it is the accept key, and on MANUAL it is step/feed. */
     {
         static const struct {
             unsigned vk;
             char key;
+            nc_visual_key_t want;
         } pc[] = {
-            { 'W', '#' },
-            { VK_DELETE, '#' },
-            { VK_RETURN, 'D' },
-            { VK_ESCAPE, 'A' },
-            { VK_BACK, '*' },
+            { 'W', '#', NC_VISUAL_KEY_FINISH },
+            { VK_DELETE, '#', NC_VISUAL_KEY_FINISH },
+            { VK_RETURN, 'D', NC_VISUAL_KEY_ACCEPT },
+            { VK_ESCAPE, 'A', NC_VISUAL_KEY_MODE },
+            { VK_BACK, '*', NC_VISUAL_KEY_BACKSPACE },
             /* A digit is the layout's and a letter like Q is nobody's: the
                fixed map must not answer for them. */
-            { '9', 0 },
-            { 'Q', 0 }
+            { '9', 0, NC_VISUAL_KEY_NONE },
+            { 'Q', 0, NC_VISUAL_KEY_NONE }
         };
         size_t k;
 
@@ -1146,6 +1150,10 @@ static int host_padtest(void)
             if (got != pc[k].key) {
                 printf("padtest: FAIL PC key 0x%02x sends '%c', not '%c'\n",
                        pc[k].vk, got ? got : '?', pc[k].key);
+                failures++;
+            } else if (got && nc_visual_key_for_char(got) != pc[k].want) {
+                printf("padtest: FAIL PC key '%c' is not the key the machine "
+                       "sends for '%c'\n", pc[k].vk, got);
                 failures++;
             }
         }

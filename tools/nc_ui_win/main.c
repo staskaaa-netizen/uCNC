@@ -820,6 +820,18 @@ void host_play_keys(const char *script)
                 nc_visual_handle_key(key);
                 continue;
             }
+            /* A PC key with a fixed meaning is accepted as well, so a script
+               can press what an operator presses: `W` is the keypad's `#` (the
+               VIEW key on EDIT), and Delete, Esc and Backspace are theirs. The
+               machine's own characters were taken above. */
+            {
+                char machine = host_pc_machine_key((unsigned)token[0]);
+
+                if (machine) {
+                    nc_visual_handle_key(nc_visual_key_for_char(machine));
+                    continue;
+                }
+            }
         }
         for (i = 0; i < sizeof(named) / sizeof(named[0]); i++) {
             if (strcmp(token, named[i].name) == 0) {

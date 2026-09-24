@@ -195,6 +195,17 @@ if __name__ == "__main__":
             print(f"FAIL the demo card has no {name}")
             sys.exit(1)
 
+    # The window composes the bench in one bitmap and blits it whole, and keeps
+    # the strip in it until the strip changes: that is what stopped it blinking
+    # while a feed or a run repainted. Both halves of the cache are checked.
+    run = subprocess.run([str(exe), "--files", str(OUT / "paint-root"),
+                          "--painttest"], capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "painttest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL the bench is not composed once and blitted whole")
+        sys.exit(1)
+
     run = subprocess.run([str(exe), "--keytest"], capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "keytest: PASS" not in run.stdout:

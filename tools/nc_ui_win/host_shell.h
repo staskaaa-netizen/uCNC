@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include <windows.h>
+
 /* The emulated machine the station drives, in one place: the panel's own
    geometry, the keypad the machine has in hardware, the virtual card the files
    live on, and the main loop - parse, `cnc_dotasks()`, advance the clock - that
@@ -13,6 +15,11 @@
    (`host_tests.c`) run it without a window. Nothing here knows about a screen,
    a file or a check; a check that needs a different starting point states it
    through this API (mount a root, press keys, run ticks, take a dump). */
+
+/* This header is the station's own shell layer, so it is Windows: `HDC` below
+   is a device context. The two files that include it take <windows.h> first
+   (with the FORCEINLINE dance) before the firmware headers, so reaching for it
+   here again costs nothing. */
 
 /* The window is the emulated panel - the firmware layout, 800x600, exactly as
    the LVDS panel draws it - with the operator's strip beside it. */
@@ -100,5 +107,12 @@ void host_build_text(char *out, size_t out_sz);
    - as a .bmp: the picture the window paints, so the key row and the usage
    lines are reviewable (and diffable) without opening the window. */
 int host_dump_bench(const char *path);
+
+/* Compose the whole bench - the emulated panel every call, the operator's strip
+   when what it shows has changed - into the station's own memory bitmap, and
+   hand back that DC and its 32bpp top-down pixels. The window blits the result
+   in one go (which is why the strip does not blink); `--painttest` reads it.
+   False when there is no memory bitmap, and then the caller draws straight. */
+bool host_compose_bench(HDC window, HDC *dc_out, void **pixels_out);
 
 #endif

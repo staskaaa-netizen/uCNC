@@ -232,6 +232,16 @@ holding a direction key feeds until the key comes up, `nc_visual_hold_key()` -
 and a window that loses focus drops the held key, because the machine keypad
 cannot lose a release that way.
 
+The window is composed in one memory bitmap and blitted in a single operation:
+the panel is one buffer handed to GDI, but the strip is dozens of calls (fills,
+rounded keys, text), and painting those straight onto the window put them on the
+glass one at a time - the strip visibly blinked while a feed or a run repainted
+it every 20 ms. The panel half is redrawn every frame, the strip only when what
+it shows has changed (the screen's name, its usage lines, every pad key's
+meaning, the spindle - `host_side_signature()`), and the window does not erase
+its background first. `--painttest` checks both halves of that: the same screen
+composes the same picture, and a screen change redraws the strip.
+
 The PC keyboard maps the same way: F1-F4 modes; digits and the numeric pad; `*`,
 `#` and `A`-`D` as the keypad's own keys (asked of the keyboard layout, so they
 work on any layout); the arrows move by word on a code screen and step the field
@@ -381,6 +391,11 @@ MODE key still cycles for the machine.
 - `--version` prints which build the exe is (its own file's timestamp and size,
   the same line the window title carries). It answers "is this the station I
   just built, or a copy from last night?" without opening the window.
+- `--painttest` checks the window's composition: the same screen composes the
+  same picture, a screen change redraws both the panel and the strip, and the
+  strip is stable across frames (nothing in it rebuilt differently each time).
+  It is the check for the flicker the strip used to have when it was drawn
+  straight onto the window.
 
 ## Screenshot show
 

@@ -47,6 +47,8 @@
 #include "host_tests.h"
 #include "nc_files.h"
 
+#include <stdlib.h>
+
 /* The checks are a flat list: each one is defined with the helpers it owns, so
    a helper an earlier check uses is stated here. */
 static bool host_fs_write_text(const char *path, const char *text);
@@ -664,6 +666,125 @@ static int host_filetest(void)
         return 1;
     }
     puts("filetest: PASS program, tool table, block scan, expansion and T link");
+    return 0;
+}
+
+/* Compare one band of two composed benches: the rows of `bytes` bytes starting
+   at `from` in each row (the composite is 32bpp and top-down, so a column band
+   is a per-row run). */
+static bool host_band_same(const unsigned char *a, const unsigned char *b,
+                           size_t from, size_t bytes)
+{
+    size_t stride = (size_t)WIN_W * 4u;
+    int y;
+
+    for (y = 0; y < WIN_H; y++) {
+        if (memcmp(a + (size_t)y * stride + from,
+                   b + (size_t)y * stride + from, bytes) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* The window composes the whole bench in one memory bitmap and blits it in one
+   go, and it only recomposes the strip beside the panel when what the strip
+   shows has changed (host_compose_bench()). The panel is one blit of the
+   firmware's own buffer and cannot tear; the strip is two dozen GDI calls, and
+   drawing those straight onto the window every 20 ms is what made it blink.
+
+   Two failures are invisible in a dump of one screen and both are ugly on the
+   desk:
+
+     1. a strip left in the buffer - a screen change would keep showing the
+        mode, the key meanings and the spindle of the screen before it;
+     2. a strip that is not stable - composing one screen twice has to give the
+        same picture, or something in it is being built differently each frame.
+
+   The check composes into its own memory DC and reads the pixels back. */
+static int host_painttest(void)
+{
+    HDC mem = CreateCompatibleDC(NULL);
+    HDC bench = NULL;
+    void *pixels = NULL;
+    unsigned char *first;
+    unsigned char *second;
+    const size_t stride = (size_t)WIN_W * 4u;
+    const size_t size = (size_t)WIN_W * (size_t)WIN_H * 4u;
+    const size_t strip_from = (size_t)PANEL_W * 4u;
+    const size_t strip_bytes = (size_t)SIDE_W * 4u;
+    int failures = 0;
+
+    if (!mem) {
+        puts("painttest: FAIL no memory DC");
+        return 1;
+    }
+    first = malloc(size);
+    second = malloc(size);
+    if (!first || !second) {
+        puts("painttest: FAIL no room for the composed benches");
+        return 1;
+    }
+
+    /* The panel half is the firmware's own buffer: the screen has to be drawn
+       into it first, the way a tick does (`nc_visual_draw()` then the repaint). */
+    nc_visual_select_mode(NC_MODE_PROGRAM);
+    nc_visual_draw();
+    if (!host_compose_bench(mem, &bench, &pixels)) {
+        puts("painttest: FAIL the station has no bench bitmap");
+        return 1;
+    }
+    memcpy(first, pixels, size);
+    if (!host_compose_bench(mem, &bench, &pixels)) {
+        puts("painttest: FAIL the second compose failed");
+        return 1;
+    }
+    if (memcmp(first, pixels, size) != 0) {
+        puts("painttest: FAIL composing the same screen twice changed it");
+        failures++;
+    } else {
+        puts("painttest: the same screen composes the same picture");
+    }
+
+    /* 1. a screen change redraws the strip (and the panel with it). */
+    nc_visual_select_mode(NC_MODE_RUN);
+    nc_visual_draw();
+    if (!host_compose_bench(mem, &bench, &pixels)) {
+        puts("painttest: FAIL the compose after the screen change failed");
+        return 1;
+    }
+    memcpy(second, pixels, size);
+    if (host_band_same(first, second, strip_from, strip_bytes)) {
+        puts("painttest: FAIL a screen change left the old strip in the buffer");
+        failures++;
+    } else if (host_band_same(first, second, 0u, strip_from)) {
+        puts("painttest: FAIL a screen change left the old panel in the buffer");
+        failures++;
+    } else {
+        puts("painttest: a screen change redraws the panel and the strip");
+    }
+
+    /* 2. and that screen is stable too. */
+    if (!host_compose_bench(mem, &bench, &pixels)) {
+        puts("painttest: FAIL the third compose failed");
+        return 1;
+    }
+    if (memcmp(second, pixels, size) != 0) {
+        puts("painttest: FAIL the composed bench changes between frames");
+        failures++;
+    } else {
+        puts("painttest: the strip is stable across frames");
+    }
+    (void)stride;
+
+    free(second);
+    free(first);
+    DeleteDC(mem);
+    if (failures) {
+        printf("painttest: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("painttest: PASS the bench is composed once and blitted whole");
     return 0;
 }
 
@@ -3818,6 +3939,8 @@ int host_tests_run(int argc, char **argv)
             return host_spindletest();
         if (strcmp(argv[i], "--demotest") == 0)
             return host_demotest();
+        if (strcmp(argv[i], "--painttest") == 0)
+            return host_painttest();
         if (strcmp(argv[i], "--state") == 0)
             return host_state();
         if (strcmp(argv[i], "--version") == 0)

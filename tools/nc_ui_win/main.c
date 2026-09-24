@@ -527,8 +527,9 @@ static void host_draw_side(HDC dc)
     DeleteObject(panel);
 }
 
-/* The whole bench: the emulated panel, then the machine keys beside it. */
-static void host_draw_bench(HDC dc)
+/* The emulated panel on its own: one 32bpp top-down buffer handed to GDI, which
+   is why the panel never tears. */
+static void host_draw_panel(HDC dc)
 {
     BITMAPINFO info;
 
@@ -543,15 +544,162 @@ static void host_draw_bench(HDC dc)
     SetDIBitsToDevice(dc, 0, 0, (DWORD)lvds_host_width(), (DWORD)lvds_host_height(),
                       0, 0, 0, (UINT)lvds_host_height(), lvds_host_pixels(), &info,
                       DIB_RGB_COLORS);
+}
+
+/* The whole bench: the emulated panel, then the machine keys beside it. */
+static void host_draw_bench(HDC dc)
+{
+    host_draw_panel(dc);
     host_draw_side(dc);
+}
+
+/* What the strip beside the panel shows, as one string: the screen's name, the
+   words it hands out (its usage lines and what every pad key means there) and
+   the spindle. The strip is redrawn only when this changes - see host_paint(). */
+static void host_side_signature(char *out, size_t out_sz)
+{
+    const char *const *usage = 0;
+    size_t lines = nc_visual_usage(&usage);
+    size_t used;
+    char spindle[32];
+    int row;
+    int col;
+
+    if (!out || out_sz == 0u) {
+        return;
+    }
+    host_spindle_text(spindle, sizeof(spindle));
+    used = (size_t)snprintf(out, out_sz, "%s|%s|", nc_visual_screen_name(),
+                            spindle);
+    for (row = 0; row < PAD_ROWS; row++) {
+        for (col = 0; col < PAD_COLS; col++) {
+            nc_visual_key_meaning_t meaning;
+            char cell[24];
+            int n;
+
+            if (!host_key_meaning(g_pad_keys[row][col], &meaning) ||
+                !meaning.label) {
+                continue;
+            }
+            n = snprintf(cell, sizeof(cell), "%c=%s%c%c|",
+                         g_pad_keys[row][col], meaning.label,
+                         meaning.on_menu ? 'm' : 'o',
+                         meaning.step ? 's' : '-');
+            if (n > 0 && used + (size_t)n < out_sz) {
+                memcpy(out + used, cell, (size_t)n + 1u);
+                used += (size_t)n;
+            }
+        }
+    }
+    for (row = 0; row < (int)lines; row++) {
+        int n = snprintf(out + used, out_sz - used, "%s|", usage[row]);
+
+        if (n < 0 || (size_t)n >= out_sz - used) {
+            break;
+        }
+        used += (size_t)n;
+    }
+}
+
+/* The strip is dozens of GDI calls (fills, rounded keys, text); the panel is
+   one buffer blit. Painting the strip straight onto the window every 20 ms put
+   those calls on the glass one at a time - the strip visibly blinked while a
+   feed or a run repainted. So the whole bench is composed in a memory bitmap
+   and the window gets one BitBlt: the panel is redrawn every frame, the strip
+   only when host_side_signature() says what it shows has changed.
+
+   The bitmap is the station's for its lifetime (one window), and its pixels are
+   handed out so `--painttest` can read what was composed. */
+static HDC g_bench_dc;
+static void *g_bench_bits;
+
+static bool host_bench_backbuffer(HDC window, HDC *dc_out, void **pixels_out)
+{
+    if (!g_bench_dc && window) {
+        BITMAPINFO info;
+        HBITMAP bitmap;
+
+        memset(&info, 0, sizeof(info));
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = WIN_W;
+        info.bmiHeader.biHeight = -WIN_H;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        g_bench_dc = CreateCompatibleDC(window);
+        bitmap = g_bench_dc
+                     ? CreateDIBSection(g_bench_dc, &info, DIB_RGB_COLORS,
+                                        &g_bench_bits, NULL, 0)
+                     : NULL;
+        if (!g_bench_dc || !bitmap) {
+            if (bitmap) {
+                DeleteObject(bitmap);
+            }
+            if (g_bench_dc) {
+                DeleteDC(g_bench_dc);
+            }
+            g_bench_dc = NULL;
+            g_bench_bits = NULL;
+        } else {
+            RECT strip = { PANEL_W, 0, WIN_W, WIN_H };
+            HBRUSH back = CreateSolidBrush(RGB(24, 26, 28));
+
+            SelectObject(g_bench_dc, bitmap);
+            /* The panel is blitted over its own half every frame; this is the
+               strip's backdrop until its first composition. */
+            FillRect(g_bench_dc, &strip, back);
+            DeleteObject(back);
+        }
+    }
+    if (!g_bench_dc) {
+        return false;
+    }
+    if (dc_out) {
+        *dc_out = g_bench_dc;
+    }
+    if (pixels_out) {
+        *pixels_out = g_bench_bits;
+    }
+    return true;
+}
+
+bool host_compose_bench(HDC window, HDC *dc_out, void **pixels_out)
+{
+    static char drawn[1024];
+    char signature[1024];
+    HDC bench;
+    void *bits;
+
+    if (!host_bench_backbuffer(window, &bench, &bits)) {
+        return false;
+    }
+    host_draw_panel(bench);
+    host_side_signature(signature, sizeof(signature));
+    if (strcmp(signature, drawn) != 0) {
+        host_draw_side(bench);
+        memcpy(drawn, signature, sizeof(drawn));
+    }
+    if (dc_out) {
+        *dc_out = bench;
+    }
+    if (pixels_out) {
+        *pixels_out = bits;
+    }
+    return true;
 }
 
 static void host_paint(HWND hwnd)
 {
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(hwnd, &ps);
+    HDC bench = NULL;
 
-    host_draw_bench(dc);
+    if (!host_compose_bench(dc, &bench, NULL)) {
+        /* No memory bitmap: draw straight, as before. */
+        host_draw_bench(dc);
+    } else {
+        BitBlt(dc, 0, 0, WIN_W, WIN_H, bench, 0, 0, SRCCOPY);
+    }
     EndPaint(hwnd, &ps);
 }
 
@@ -607,6 +755,11 @@ static LRESULT CALLBACK host_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
            keypad cannot lose a release like this. */
         host_hold_key(0);
         return 0;
+    case WM_ERASEBKGND:
+        /* Every pixel is painted from the composed bench (host_paint()), so the
+           background is not erased first: erasing it is what makes a window
+           blink between frames. */
+        return 1;
     case WM_LBUTTONDOWN: {
         int x = (short)LOWORD(lp) - PANEL_W;
         int y = (short)HIWORD(lp);

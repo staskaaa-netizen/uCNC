@@ -1,8 +1,15 @@
-# nc_ui - NC panel on Windows
+# nc_ui - the programming station on Windows
 
 Runs the NC screen exactly as the LVDS panel draws it, plus the machine's own
-keypad beside it. This is a UI test bench: the firmware layout, coordinate
-system, palette and bitmap fonts are used as-is.
+keypad and the screen's own usage notes beside it: the machine on the left, the
+operator's desk on the right. The firmware layout, coordinate system, palette
+and bitmap fonts are used as-is, so what the window shows is what the panel
+shows - which is what makes it a test bench as well as a station.
+
+The station is built for the PC because that is where a program is written and
+read before it is cut: the same NC module, the same G7x cycles, the same key
+meanings. It carries no second copy of a screen's rules - the keys, the usage
+lines and the spindle signal all come from the firmware sources.
 
 ## How the layout stays identical
 
@@ -19,9 +26,11 @@ G7x, palette.
 
 ## Desktop filesystem
 
-`host_fs.c` is a real `fs_t` driver: drive `/D` is mapped onto `nc-files\` (or
-`--files DIR`), so the file manager, the state store and the TOOLS document
-and the preset file behave on the desktop exactly as they do on the card. The
+`host_fs.c` is a real `fs_t` driver: drive `/D` is mapped onto a folder of the
+PC (`--files DIR`, or `nc-files\` beside the exe - so a shortcut or a download
+opened from anywhere mounts the same card), and the file manager, the state
+store, the TOOLS document and the preset file behave on the desktop exactly as
+they do on the card. The
 uCNC fs layer splits the drive letter off before it calls a driver, so the paths
 that arrive here are already drive relative (`/nc/files`, `/presets.txt`,
 `/` for the root) - the shape FatFs sees on the machine. The driver closes
@@ -38,6 +47,13 @@ build\nc_ui.exe --files tmp\ncroot --fstest      # list /D through fs_*
 build\nc_ui.exe --files tmp\ncroot --presettest # check /D/presets.txt
 build\nc_ui.exe --streamtest                     # a jog delivers both blocks
 build\nc_ui.exe --padtest                        # the keypad is the machine's
+build\nc_ui.exe --buildertest                    # walk a contour with the pad
+build\nc_ui.exe --dirtytest                      # a key repaints what it changed
+build\nc_ui.exe --runtest                        # FROM/FULL send the program
+build\nc_ui.exe --blocktest                      # RUN marks the block it runs
+build\nc_ui.exe --pacetest                       # one block, then wait
+build\nc_ui.exe --stoptest                       # the MANUAL stops are typed
+build\nc_ui.exe --spindletest                    # the spindle is the signals
 ```
 
 ## Build and render a frame
@@ -71,7 +87,7 @@ runs the machine for `n` ticks first.
 ```powershell
 # MANUAL: stop at X0, eight X+ steps, continuous feed, feed 500 -> 50, hold X-
 build\nc_ui.exe --files tmp\shots --dump-bench tmp\feeding.bmp ^
-    --keys "F1,*,8,WAIT2,8,WAIT2,8,WAIT2,8,WAIT2,8,WAIT2,8,WAIT2,8,WAIT2,8,WAIT2,#,1,1,1,1,HOLD2,WAIT5"
+    --keys "F1,*,2,WAIT2,2,WAIT2,2,WAIT2,2,WAIT2,2,WAIT2,2,WAIT2,2,WAIT2,2,WAIT2,#,1,1,1,1,HOLD8,WAIT5"
 ```
 
 `--streamtest` is the headless check of the one-shot blocks the panel sends on
@@ -100,21 +116,48 @@ build\nc_ui.exe
 
 The window is the emulated panel (800x600, exactly as the panel draws) with the
 machine's keypad attached to the right side, the way the proprietary keyboard
-sits next to the display. The keys are the hardware's, not a second menu:
+sits next to the display. This is the *programming station* side of the tool:
+the panel is the machine, and the strip beside it is the desk. The keys are the
+hardware's, not a second menu:
 
 | Keys | Function |
 | --- | --- |
 | F1-F4 | operation modes: MANUAL, EDIT, TOOLS, RUN |
+| MODE | cycles the modes like the machine's own MODE (`A`) key |
 | keypad | the 4x4 matrix `cam_keyboard.c` decodes, row 1 on top: `* 0 # D` / `1 2 3 C` / `4 5 6 B` / `7 8 9 A` |
 
 Every pad key does exactly what the machine key does: the character goes through
 the screen's own key table (`nc_visual_key_for_char()`, the same one
 `nc_module.c` uses), and the label under the key is what the active screen says
-the key means - the footer entry that carries that key, or the screen's own hint
+the key means - the footer entry that carries that key, or the screen's own word
 for a key the footer does not name (MANUAL's jog digits: `7`/`9` spindle,
 `2`/`8` X, `4`/`6` Z, `5` spindle stop, `1`/`3` the value on screen). A key the mode
 does not use stays unlabelled. Nothing about the meanings lives in the shell, so
 a mode that renames a key renames it here too.
+
+The strip answers "what is this key" for the whole keypad, including the keys
+the menu does not name:
+
+* the screen's name and a few lines saying what it is for and how its keys
+  drive it - `nc_visual_screen_name()` and `nc_visual_usage()`, the screen's own
+  words, so a screen that renames a key or gains one renames it here too. The
+  usage lines are what an operator reads instead of a manual: the off-menu keys
+  (`B`/`C`, `#`, the builder's pad) are named there;
+* a key the footer carries is labelled in green and a key the footer does not
+  name - the screen's own key - is labelled in grey, so "the menu does not list
+  this" is visible at a glance. A key that means nothing here stays unlabelled;
+* the keypad's step keys (`B`/`C`) are drawn with the arrow they act as, because
+  on those screens they are the arrows: MANUAL's axis pick, and the field and
+  list walk everywhere else (`nc_visual_key_meaning()`);
+* `nc_visual_key_meaning()` is the one answer for all of it - the footer entry,
+  the screen's own word, and whether the key steps a field - so the strip, the
+  `--padtest` check and any future shell read the same table.
+
+The station has no spindle encoder, and must not need one: the spindle is read
+off the signals the tool drives on the emulated MCU - PWM0 the speed, DOUT0 the
+direction, the same pins `spindle_pwm` writes (`host_spindle.c`) - and shown
+beside the keypad as `spindle 1000 rpm CW` or `spindle off`. A spindle that is
+not being told to run cannot read as running.
 
 MANUAL also shows the two values the jog keys use, beside the pad: `STEP` and
 `FEED`, with the one the feed mode is on filled, and `1`/`3` change the filled
@@ -137,8 +180,9 @@ cannot lose a release that way.
 
 The PC keyboard maps the same way: F1-F4 modes; digits and the numeric pad; `*`,
 `#` and `A`-`D` as the keypad's own keys (asked of the keyboard layout, so they
-work on any layout); arrows line/field; Enter = `D`, Esc = `A`, Backspace = `*`,
-Del = `#`; `-`/`.` sign and point.
+work on any layout); the arrows move by word on a code screen and step the field
+or pick the axis where the screen has fields; Enter = `D`, Esc = `A`,
+Backspace = `*`, Del = `#`; `-`/`.` sign and point.
 
 `nc_visual_select_mode()` was added to the NC module for this shell so the
 F1-F4 keys jump straight to a mode instead of cycling with the MODE key; the
@@ -148,7 +192,12 @@ MODE key still cycles for the machine.
 
 - `--fstest` lists `/D` through the firmware `fs_*` API.
 - `--presettest` checks the `/D/presets.txt` contract (materialise, edit, fall
-  back on an unparsable file).
+  back on an unparsable file). It also checks the two halves of the section-ID
+  rule: an ID that names no entry in the file keeps its compiled text, and an ID
+  the menus used to hold (`10`/`44`/`80`) still names the entry it always named,
+  so an operator's edited section survives a renumbering. The IDs are the key
+  paths that insert the entries - one digit per level, `0` for the pad's quit
+  key - and `docs/nc-preset-file.md` is the table.
 - `--streamtest` checks the two blocks a jog queues both reach the reader.
 - `--padtest` checks the pad is the machine's 4x4 matrix and that every footer
   key of every mode is on it. A screen that offers a key the keypad has not is
@@ -160,6 +209,69 @@ MODE key still cycles for the machine.
 - `--keytest` decodes every keypad event byte on both edges (press and release)
   and fails if a release decodes as "no key" - the fault that made every key act
   once and only once on the machine.
+- `--buildertest` walks a contour with the 3x3 path builder
+  (`docs/nc-path-builder.md`). Opened on the fixture's G71 block it appends the
+  points before that block's `G80`, the copied axis carries the block's own last
+  point, a diagonal takes both of its words with `D` between them, and `5`
+  ends the drawing by writing nothing (the contour is the part's geometry; the
+  block's own `G80` ends it, and a rapid row inside the profile is what the
+  generator refuses); opened where no block is, it writes the OD header and the
+  end mark first. `*` has to drop
+  exactly one point, and `0` the whole session - header and end mark included.
+  It also rebuilds the fixture's own five-row profile from the pad (`7 4 2 4 2`
+  with the values typed) and **expands the result as a cycle**, so the profile
+  has to be one the generator accepts, not just rows that look right. Every step
+  reads the program back off the card after the screen change that writes it, so
+  the check is on the file, not on what the panel remembers.
+- `--dirtytest` checks the repaint contract: a key that changes the screen has
+  to ask for the draw itself. RUN's line keys (`B`/`C`) did not - they moved the
+  run line and returned without the dirty flag, so the highlight sat on the old
+  line until the next footer key. The check also covers the other half: while a
+  run is armed the panel keeps asking to draw on its own, which is the periodic
+  frame that carries the cursor through a stream of emitted lines.
+- `--runtest` checks the RUN keys that start a program: `3 FULL` sends the
+  fixture's sendable rows in order (the `G970`-`G973` setup rows are skipped)
+  and the run is done when the program ends, and `2 FROM` sends the rows from
+  the cursor. Both used to arm the run without handing the reader to it, so
+  nothing at all reached the machine while `1 SINGLE` worked.
+- `--blocktest` walks a fixture that holds a `P/Q` cycle **and** the `G70` below
+  it, and reads the **drawn frame** row by row in all three cases - the line in
+  play inside the cycle, on the finish cut, and outside both - on **both code
+  screens**, EDIT (the cursor is the line in play) and RUN (the sender's line is,
+  while nothing is running). The marked line has to be the bright selection
+  colour, its path the pale one (`NC_VISUAL_SELECT_BLOCK`) and every other row the
+  pane's background; nothing but the marked line may carry the pale colour where
+  there is no path. The finish cut is the case that used to mark nothing: its
+  path is the numbered range *above* it, which the pane and the preview now get
+  from one finder. A row's colour is the modal pixel colour of its text band, so
+  the check is on the glass: a snapshot carrying the block while the pane paints
+  every row flat fails here - and did. The first version of the screen code
+  passed the block bounds to the setter as arguments of the call that fills them,
+  and C's unspecified argument order handed over the old values.
+  It also checks that the line keys are refused while a run is in flight and work
+  again once it is over (`RUN owns the cursor`), and that a step taken from a row
+  inside the cycle leaves the mark on **that row** - the whole block goes out,
+  but the bright line is the line in play, with the cycle pale around it, and it
+  is read again with the machine idle while the sender has moved past the block
+  (`now it runs but it marks also next g71. which it should not mark`, and
+  `it still marks next row with g71, not the one starting with N50`).
+- `--pacetest` checks the sender's pacing: a program is handed to the machine
+  one unit at a time, and the next one only goes out once the machine has
+  finished the last. It drives the real parser, planner and virtual MCU and
+  watches both sides between main-loop passes - the sender must not start a new
+  unit while one is running (unless the machine is still collecting the
+  contour's rows, which have to keep coming), the mark must never name a line the
+  sender has not handed over, the cycle has to be waited for with the mark on its
+  header, and the program has to have really run (the machine's position is the
+  last line's target). `--runtest` covers *what* is sent, in order; this one
+  covers *when*, and it is the check that caught the lazy slot retirement and the
+  run-end cancelling a running cycle.
+- `--stoptest` checks the MANUAL stops, which are typed rather than armed at the
+  current point: `*` opens the minus field, `*` takes it and opens the plus one,
+  `*` again takes that; `D` puts the axis limit the setup states in the field and
+  an empty field takes that same limit; a step lands on each stop and is refused
+  from on it while the other side still moves; and a held feed covers exactly the
+  room to the stop it is headed for. `--feedtest` sets its stops the same way.
 - `--filetest` loads the NC module's fixtures
   (`uCNC/src/modules/nc/tests/fixtures/facing.nc` and `tool.t`, copied into the
   `--files` root by the test runner) and checks what the eye cannot: the G71
@@ -178,11 +290,20 @@ MODE key still cycles for the machine.
   feed, and with no stop set a feed is still a bounded move. What it proves is
   the blocks and the jog state; spindle phase, real travel and the deceleration
   are bench items.
+- `--spindletest` checks the station's spindle, which is read from the machine's
+  own signals and not from an encoder the desktop does not have: `9` (M3) sets
+  the direction signal and puts a speed on the PWM, `7` (M4) sets the other
+  direction at the same speed, `5` (M5) leaves no speed on the wire, and the
+  figure the signal carries is the figure the rest of the panel reads back
+  (`tool_get_speed()`), so a running DRO over a dead signal fails here. What it
+  proves is the wiring and the round trip; real rpm and the spindle being on at
+  all are bench items.
 - `--state` prints what the machine thinks it is doing after the keys and ticks
-  have run (`exec`, `run`, `jog`, `hold`, `alarm`, `canceling`, the X/Z figures,
-  the planner/interpolator/reader fill). It is how a scripted feed is checked
-  without opening the window - a feed only starts from a standing axis, so
-  `Wait for stop` with `run=1` means the previous jog was still moving.
+  have run (`exec`, `run`, `jog`, `hold`, `alarm`, `canceling`, the X/Z figures
+  and the spindle, the planner/interpolator/reader fill). It is how a scripted
+  feed is checked without opening the window - a feed only starts from a
+  standing axis, so `Wait for stop` with `run=1` means the previous jog was
+  still moving.
 
 ## Screenshot show
 
@@ -198,6 +319,22 @@ job the tests check.
 
 ## Open questions
 
-- Run currently exercises the virtual machine only. Wiring RUN to a real
+- RUN currently exercises the virtual machine only. Wiring RUN to a real
   controller means giving `nc_run` a Grbl transport (see
   `tools/nc_sender/grbl_stream.c`) instead of the parser stream.
+- `host_tests.c` is the station's whole headless harness. It is a flat list of
+  independent checks, so it can be split by theme (files and presets, the panel
+  frame, RUN and the sender, the editor and the builder) when it next grows
+  past the size trigger in `AGENTS.md`.
+
+## Where the code lives
+
+| File | Owns |
+| --- | --- |
+| `main.c` | the window: the emulated panel, the operator's strip, the keypad and the PC keyboard, and the argument line |
+| `host_shell.h` (defined in `main.c`) | the emulated machine both the window and the checks drive: geometry, the keypad matrix, the mount root, `--keys`/`--ticks`, the main loop, the dumps |
+| `host_tests.c` | every headless check and `host_tests_run()` |
+| `host_spindle.h/.c` | the spindle read off the machine's own signals |
+| `host_fs.h/.c` | the `/D` driver over a PC folder |
+| `lvds_host.h/.c` | the host LVDS backend the firmware screen draws through |
+| `host_shim.c` | the small amounts of core the host build has to satisfy |

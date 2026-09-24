@@ -53,8 +53,8 @@ def module_sources():
     lvds = SRC / "modules" / "lvds_renderer"
     names = ["nc.c", "nc_emit.c", "nc_g7x.c", "nc_files.c", "nc_feedback.c",
              "nc_draw.c", "nc_editor.c", "nc_manual.c", "nc_menu.c", "nc_palette.c",
-             "nc_presets.c", "nc_run.c", "nc_preview.c", "nc_state.c", "nc_text.c",
-             "nc_tools.c", "nc_vocab.c", "nc_visual.c"]
+             "nc_path_builder.c", "nc_presets.c", "nc_run.c", "nc_preview.c",
+             "nc_state.c", "nc_text.c", "nc_tools.c", "nc_vocab.c", "nc_visual.c"]
     files = [nc / name for name in names]
     files += [g7x / "g7x.c", g7x / "g7x_contour.c", g7x / "g7x_source.c",
               SRC / "modules" / "cam_keyboard" / "cam_keyboard.c",
@@ -70,7 +70,7 @@ EXE = OUT / "nc_ui.exe"
 def build():
     """Build the shell. Returns the exe path, exits the process on failure."""
     sources = [TOOL / "lvds_host.c", TOOL / "host_fs.c", TOOL / "host_shim.c",
-               TOOL / "main.c",
+               TOOL / "host_spindle.c", TOOL / "host_tests.c", TOOL / "main.c",
                *core_sources(),
                *module_sources()]
     cmd = [os.environ.get("CC", "gcc"), *FLAGS, *[str(p) for p in sources],
@@ -138,12 +138,44 @@ if __name__ == "__main__":
         print("FAIL the keypad does not match the machine's key row")
         sys.exit(1)
 
+    # The legend the editor shows for the word under the cursor: every word the
+    # panel writes into a line must say what it is, not "NC word".
+    run = subprocess.run([str(exe), "--vocabtest"], capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "vocabtest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL a word the panel writes has no legend")
+        sys.exit(1)
+
+    # The labels: a fault in the message area is white on red, and the
+    # controller's state sits in the DRO's bottom-right corner.
+    root = OUT / "label-root"
+    shutil.rmtree(root, ignore_errors=True)
+    (root / "nc" / "files").mkdir(parents=True, exist_ok=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--labeltest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "labeltest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL the error label or the DRO state is not drawn")
+        sys.exit(1)
+
     run = subprocess.run([str(exe), "--files", str(OUT / "feed-root"),
                           "--feedtest"], capture_output=True, text=True)
     print(run.stdout.strip())
     if run.returncode or "feedtest: PASS" not in run.stdout:
         print(run.stderr[-4000:])
         print("FAIL a held key does not feed to the stop")
+        sys.exit(1)
+
+    # The station's spindle, off the machine's own signals (PWM0/DOUT0) rather
+    # than an encoder the desktop does not have.
+    run = subprocess.run([str(exe), "--files", str(OUT / "spindle-root"),
+                          "--spindletest"], capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "spindletest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL the spindle does not run from the machine's own signals")
         sys.exit(1)
 
     run = subprocess.run([str(exe), "--keytest"], capture_output=True, text=True)
@@ -201,6 +233,75 @@ if __name__ == "__main__":
         sys.exit(1)
     (root / "nc" / "files" / "facing.nc").write_bytes(
         (fixtures / "facing.nc").read_bytes())
+
+    # The 3x3 path builder: the pad walks the fixture's G71 block, and every
+    # check is read back off the card after the screen change that writes it.
+    (root / "nc_state.txt").write_text(
+        "MODE=EDIT\nEDIT=/D/nc/files/facing.nc\n", encoding="utf-8")
+    run = subprocess.run([str(exe), "--files", str(root), "--buildertest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "buildertest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL the path builder does not write the contour it walks")
+        sys.exit(1)
+    (root / "nc" / "files" / "facing.nc").write_bytes(
+        (fixtures / "facing.nc").read_bytes())
+
+    # A key that changes the screen has to ask for a repaint (RUN's line keys
+    # did not, so the highlight only moved on the next footer key).
+    root = OUT / "file-root"
+    run = subprocess.run([str(exe), "--files", str(root), "--dirtytest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "dirtytest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL a key that moves the RUN cursor does not ask for a repaint")
+        sys.exit(1)
+
+    # RUN's FROM and FULL have to send the program: they only armed the run and
+    # the machine never received a character.
+    run = subprocess.run([str(exe), "--files", str(root), "--runtest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "runtest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL RUN's FROM/FULL do not send the program")
+        sys.exit(1)
+
+    # What RUN marks on the pane: the line the sender is on is bright and the
+    # cycle block it belongs to is pale, and both go away when the mark leaves
+    # the block. Read off the drawn frame - the snapshot can carry the mark
+    # while the pane paints every row flat.
+    run = subprocess.run([str(exe), "--files", str(root), "--blocktest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "blocktest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL RUN does not mark the line and the block it belongs to")
+        sys.exit(1)
+
+    # The sender is paced: one unit at a time, waiting for the machine. That is
+    # what keeps the mark on the code that is cutting instead of on the line the
+    # reader has already swallowed.
+    run = subprocess.run([str(exe), "--files", str(root), "--pacetest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "pacetest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL RUN does not pace the program to the machine")
+        sys.exit(1)
+
+    # The MANUAL stops: typed on the pad, taken from the setup with `D`, and
+    # respected by a step and a feed on both sides.
+    root = OUT / "file-root"
+    run = subprocess.run([str(exe), "--files", str(root), "--stoptest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "stoptest: PASS" not in run.stdout:
+        print(run.stderr[-4000:])
+        print("FAIL the MANUAL stops are not typed, taken and respected")
+        sys.exit(1)
 
     # And the same file on screen. The remembered state points EDIT at it, which
     # is also how the machine reopens the last program after a reboot.

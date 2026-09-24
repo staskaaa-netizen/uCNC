@@ -36,7 +36,9 @@ MODULES = $(SRC)/modules/g7_g8/parser_g7_g8.c \
           $(SRC)/modules/nc/nc_manual.c \
           $(SRC)/modules/nc/nc_menu.c \
           $(SRC)/modules/nc/nc_palette.c $(SRC)/modules/nc/nc_presets.c \
+          $(SRC)/modules/nc/nc_path_builder.c \
           $(SRC)/modules/nc/nc_preview.c $(SRC)/modules/nc/nc_draw.c \
+          $(SRC)/modules/nc/nc_run.c \
           $(SRC)/modules/nc/nc_state.c $(SRC)/modules/nc/nc_text.c \
           $(SRC)/modules/nc/nc_tools.c $(SRC)/modules/nc/nc_vocab.c \
           $(SRC)/modules/nc/nc_visual.c \
@@ -45,7 +47,7 @@ MODULES = $(SRC)/modules/g7_g8/parser_g7_g8.c \
           $(SRC)/modules/lvds_renderer/lvds_font_cond_6x8.c \
           $(SRC)/modules/lvds_renderer/lvds_font_ibm_8x14.c
 
-APP = lvds_host.c host_fs.c host_shim.c main.c
+APP = lvds_host.c host_fs.c host_shim.c host_spindle.c host_tests.c main.c
 
 TARGET = $(BUILDDIR)/nc_ui.exe
 

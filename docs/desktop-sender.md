@@ -57,11 +57,26 @@ Win32 COM transport, scripted fake-controller tests and CLI smoke checks
 
 On the UI side, `tools/nc_ui_win` runs the real panel layout on Windows: the NC
 screen code draws through the host LVDS backend, so the 800x600 layout, palette
-and fonts are the firmware's, and the machine keys (F1-F5 mode row and the
-machine's 4x4 keypad) sit next to the emulated panel. `python
-tools/test_nc_ui.py` renders a panel frame and a whole-bench frame headlessly
-and runs the headless checks (`--fstest`, `--presettest`, `--streamtest`,
-`--padtest`).
+and fonts are the firmware's, and the machine keys (the F1-F4 mode row, the
+MODE key and the machine's 4x4 keypad) sit next to the emulated panel. That
+right-hand strip is the **programming station**: it names the active screen
+(`nc_visual_screen_name()`), shows the screen's own usage lines
+(`nc_visual_usage()`), labels every pad key through the screen's own answer
+(`nc_visual_key_meaning()` - green for a menu key, grey for a key the menu does
+not name, an arrow on the keys that step a field), and reads the spindle off the
+signals the tool drives (PWM0/DOUT0) instead of an encoder the PC does not have
+(`tools/nc_ui_win/host_spindle.c`). `python tools/test_nc_ui.py` builds the
+station, renders a panel frame and a whole-bench frame headlessly, and runs every
+headless check (`--fstest`, `--presettest`, `--streamtest`, `--padtest`,
+`--spindletest`, `--feedtest`, `--buildertest`, `--runtest`, `--blocktest`,
+`--pacetest`, `--stoptest`, ...). Its README is the operator's usage.
+
+The station ships from GitHub: `.github/workflows/nc-ui-windows.yaml` builds it
+with MinGW-w64 on `windows-latest`, runs the checks, and attaches
+`uCNC-programming-station-win64.zip` (the statically linked exe and its README)
+to every `v*` release next to the board firmware. The station keeps its card in
+an `nc-files` folder beside the exe unless `--files` names another one, so the
+downloaded zip runs where it is unpacked.
 
 Next:
 

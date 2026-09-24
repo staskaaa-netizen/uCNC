@@ -3,6 +3,32 @@
 See [TODO.md](TODO.md) for the audited completion checklist and module ownership.
 See [TESTING.md](TESTING.md) for NC-independent tests and serial bench programs.
 
+## Shipping (2026-09-24)
+
+What a release of this fork carries, and what it does not claim:
+
+- **The machine firmware** - `pio run -e RP2350-LEANCAM-LVDS` builds the image
+  the lathe runs: this module, the NC screens and the LVDS panel.
+  `pio run -e RP2350-G7X-MODULE` builds the same module with no NC sources at
+  all, which is the target that proves it stands alone. Both are in the
+  release matrix of `.github/workflows/pio-release.yaml`.
+- **The PC programming station** - `tools/nc_ui_win` is the same NC screen,
+  keypad and G7x cycles on Windows, built by `tools/test_nc_ui.py` and attached
+  to the same release by `.github/workflows/nc-ui-windows.yaml`.
+- **Software-verified** - `python tools/test_g7x.py all` (the generator, the NC
+  emitter adapter, the real parser/planner/virtual-MCU integration with G33
+  intercepted, and the standalone target), `python tools/test_nc_ui.py` (the
+  panel marks the same block the generator expands, and the rows the 3x3 path
+  builder writes expand as a cycle) and `python tools/test_nc_sender.py`
+  (expansion and the Grbl protocol).
+- **Bench-only** - spindle phase and pitch through G33/G76, index stability,
+  spindle loss, feed hold and Stop during queued motion, SD mount on a cold
+  start and panel readability. The suites intercept G33, so they prove targets,
+  ordering and error propagation, never spindle phase. See `TESTING.md`.
+- **Not implemented** - `G73`, negative finish allowances and the 45-degree
+  retract, applied `S`/`T` from a profile row on the finish cut, a `P` block that
+  names only one axis, and Haas' single-line `D` form (all detailed below).
+
 ## Runtime status (2026-09-16)
 
 Native inline `G71/G72 ... G80` and single-line `G76` now run through the
@@ -14,9 +40,74 @@ firmware; physical threading synchronization remains unverified.
 
 Native cycles require `G18 G90 G94`. Both `G7/G8` and `G20/G21` are supported.
 The conservative inline contour subset requires monotonic X and Z, including
-arc interiors. G71/G72 still include their existing finishing pass. `G70` and
-the two-line Fanuc/Haas cycle headers are not implemented; the one-line P/Q
-range is described below.
+arc interiors; a `G70` finish cut is not held to that rule (see below).
+G71/G72 still include their existing finishing pass, so a program can finish
+inside the roughing cycle, with `G70`, or both. The two-line Fanuc/Haas cycle
+headers, the one-line P/Q range and `G70 P Q` are implemented; `G73` is not.
+
+### G70: the finish cut of a collected range
+
+`G70 P Q [R] [F]` re-runs a contour this run has already collected as the finish
+cut, in the order the program wrote it:
+
+```text
+G71 U1 R1 P100 Q200 X0.5 Z0.5 F300   (roughs the range, and finishes it inline)
+N100 G0 X52 Z4
+N110 G1 X50 Z0
+N200 G1 X50 Z-30 F180
+G70 P100 Q200                        (finishes the same profile)
+```
+
+- **The range must be the one this run collected.** The module keeps the last
+  numbered range it collected; `G70` for a different range, or one this run
+  never saw (RUN started at the `G70` line), is refused as invalid rather than
+  guessed. It holds one range, because that is what a program asks for: the
+  profile it just roughed.
+- **Nothing is offset.** The roughing header's allowances were consumed by the
+  roughing; the finish follows the programmed profile.
+- **The feed is the profile's.** Each row's own `F` is emitted where the program
+  wrote it, and rows without one run at the `F` on the `G70` line (or the feed
+  the cycle was given). This is also what the *inline* finish pass of G71/G72
+  does, so both ways of finishing behave the same.
+- **The `P` block is a positioning move.** Written as a `G0` (Fanuc's spelling)
+  the cycle rapids to that point and the cut starts with the row after it; a
+  rapid written *later* in the profile is followed as a cut, because a cycle
+  never puts a rapid through the material.
+- **A contour that doubles back is allowed.** The roughing's monotonic rule is
+  about parallel passes clearing a V; a finish cut only follows the line.
+- **Profile `S`/`T` are read and not acted on.** Fanuc reads F/S/T from the
+  profile for the finish; a stock-removal cycle must not change spindle speed or
+  tool in the middle of a cut, and the generator has no event for either yet. The
+  cycle runs at the speed and tool the program established before it.
+
+The panel needs no expansion for this: RUN sends the `G70` line, and the machine
+replays its own collected range. The preview expands it by walking *back* to
+`N(P)`/`N(Q)`, because the range is above the line rather than below it.
+
+### What the generated cycle moves
+
+The moves a G71/G72 block expands to follow two rules that a bench report made
+explicit (the wasted moves were visible on the machine):
+
+- **No motion that would not move the tool is emitted.** The first pass of a
+  cycle approaches with a rapid out in X and then a rapid to the Z clear point
+  (the tool's position before the cycle is not known); every later pass is
+  already clear in X, so it retracts with one X rapid, and an OD (`G71`) pass
+  returns in Z with one rapid because it cuts from the face end again. A `G72`
+  pass does not return to the start Z at all: at the clearance X it rapids
+  straight to the next face depth, which is the whole point of the report - the
+  return only made the rapid twice as long.
+- **The cycle ends at the clearance point.** Out in X, then back in Z - the
+  corner a `G0` before the cycle establishes, and where Fanuc leaves the tool
+  after a stock-removal cycle. The generator never reads the operator's
+  pre-cycle position (its own rapids are absolute, computed from the profile),
+  so the clearance corner is the closest thing to it that a cycle can express.
+  The automatic finish approaches from that point only as far as it has to, and
+  the contour itself stays unoffset for finishing.
+- **The roughing stops on the finish allowance.** The pass level steps onto the
+  boundary when a full depth of cut would cross it, so the last roughing pass
+  leaves exactly what the allowance reserved instead of stopping a whole step
+  short and handing that step to the finish cut.
 
 ### Fanuc headers and numbered P/Q ranges
 
@@ -32,6 +123,20 @@ N100 G0 X50 Z0
 G1 Z-30
 N200 X40
 ```
+
+`P` and `Q` are the **block numbers written as `N` words on the profile rows** -
+`P` is the row the profile starts at, `Q` the row it ends at - and not the line
+numbers any screen or editor shows beside the program. A range whose rows carry
+no `N` never opens: the rows are then ordinary program text, which is why a
+program like `G71 ... P1 Q1` over `G1 X20 Z0` / `G1 X50 Z-20` has nothing to
+collect. The rules, all of them enforced:
+
+- both numbers are required, integers, `Q >= P`;
+- the range opens at the row whose `N` equals `P` and closes at `N(Q)`; a `G80`
+  inside a numbered range is refused, because the range has its own end;
+- row numbers must rise and stay inside the range;
+- at least two points, so `P == Q` (a one-row "profile") is refused;
+- a contour row is `N<number> G0/G1/G2/G3 ...`; `N` comes first.
 
 ```text
 G71 U1 R1 P100 Q200 X0.5 Z0.5 F120
@@ -72,11 +177,13 @@ contract in `g7x_source.h`. NC implements it for its own documents with
 `nc_emit_numbered_source()`, so G7x stays independent of NC storage while NC
 keeps ownership of the file text.
 
-Not implemented yet: `G70 P/Q` replay from the retained range, treating the
-first `P` block as approach-only, and `S`/`T` words on profile rows (they
-currently reject the row). Haas' single-line form, which puts the finish
-allowances in `U`/`W` and the depth in `D`, is not supported: this parser stores
-`D` and `Q` in the same word slot, so `D` cannot be used next to a `Q` range.
+Not implemented yet: `G73` (pattern repeating roughing), negative finish
+allowances and the 45-degree retract, applied `S`/`T` from a profile row on the
+finish cut, and a `P` block that names only one axis (the range's first block is
+the profile's start point, and G7x never guesses the tool's position, so it must
+name both X and Z). Haas' single-line form, which puts the finish allowances in
+`U`/`W` and the depth in `D`, is not supported: this parser stores `D` and `Q`
+in the same word slot, so `D` cannot be used next to a `Q` range.
 
 ### Native G76 contract
 
@@ -169,6 +276,40 @@ Parser integration is the modal-region owner:
 - after `G80`, generated rough/finish rows execute as parsed motion blocks via
   the parser generated-block helper, following the same broad model as canned
   cycles.
+- the module answers two questions about that state, and they are different:
+  `g7x_parser_busy()` says a cycle is *in the module* (collecting rows or
+  generating blocks), and `g7x_parser_collecting()` says the module is still
+  *waiting for rows*. A sender that paces itself one block at a time needs the
+  second: the rows of an open cycle have to keep coming, while the blocks of a
+  cycle that is already generating belong to the machine and the next unit can
+  wait for them. NC's RUN sender uses both (`nc_run_pace()`), and the parser
+  test drives its programs the same way the pacer does.
+
+## R/C corners: refuse, do not fit
+
+An `R` (round) or `C` (chamfer) that the moves beside it cannot hold is a
+**refusal** (`G7X_CORNER_TOO_LARGE`, reported as "contour rejected: corner does
+not fit"), never a smaller corner cut in its place. The operator wrote a number;
+the machine cuts that number or says why it will not.
+
+The limit is geometric, and it is the one `g7x_corner_fit()` reports: the tangent
+point has to land **on** the two moves, so the tangent distance may be as much as
+the shorter of them. Two corners sharing a move cannot overlap because the walk
+is left to right and each corner *moves* the element to its tangent point - the
+next corner measures what is left of the segment that is already partly taken
+(first fit; an earlier corner wins the room). A corner with nothing to fit (a
+round on a straight continuation) is left out, which is not an error: there is no
+corner there.
+
+Why it is worth being loud, and why the limit had to be honest: the first
+implementation *fitted* the corner, silently, to **45%** of the shorter move - a
+number that kept two corners from overlapping without any global check, and that
+was 2.2x stricter than the geometry. The bench wrote `R35` on a 20 mm move with a
+15 mm diameter step (7.5 mm of room in the generator's frame) and got `R3.375`
+with nothing to explain it - "for this seems the wrong radius?" then "it should
+reject it loudly". With the geometric limit `R35` is refused and the samples'
+own `R2`/`R5` corners are cut as written (the fixture failed under the 45% rule,
+which is what a too-strict fit does to real programs).
 
 Current parser integration limitations:
 
@@ -299,11 +440,17 @@ NC source file
 
 Do not implement `G70` or `G73` in the first extraction.
 
+(`G70` has since been implemented, once the parser kept the collected range and
+the generator could emit a finish-only pass over it - see "G70: the finish cut
+of a collected range" above. The note below is the decision it was made under,
+kept because the reasoning still applies to what it says about G73.)
+
 - `G70` needs contour reference/replay semantics. In the current LeanCam model
   the G71/G72 generator already emits the finish contour after roughing, so a
   standalone G70 finishing cycle would be a separate feature, not a prerequisite.
 - `G73` is pattern repeating roughing, not the same scanline roughing model as
-  current G71/G72. Keep it as future scope.
+  current G71/G72. Keep it as future scope. The parser refuses it by name (the
+  console says so) rather than letting it fall through to a generic error.
 - `G75/G83/G84/G87/G88` belong to a broader lathe-cycle family and remain
   future scope. G76 is intentionally separate from the contour stream because it
   expands to thread passes rather than contour rough/finish motion.
@@ -386,7 +533,8 @@ For now the acceptance gate should stay conservative:
 
 Future test buckets after the split:
 
-- `G70` contour finishing/replay: not implemented yet.
+- `G70` contour finishing/replay: implemented (see "G70: the finish cut of a
+  collected range"); its bench checks are in `TESTING.md`.
 - `G73` pattern-repeat roughing: not implemented yet.
 - LinuxCNC/GCodeTutor examples converted into the current `G71/G72 ... G80`
   source model where possible.

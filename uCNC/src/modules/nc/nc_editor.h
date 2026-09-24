@@ -93,11 +93,6 @@ void nc_editor_new_file_begin(nc_editor_ctx_t *ctx);
 void nc_editor_new_file_end(nc_editor_ctx_t *ctx);
 void nc_editor_seed_demo(nc_editor_ctx_t *ctx);
 nc_result_t nc_editor_insert_tool_ref(nc_editor_ctx_t *ctx);
-void nc_editor_insert_preset(nc_editor_ctx_t *ctx,
-                             nc_preset_t preset,
-                             const char *ok,
-                             const char *fail);
-
 /* The tool rows of the TOOLS screen: the document's, read the same way the
    code cursor reads the program. */
 int nc_editor_selected_tool_index(nc_editor_ctx_t *ctx);

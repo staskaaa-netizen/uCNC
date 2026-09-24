@@ -68,6 +68,43 @@ nc_visual_key_t nc_visual_key_for_char(char key);
    jog keys the MANUAL pad draws. NULL when the footer label or the bare key is
    all there is to say. */
 const char *nc_visual_key_hint(char key);
+/* The lines `nc_visual_usage()` can hand out at most. */
+#define NC_VISUAL_USAGE_MAX 8
+
+/* What the screen is showing right now, for a shell that names it beside the
+   machine: the operation mode, or the view that has taken the screen over -
+   `FILES` for the file list, `PREVIEW` for the whole-body preview, `DRAW` for
+   the 3x3 path builder. */
+const char *nc_visual_screen_name(void);
+
+/* What the active screen is and how its keys drive it, in the screen's own
+   words: `*lines` receives a pointer to an array of at most NC_VISUAL_USAGE_MAX
+   strings and the return value is how many of them are filled. A shell that
+   draws a help panel beside the machine (the PC programming station) shows
+   these, so the words an operator reads there are the words of the screen that
+   acts on the keys - never a second description kept in the shell. */
+size_t nc_visual_usage(const char *const **lines);
+
+/* What one pad key means on the active screen, for a shell that draws the
+   machine's keypad itself:
+
+     - `label`  - the footer entry that carries the key, or the screen's own
+                  word for a key the footer does not name (MANUAL's jog digits,
+                  the builder's pad). NULL when the screen has no word for it;
+     - `on_menu`- the footer strip carries the key, so a key that is not on the
+                  menu reads as the screen's own (off-menu) key;
+     - `step`   - the key steps a field or the axis (`B`/`C`, and the keyboard's
+                  arrows), so the shell draws the arrow the key acts as.
+
+   False when the key means nothing on this screen. */
+typedef struct {
+    const char *label;
+    bool on_menu;
+    bool step;
+} nc_visual_key_meaning_t;
+
+bool nc_visual_key_meaning(char key, nc_visual_key_meaning_t *meaning);
+
 bool nc_visual_dirty(void);
 bool nc_visual_periodic_needed(void);
 void nc_visual_draw(void);

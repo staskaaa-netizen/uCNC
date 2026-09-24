@@ -16,9 +16,13 @@ static const nc_footer_item_t g_nc_footer_manual[] = {
 };
 
 static const nc_footer_item_t g_nc_footer_program[] = {
+    /* The entries that are *not* text: the rest of every pad is the card's
+       (`nc_presets.c`), filled into the slot its id names. `3` is the word pad -
+       the field that writes one line by its name or number, plus whatever else
+       the card puts beside it (`CHMF`, `RND`, ...). */
     { '1', "OPS", NC_FOOTER_ACTION_OPS },
     { '2', "TOOL", NC_FOOTER_ACTION_TOOL_MENU },
-    { '3', "G", NC_FOOTER_ACTION_GCODE },
+    { '3', "WORD", NC_FOOTER_ACTION_GCODE },
     { '4', "G7X", NC_FOOTER_ACTION_G7X_MENU },
     { '5', "THREAD", NC_FOOTER_ACTION_SYNC_MENU },
     { '6', "PECK", NC_FOOTER_ACTION_PECK_MENU },
@@ -35,7 +39,7 @@ static const nc_footer_item_t g_nc_footer_program[] = {
    drawing, not editing the program. */
 static const nc_footer_item_t g_nc_footer_preview[] = {
     { '4', "STOCK", NC_FOOTER_ACTION_STOCK },
-    { '5', "PATH", NC_FOOTER_ACTION_PATH },
+    { '5', "TRACE", NC_FOOTER_ACTION_PATH },
     { '6', "ROUGH", NC_FOOTER_ACTION_ROUGH },
     { '7', "DIM", NC_FOOTER_ACTION_DIMS },
     { '#', "VIEW", NC_FOOTER_ACTION_VIEW }
@@ -52,48 +56,48 @@ static const nc_footer_item_t g_nc_footer_files[] = {
 };
 
 static const nc_footer_item_t g_nc_submenu_ops[] = {
-    { '1', "INS", NC_FOOTER_ACTION_INSERT },
-    { '2', "FILES", NC_FOOTER_ACTION_FILES },
-    { '3', "END", NC_FOOTER_ACTION_PRESET_END },
-    { '4', "SAVE", NC_FOOTER_ACTION_SAVE },
-    { '5', "DEL", NC_FOOTER_ACTION_DELETE }
+    /* Every entry here is the card's (`[11]` the new line, `[16]` the stock
+       block): the pad is filled from the ids, so there is nothing to list. */
+    { 0, 0, NC_FOOTER_ACTION_NONE }
 };
 
 static const nc_footer_item_t g_nc_submenu_tool[] = {
+    /* The two entries that are not text: the `T` field and the tool table. The
+       machine words (`M6`, `M3`, `M5`, `M4`) are sections - `[23]`..`[26]` - so
+       the operator's own speed is what the key writes. */
     { '1', "SELECT", NC_FOOTER_ACTION_TOOL_SELECT },
-    { '2', "EDIT", NC_FOOTER_ACTION_TOOL_EDIT },
-    { '3', "M6", NC_FOOTER_ACTION_TOOL_CHANGE },
-    { '4', "M3", NC_FOOTER_ACTION_SPINDLE_ON },
-    { '5', "STOP", NC_FOOTER_ACTION_SPINDLE_STOP },
-    { '6', "M4", NC_FOOTER_ACTION_SPINDLE_CCW }
+    { '2', "EDIT", NC_FOOTER_ACTION_TOOL_EDIT }
 };
 
 static const nc_footer_item_t g_nc_submenu_g7x[] = {
-    { '1', "OD", NC_FOOTER_ACTION_PRESET_OD },
-    { '2', "ID", NC_FOOTER_ACTION_PRESET_ID },
-    { '3', "FACE", NC_FOOTER_ACTION_PRESET_FACE },
+    /* The pad's text entries are the card's sections (`[41]`..`[43]`, `[46]`,
+       `[48]`); what is left here is what a key *does* rather than writes. */
     { '4', "Q", NC_FOOTER_ACTION_G7X_Q },
     { '5', "N", NC_FOOTER_ACTION_G7X_N },
-    { '6', "G80", NC_FOOTER_ACTION_PRESET_END }
+    /* Cycle templates come from the entries above. DRAW only appends contour
+       rows to a closed block. See docs/nc-path-builder.md. */
+    { '7', "DRAW", NC_FOOTER_ACTION_BUILD }
 };
 
 static const nc_footer_item_t g_nc_submenu_sync[] = {
-    { '1', "OD", NC_FOOTER_ACTION_THREAD_OD },
-    { '2', "ID", NC_FOOTER_ACTION_THREAD_ID },
-    { '3', "TAP", NC_FOOTER_ACTION_TAP }
+    /* `[51]`..`[53]`: every entry is the card's, so there is nothing here. */
+    { 0, 0, NC_FOOTER_ACTION_NONE }
 };
 
-static const nc_footer_item_t g_nc_submenu_peck[] = {
-    { '1', "DRILL", NC_FOOTER_ACTION_PECK_DRILL },
-    { '2', "PECK", NC_FOOTER_ACTION_PECK_PECK },
-    { '3', "DWELL", NC_FOOTER_ACTION_PECK_DWELL }
+static const nc_footer_item_t g_nc_submenu_word[] = {
+    /* The field that writes one line by its name or number (a G-code from the
+       dialects's vocabulary, or a section of the card's). `[32]` and `[33]` ship
+       as the two corner words, which are entries and not a second syntax: the
+       card's own rows, each continuing the line above. */
+    { '1', "G", NC_FOOTER_ACTION_GCODE }
 };
 
 static const nc_footer_item_t g_nc_footer_tools[] = {
     { '1', "ADD", NC_FOOTER_ACTION_TOOL },
     { '7', "INS", NC_FOOTER_ACTION_INSERT },
     { '8', "FILES", NC_FOOTER_ACTION_FILES },
-    { '9', "SAVE", NC_FOOTER_ACTION_SAVE },
+    /* No save key: the tool table is written by the same idle task that writes
+       the program. */
     { '*', "DEL", NC_FOOTER_ACTION_DELETE }
 };
 
@@ -178,10 +182,31 @@ const nc_footer_item_t *nc_menu_submenu(nc_footer_action_t parent, size_t *count
         *count = sizeof(g_nc_submenu_sync) / sizeof(g_nc_submenu_sync[0]);
         return g_nc_submenu_sync;
     case NC_FOOTER_ACTION_PECK_MENU:
-        *count = sizeof(g_nc_submenu_peck) / sizeof(g_nc_submenu_peck[0]);
-        return g_nc_submenu_peck;
+        /* `[61]`..`[63]`, the card's; empty like the thread pad. */
+        *count = sizeof(g_nc_submenu_sync) / sizeof(g_nc_submenu_sync[0]);
+        return g_nc_submenu_sync;
+    case NC_FOOTER_ACTION_GCODE:
+        *count = sizeof(g_nc_submenu_word) / sizeof(g_nc_submenu_word[0]);
+        return g_nc_submenu_word;
     default:
         *count = 0;
         return 0;
     }
+}
+
+/* Which footer key a submenu hangs off: the first digit of every id in that pad.
+   The footer is the one table that says it, so it is read rather than written
+   down a second time. */
+char nc_menu_submenu_digit(nc_footer_action_t parent)
+{
+    size_t count = 0u;
+    const nc_footer_item_t *items = nc_menu_footer(NC_MODE_PROGRAM, false, &count);
+    size_t i;
+
+    for (i = 0u; i < count; i++) {
+        if (items[i].action == parent && items[i].key >= '1' && items[i].key <= '9') {
+            return items[i].key;
+        }
+    }
+    return 0;
 }

@@ -12,10 +12,12 @@ void nc_palette_init(void);
 lvds_color_t nc_col_bg(void);
 lvds_color_t nc_col_panel(void);
 lvds_color_t nc_col_header(void);
+lvds_color_t nc_col_header_run(void);
 lvds_color_t nc_col_text(void);
 lvds_color_t nc_col_dim(void);
 lvds_color_t nc_col_accent(void);
 lvds_color_t nc_col_select(void);
+lvds_color_t nc_col_select_block(void);
 lvds_color_t nc_col_line_no_selected(void);
 lvds_color_t nc_col_word_bg(void);
 lvds_color_t nc_col_word_fg(void);
@@ -35,14 +37,17 @@ lvds_color_t nc_col_footer_button(void);
 lvds_color_t nc_col_tool_mark(void);
 lvds_color_t nc_col_tool_fill(void);
 lvds_color_t nc_col_tool_crosshair(void);
+lvds_color_t nc_col_tool_tip(void);
 
 #define NC_VISUAL_BG                  nc_col_bg()
 #define NC_VISUAL_PANEL               nc_col_panel()
 #define NC_VISUAL_HEADER              nc_col_header()
+#define NC_VISUAL_HEADER_RUN          nc_col_header_run()
 #define NC_VISUAL_TEXT                nc_col_text()
 #define NC_VISUAL_DIM                 nc_col_dim()
 #define NC_VISUAL_ACCENT              nc_col_accent()
 #define NC_VISUAL_SELECT              nc_col_select()
+#define NC_VISUAL_SELECT_BLOCK        nc_col_select_block()
 #define NC_VISUAL_LINE_NO_SELECTED    nc_col_line_no_selected()
 #define NC_VISUAL_WORD_BG             nc_col_word_bg()
 #define NC_VISUAL_WORD_FG             nc_col_word_fg()
@@ -62,6 +67,7 @@ lvds_color_t nc_col_tool_crosshair(void);
 #define NC_VISUAL_TOOL_MARK           nc_col_tool_mark()
 #define NC_VISUAL_TOOL_FILL           nc_col_tool_fill()
 #define NC_VISUAL_TOOL_CROSSHAIR      nc_col_tool_crosshair()
+#define NC_VISUAL_TOOL_TIP            nc_col_tool_tip()
 
 #ifdef __cplusplus
 }

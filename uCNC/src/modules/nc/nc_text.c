@@ -155,6 +155,7 @@ static void nc_text_edit_begin(nc_document_t *doc, nc_text_edit_t *edit, bool pr
 static void nc_text_edit_apply(nc_document_t *doc, nc_text_edit_t *edit)
 {
     char apply[24];
+    size_t i;
 
     if (!doc || !edit || !edit->active) {
         return;
@@ -176,6 +177,27 @@ static void nc_text_edit_apply(nc_document_t *doc, nc_text_edit_t *edit)
     }
     strncpy(apply, edit->buf, sizeof(apply) - 1);
     apply[sizeof(apply) - 1] = '\0';
+    /* A typed zero at a field that was negative is still a zero: the draft
+       keeps the sign from the value it replaced, and "-0" is not a value to
+       put in the program (the operator meant 0). */
+    if (apply[0] == '-') {
+        bool zeros_only = true;
+
+        for (i = 1u; apply[i]; i++) {
+            if (apply[i] == '.') {
+                continue;
+            }
+            if (apply[i] != '0') {
+                zeros_only = false;
+                break;
+            }
+        }
+        /* "-0", "-0.0", "-00": the sign is not part of the value. A sign-only
+           draft never gets here - those are refused above. */
+        if (zeros_only && apply[1]) {
+            memmove(apply, apply + 1, strlen(apply));
+        }
+    }
     (void)nc_set_selected_word_text(doc, apply);
 }
 

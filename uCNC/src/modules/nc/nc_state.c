@@ -17,10 +17,20 @@
 #define NC_STATE_OLD_PATH  "nc_state.txt"
 #define NC_STATE_MAX_BYTES 1024u
 #define NC_STATE_TIMEOUT_MS 500u
+/* The MANUAL spindle keys start here until the machine tells them otherwise. */
+#define NC_STATE_SPINDLE_DEFAULT 1000u
 
 static char g_nc_state_path[NC_MODE_COUNT][NC_PATH_MAX];
 static size_t g_nc_state_cursor[NC_MODE_COUNT];
 static nc_mode_t g_nc_state_mode;
+/* The cycle block the RUN mark is inside: the screen publishes it before it
+   takes the snapshot, because the screen is the one that knows the sender's
+   line. It lives here rather than in the document so the pane can draw the
+   weaker mark without a scan of its own - and without the document having to
+   carry a view state it does not own. */
+static bool g_nc_state_block_mark;
+static size_t g_nc_state_block_first;
+static size_t g_nc_state_block_last;
 
 bool nc_state_tool_path_supported(const char *path)
 {
@@ -89,6 +99,13 @@ nc_mode_t nc_state_mode(void)
     return g_nc_state_mode;
 }
 
+void nc_state_set_run_block(bool marked, size_t first, size_t last)
+{
+    g_nc_state_block_mark = marked;
+    g_nc_state_block_first = first;
+    g_nc_state_block_last = last;
+}
+
 void nc_state_remember_path(nc_mode_t mode, const char *path)
 {
     if (mode < 0 || mode >= NC_MODE_COUNT || !path) {
@@ -129,6 +146,9 @@ const char *nc_state_path(nc_mode_t mode)
    card, and a screen change used to pay it two or three times over. Everything
    that changes the remembered state only marks it stale. */
 static bool g_nc_state_dirty;
+/* The speed the MANUAL spindle keys use, remembered with the rest of the state
+   so a reboot does not drop the operator back to a default. */
+static unsigned g_nc_state_spindle = NC_STATE_SPINDLE_DEFAULT;
 
 static void nc_state_write(void)
 {
@@ -144,6 +164,14 @@ static void nc_state_write(void)
                          sizeof(line),
                          "MODE=%s\n",
                          nc_state_key(nc_state_mode()));
+        if (n > 0 && n < (int)sizeof(line)) {
+            (void)fs_write(fp, (const uint8_t *)line, (size_t)n);
+        }
+    }
+    {
+        char line[24];
+        int n = snprintf(line, sizeof(line), "SPINDLE=%u\n",
+                         g_nc_state_spindle);
         if (n > 0 && n < (int)sizeof(line)) {
             (void)fs_write(fp, (const uint8_t *)line, (size_t)n);
         }
@@ -165,6 +193,20 @@ static void nc_state_write(void)
 void nc_state_save(void)
 {
     g_nc_state_dirty = true;
+}
+
+unsigned nc_state_manual_spindle(void)
+{
+    return g_nc_state_spindle;
+}
+
+void nc_state_remember_manual_spindle(unsigned rpm)
+{
+    if (rpm == 0u || rpm == g_nc_state_spindle) {
+        return;
+    }
+    g_nc_state_spindle = rpm;
+    nc_state_save();
 }
 
 void nc_state_flush(void)
@@ -225,6 +267,12 @@ void nc_state_init(void)
                     nc_mode_t mode;
                     if (nc_state_mode_from_text(eq, &mode)) {
                         nc_state_set_mode(mode);
+                    }
+                } else if (strcmp(line, "SPINDLE") == 0) {
+                    long rpm = strtol(eq, NULL, 10);
+
+                    if (rpm > 0 && rpm <= 0xffffL) {
+                        g_nc_state_spindle = (unsigned)rpm;
                     }
                 } else {
                     for (i = 0; i < NC_MODE_COUNT; i++) {
@@ -356,6 +404,12 @@ void nc_state_snapshot(const nc_document_t *doc, nc_snapshot_t *snapshot)
     snapshot->cursor_line = cursor;
     snapshot->line_count = doc->line_count;
     snapshot->dirty = doc->dirty;
+    /* The block mark is the screen's, so it is copied here rather than derived:
+       a snapshot of a document with no run going carries no block (the screen
+       says so), and the pane marks only the current line. */
+    snapshot->block_mark = g_nc_state_block_mark;
+    snapshot->block_first = g_nc_state_block_first;
+    snapshot->block_last = g_nc_state_block_last;
 
     for (i = 0; i < NC_MAX_VISIBLE_LINES && first + i < doc->line_count; i++) {
         strncpy(snapshot->lines[i], doc->lines[first + i].text, NC_MAX_LINE_LEN - 1);

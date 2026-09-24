@@ -98,6 +98,8 @@ void nc_cursor_down(nc_document_t *doc);
 
 int nc_parse_words(const char *line, nc_word_t *words, int max_words);
 bool nc_word_value(const char *line, const nc_word_t *word, float *value);
+/* Find and parse a numeric word by letter in an NC line. */
+bool nc_line_word_float(const char *line, char letter, float *value);
 nc_result_t nc_select_next_word(nc_document_t *doc);
 nc_result_t nc_select_prev_word(nc_document_t *doc);
 /* Field-typed navigation (Heidenhain style): move to the next/previous word

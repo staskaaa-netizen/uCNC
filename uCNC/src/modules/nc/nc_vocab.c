@@ -13,16 +13,27 @@ typedef struct {
 static const nc_vocab_entry_t g_nc_vocab[] = {
     { 1,  'C', "Chamfer" },
     { 1,  'R', "Corner radius" },
+    { 4,  'P', "Dwell time" },
+    { 33, 'K', "Thread pitch" },
+    /* The P/Q range of a cycle: P names the block the profile starts at, Q the
+       one it ends at. N numbers a profile block. All three are words the panel's
+       own templates write, so none of them may fall through to "NC word". */
+    { 70, 'P', "Profile start block" },
+    { 70, 'Q', "Profile end block" },
     { 71, 'U', "Depth/pass" },
     { 71, 'R', "Retract" },
     { 71, 'X', "X finish allowance" },
     { 71, 'Z', "Z finish allowance" },
     { 71, 'F', "Feed" },
+    { 71, 'P', "Profile start block" },
+    { 71, 'Q', "Profile end block" },
     { 72, 'W', "Depth/pass" },
     { 72, 'R', "Retract" },
     { 72, 'X', "X finish allowance" },
     { 72, 'Z', "Z finish allowance" },
     { 72, 'F', "Feed" },
+    { 72, 'P', "Profile start block" },
+    { 72, 'Q', "Profile end block" },
     { 76, 'X', "Thread end X" },
     { 76, 'Z', "Thread end Z" },
     { 76, 'P', "Thread height" },
@@ -32,7 +43,11 @@ static const nc_vocab_entry_t g_nc_vocab[] = {
     { 76, 'L', "Spring passes" },
     { 76, 'R', "Finish allowance" },
     { 2,  'R', "Arc radius" },
+    { 2,  'I', "Arc centre X" },
+    { 2,  'K', "Arc centre Z" },
     { 3,  'R', "Arc radius" },
+    { 3,  'I', "Arc centre X" },
+    { 3,  'K', "Arc centre Z" },
     { 970, 'X', "Preview min X" },
     { 970, 'U', "Preview max X" },
     { 970, 'Z', "Preview min Z" },
@@ -65,8 +80,10 @@ static const nc_gcode_info_t g_nc_gcodes[] = {
     { 28, "Home", "X Z" },
     { 30, "Home secondary", "X Z" },
     { 33, "Spindle sync", "X Z K F" },
-    { 71, "OD roughing", "U R X Z F P Q N" },
-    { 72, "ID roughing", "W R X Z F P Q N" },
+    /* The header's words. `N` is not one of them: it numbers a profile row, and
+       the cycle reads the range from P and Q. */
+    { 71, "OD roughing", "U R X Z F P Q" },
+    { 72, "ID roughing", "W R X Z F P Q" },
     { 76, "Threading", "X Z P Q F I L R" },
     { 90, "Absolute distance", "" },
     { 91, "Incremental distance", "" },
@@ -113,8 +130,8 @@ const char *nc_vocab_gcode_template(int gcode)
     case 28: return "G28 X0 Z0";
     case 30: return "G30 X0 Z0";
     case 33: return "G33 X0 Z0 K0 F0";
-    case 71: return "G71 U0 R0 X0 Z0 F0 P0 Q0 N0";
-    case 72: return "G72 W0 R0 X0 Z0 F0 P0 Q0 N0";
+    case 71: return "G71 U0 R0 X0 Z0 F0 P0 Q0";
+    case 72: return "G72 W0 R0 X0 Z0 F0 P0 Q0";
     case 76: return "G76 X0 Z0 P0 Q0 F0 I0 L0 R0";
     case 90: return "G90";
     case 91: return "G91";
@@ -198,7 +215,7 @@ const char *nc_vocab_label_for_word(const char *line, const nc_word_t *word)
     case 'S': return "Spindle speed";
     case 'T': return "Tool";
     case 'M': return "M-code";
-    case 'N': return "Line number";
+    case 'N': return "Block number";
     default: return "NC word";
     }
 }

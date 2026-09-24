@@ -22,7 +22,6 @@ typedef enum {
 typedef enum {
     NC_FOOTER_ACTION_NONE = 0,
     NC_FOOTER_ACTION_OPEN,
-    NC_FOOTER_ACTION_SAVE,
     NC_FOOTER_ACTION_NEW,
     NC_FOOTER_ACTION_FIELD,
     NC_FOOTER_ACTION_INSERT,
@@ -51,16 +50,12 @@ typedef enum {
     NC_FOOTER_ACTION_ZERO,
     NC_FOOTER_ACTION_FILE,
     NC_FOOTER_ACTION_REFRESH,
-    NC_FOOTER_ACTION_PRESET_OD,
-    NC_FOOTER_ACTION_PRESET_ID,
-    NC_FOOTER_ACTION_PRESET_FACE,
-    NC_FOOTER_ACTION_PRESET_LINE,
-    NC_FOOTER_ACTION_PRESET_ARC,
-    NC_FOOTER_ACTION_PRESET_SETUP,
-    NC_FOOTER_ACTION_PRESET_END,
     NC_FOOTER_ACTION_FILES,
     NC_FOOTER_ACTION_DIMS,
     NC_FOOTER_ACTION_ROUGH,
+    /* A pad slot the card's own section fills: the id is the key path, so the
+       section lands where it says and a card can add one of its own. */
+    NC_FOOTER_ACTION_PRESET_ID,
     /* SIM: show or hide the code pane. Hidden, the preview has the whole body. */
     NC_FOOTER_ACTION_VIEW,
     NC_FOOTER_ACTION_OPS,
@@ -71,18 +66,11 @@ typedef enum {
     NC_FOOTER_ACTION_PECK_MENU,
     NC_FOOTER_ACTION_TOOL_SELECT,
     NC_FOOTER_ACTION_TOOL_EDIT,
-    NC_FOOTER_ACTION_TOOL_CHANGE,
-    NC_FOOTER_ACTION_SPINDLE_ON,
-    NC_FOOTER_ACTION_SPINDLE_STOP,
-    NC_FOOTER_ACTION_SPINDLE_CCW,
     NC_FOOTER_ACTION_G7X_Q,
     NC_FOOTER_ACTION_G7X_N,
-    NC_FOOTER_ACTION_TAP,
-    NC_FOOTER_ACTION_THREAD_OD,
-    NC_FOOTER_ACTION_THREAD_ID,
-    NC_FOOTER_ACTION_PECK_DRILL,
-    NC_FOOTER_ACTION_PECK_PECK,
-    NC_FOOTER_ACTION_PECK_DWELL
+    /* The G7X submenu's PATH entry: open the 3x3 path builder on the block the
+       cursor is in (nc_path_builder.c). */
+    NC_FOOTER_ACTION_BUILD
 } nc_footer_action_t;
 
 typedef struct {
@@ -97,6 +85,9 @@ const nc_footer_item_t *nc_menu_footer(nc_mode_t mode, bool file_view, size_t *c
    preview's own keys instead of the code-entry ones. */
 const nc_footer_item_t *nc_menu_preview_footer(size_t *count);
 const nc_footer_item_t *nc_menu_submenu(nc_footer_action_t parent, size_t *count);
+/* The footer key a submenu hangs off ('1'..'9', 0 when it hangs off none): the
+   first digit of every id inside that pad. */
+char nc_menu_submenu_digit(nc_footer_action_t parent);
 
 #ifdef __cplusplus
 }

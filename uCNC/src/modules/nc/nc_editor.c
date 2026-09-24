@@ -32,6 +32,9 @@ static bool g_nc_editor_modal_active;
 static nc_footer_action_t g_nc_editor_modal_parent;
 static const nc_footer_item_t *g_nc_editor_modal_items;
 static size_t g_nc_editor_modal_count;
+/* The pad's own storage: one item and one label per slot, filled when it opens. */
+static nc_footer_item_t g_nc_editor_modal_built[NC_MODAL_ROWS * NC_MODAL_COLS];
+static char g_nc_editor_modal_names[NC_MODAL_ROWS * NC_MODAL_COLS][16];
 static const char *g_nc_editor_modal_title;
 static size_t g_nc_editor_modal_line;
 static char g_nc_editor_modal_prefix;
@@ -131,6 +134,90 @@ static bool nc_editor_modal_insert_line(nc_editor_ctx_t *ctx, const char *text)
     return true;
 }
 
+/* The G7X submenu's `Q` and `N` entries: put that word on the line the cursor is
+   on and select it, so the number is typed straight into it. This is how a P/Q
+   range is written from the panel - `P`/`Q` on the header name block numbers,
+   and those numbers are the `N` words on the profile rows.
+
+   `N` numbers a profile block, and the block number comes before the motion word
+   (`N100 G1 X20 Z0`), so it goes to the start of the line. `Q` names the end of
+   the range and goes after the word the operator is looking at, or at the end of
+   the line when nothing is picked. Both arrive as `N0`/`Q0`, the way the
+   templates write their words: typing replaces the zero. */
+static bool nc_editor_insert_range_word(nc_editor_ctx_t *ctx, char letter)
+{
+    char new_line[NC_MAX_LINE_LEN];
+    nc_word_t words[24];
+    const char *old;
+    int insert_at;
+    int count;
+    int i;
+
+    if (!ctx->editable || ctx->doc->line_count == 0 ||
+        ctx->doc->cursor_line >= ctx->doc->line_count) {
+        strncpy(ctx->status, "No line to put the word on", ctx->status_size - 1);
+        return true;
+    }
+    old = ctx->doc->lines[ctx->doc->cursor_line].text;
+    /* The line may already carry the word - a header written from the presets
+       has `P0 Q0` on it. Then this key picks that word instead of adding a
+       second one, which the parser would refuse as a repeated word. */
+    count = nc_parse_words(old, words, 24);
+    for (i = 0; i < count; i++) {
+        if (words[i].letter == letter) {
+            ctx->doc->selected_word = i;
+            snprintf(ctx->status, ctx->status_size, "%c %s: type it", letter,
+                     nc_vocab_label_for_word(old, &words[i]));
+            *ctx->dirty = true;
+            return true;
+        }
+    }
+    if (letter == 'N') {
+        insert_at = 0;
+    } else {
+        insert_at = (int)strlen(old);
+        if (ctx->doc->selected_word >= 0 &&
+            nc_get_selected_word(ctx->doc, &words[0]) == NC_OK) {
+            insert_at = (int)words[0].end;
+        }
+    }
+
+    if (letter == 'N') {
+        if (snprintf(new_line, sizeof(new_line), "N0 %s", old) >= (int)sizeof(new_line)) {
+            strncpy(ctx->status, "Line too long for N", ctx->status_size - 1);
+            return true;
+        }
+    } else {
+        if (insert_at + 4 + (int)strlen(old + insert_at) >= (int)sizeof(new_line)) {
+            strncpy(ctx->status, "Line too long for Q", ctx->status_size - 1);
+            return true;
+        }
+        memcpy(new_line, old, (size_t)insert_at);
+        new_line[insert_at] = ' ';
+        new_line[insert_at + 1] = 'Q';
+        new_line[insert_at + 2] = '0';
+        strcpy(new_line + insert_at + 3, old + insert_at);
+    }
+
+    if (nc_set_line(ctx->doc, ctx->doc->cursor_line, new_line) != NC_OK) {
+        strncpy(ctx->status, "Could not write the word", ctx->status_size - 1);
+        return true;
+    }
+    /* Select what was just written: the typed digits replace its zero. */
+    ctx->doc->selected_word = -1;
+    count = nc_parse_words(new_line, words, 24);
+    for (i = 0; i < count; i++) {
+        if (words[i].letter == letter) {
+            ctx->doc->selected_word = i;
+            snprintf(ctx->status, ctx->status_size, "%c %s: type it", letter,
+                     nc_vocab_label_for_word(new_line, &words[i]));
+            break;
+        }
+    }
+    *ctx->dirty = true;
+    return true;
+}
+
 static void nc_editor_modal_begin_line(nc_editor_ctx_t *ctx, char prefix)
 {
     char line[4];
@@ -192,23 +279,68 @@ static void nc_editor_select_first_value(nc_editor_ctx_t *ctx)
     }
 }
 
+/* A pad is the panel's own entries - the ones that *do* something rather than
+   write text: `Q`/`N`, the builder, the `G` field, the `T` field, the tool
+   table - plus the card's sections for every other slot. A slot's id is its key
+   path, `<footer key><pad key>`, so a section lands where its id says and a card
+   can add an entry of its own by writing that id: it is offered as soon as a
+   section has it. The label is the section's `name=`, which is the one place the
+   file already names the entry - so the panel keeps no second copy of it. */
+static void nc_editor_modal_build(nc_footer_action_t parent)
+{
+    const nc_footer_item_t *table;
+    size_t table_count = 0u;
+    char digit = nc_menu_submenu_digit(parent);
+    int key;
+
+    g_nc_editor_modal_count = 0u;
+    if (!digit) {
+        return;
+    }
+    table = nc_menu_submenu(parent, &table_count);
+    for (key = 1; key <= (int)(NC_MODAL_ROWS * NC_MODAL_COLS); key++) {
+        char ch = (char)('0' + key);
+        const nc_footer_item_t *row = 0;
+        nc_footer_item_t *item = &g_nc_editor_modal_built[g_nc_editor_modal_count];
+        size_t i;
+
+        for (i = 0u; i < table_count; i++) {
+            if (table[i].key == ch && table[i].action != NC_FOOTER_ACTION_NONE) {
+                row = &table[i];
+                break;
+            }
+        }
+        if (row) {
+            item->key = ch;
+            item->label = row->label;
+            item->action = row->action;
+        } else if (nc_preset_name_for_id(((int)(digit - '0') * 10) + key,
+                                         g_nc_editor_modal_names[g_nc_editor_modal_count],
+                                         sizeof(g_nc_editor_modal_names[0]))) {
+            item->key = ch;
+            item->label = g_nc_editor_modal_names[g_nc_editor_modal_count];
+            item->action = NC_FOOTER_ACTION_PRESET_ID;
+        } else {
+            continue;
+        }
+        g_nc_editor_modal_count++;
+    }
+}
+
 static void nc_editor_modal_begin(nc_editor_ctx_t *ctx, nc_footer_action_t parent)
 {
     nc_editor_modal_cancel(ctx);
-    if (parent == NC_FOOTER_ACTION_GCODE) {
-        nc_editor_modal_begin_line(ctx, 'G');
-        *ctx->dirty = true;
-        return;
-    }
     g_nc_editor_modal_active = true;
     g_nc_editor_modal_parent = parent;
-    g_nc_editor_modal_items = nc_menu_submenu(parent, &g_nc_editor_modal_count);
+    nc_editor_modal_build(parent);
+    g_nc_editor_modal_items = g_nc_editor_modal_built;
     switch (parent) {
     case NC_FOOTER_ACTION_OPS: g_nc_editor_modal_title = "OPS"; break;
     case NC_FOOTER_ACTION_TOOL_MENU: g_nc_editor_modal_title = "TOOL"; break;
     case NC_FOOTER_ACTION_G7X_MENU: g_nc_editor_modal_title = "G7X"; break;
     case NC_FOOTER_ACTION_SYNC_MENU: g_nc_editor_modal_title = "THREAD"; break;
     case NC_FOOTER_ACTION_PECK_MENU: g_nc_editor_modal_title = "PECK"; break;
+    case NC_FOOTER_ACTION_GCODE: g_nc_editor_modal_title = "WORD"; break;
     default: g_nc_editor_modal_title = ""; break;
     }
     /* Give the helper the line it belongs to: the action name sits in that
@@ -309,6 +441,22 @@ static bool nc_editor_modal_handle_key(nc_editor_ctx_t *ctx,
                 nc_editor_modal_cancel(ctx);
                 if (action == NC_FOOTER_ACTION_TOOL_SELECT) {
                     nc_editor_modal_begin_line(ctx, 'T');
+                } else if (action == NC_FOOTER_ACTION_PRESET_ID) {
+                    /* A slot the card fills: the id is the key path, so the
+                       section is what this key writes - and its rows do the
+                       writing, inline rows and all. */
+                    char digit = nc_menu_submenu_digit(g_nc_editor_modal_parent);
+                    int id = digit ? ((int)(digit - '0') * 10) + (ch - '0') : 0;
+
+                    if (!digit || !nc_insert_preset_id(ctx->doc, id)) {
+                        strncpy(ctx->status, "No such entry", ctx->status_size - 1);
+                    } else {
+                        nc_preset_name_for_id(id, ctx->status, ctx->status_size);
+                    }
+                } else if (action == NC_FOOTER_ACTION_GCODE) {
+                    /* The word field: type a G-code and its template lands, which
+                       is where a single line of any kind is written. */
+                    nc_editor_modal_begin_line(ctx, 'G');
                 } else {
                     /* The screen runs it: the menu's entries are the screen's. */
                     ctx->follow = action;
@@ -398,12 +546,15 @@ static uint8_t g_nc_editor_unsaved_arm;
    only copy, so it stays open and the operator sees why. */
 bool nc_editor_save_current(nc_editor_ctx_t *ctx)
 {
-    if (ctx->doc->dirty && nc_path_supported(ctx->doc->path) &&
+    /* Anything the panel can open, it can save and come back to: the operator
+       edits the text it showed them (`presets.txt` included), not only
+       programs. `nc_save_file()` has drawn the same line. */
+    if (ctx->doc->dirty && nc_path_text(ctx->doc->path) &&
         nc_save_file(ctx->doc, ctx->doc->path) != NC_OK) {
         return false;
     }
     g_nc_editor_unsaved_arm = 0;
-    if (nc_path_supported(ctx->doc->path)) {
+    if (nc_path_text(ctx->doc->path)) {
         nc_state_remember_path(ctx->mode, ctx->doc->path);
         nc_state_remember_cursor(ctx->doc);
         nc_state_save();
@@ -645,7 +796,11 @@ static void nc_editor_set_code_line(nc_editor_ctx_t *ctx, size_t line)
 
 static size_t nc_editor_code_line(nc_editor_ctx_t *ctx)
 {
-    size_t line = ctx->mode == NC_MODE_RUN ? nc_run_line() : ctx->doc->cursor_line;
+    /* RUN has one cursor, and it is the machine's: the unit being run, or the
+       line the sender is on between units (`nc_run_display_line()`). The pane
+       marks it, the line keys move it and `1 SINGLE` acts on it. */
+    size_t line = ctx->mode == NC_MODE_RUN ? nc_run_display_line()
+                                           : ctx->doc->cursor_line;
 
     return ctx->doc->line_count && line >= ctx->doc->line_count ? 0 : line;
 }
@@ -654,6 +809,17 @@ void nc_editor_move_line(nc_editor_ctx_t *ctx, int delta)
 {
     size_t line = nc_editor_code_line(ctx);
 
+    /* RUN belongs to the machine: while a run is in flight the line is the
+       sender's, and a key that moved it would move what the program does next -
+       the mark and the stream would part company again, which is the fault this
+       whole arrangement exists to prevent. The keys work in RUN when nothing is
+       running, which is what they are for there (`2 FROM` starts on the line
+       they leave the cursor on). */
+    if (ctx->mode == NC_MODE_RUN && nc_run_active()) {
+        strncpy(ctx->status, "RUN owns the line", ctx->status_size - 1);
+        *ctx->dirty = true;
+        return;
+    }
     if (!ctx->code_view ||
         ctx->doc->line_count == 0) {
         strncpy(ctx->status, "No code lines", ctx->status_size - 1);
@@ -739,17 +905,6 @@ void nc_editor_open_current_folder(nc_editor_ctx_t *ctx)
     }
     snprintf(dir, sizeof(dir), "%.*s", (int)(slash - path), path);
     nc_editor_open_files(ctx, dir, false);
-}
-
-void nc_editor_insert_preset(nc_editor_ctx_t *ctx, nc_preset_t preset,
-                                           const char *ok,
-                                           const char *fail)
-{
-    if (nc_insert_preset(ctx->doc, preset) == NC_OK) {
-        strncpy(ctx->status, ok, ctx->status_size - 1);
-    } else {
-        strncpy(ctx->status, fail, ctx->status_size - 1);
-    }
 }
 
 void nc_editor_serial_selected_line(nc_editor_ctx_t *ctx)
@@ -865,9 +1020,14 @@ if (key == NC_VISUAL_KEY_FIELD_PREV || key == NC_VISUAL_KEY_FIELD_NEXT) {
         return true;
     }
     if (!ctx->code_view || !ctx->editable) {
-        /* RUN shows the code without editing it: the key is a line move. */
+        /* RUN shows the code without editing it: the key is a line move. The
+           move changes what the panel shows, so it asks for the repaint here -
+           an unedited screen has no other reason to draw itself, and without
+           this the highlight stayed where it was until the next footer key
+           happened to mark the screen dirty. */
         nc_editor_move_line(ctx, forward ? 1 : -1);
         nc_editor_serial_selected_line(ctx);
+        *ctx->dirty = true;
         return true;
     }
     /* Arrows never edit: drop any draft instead of applying it, so a stray
@@ -1025,7 +1185,9 @@ void nc_editor_draw_files(nc_editor_ctx_t *ctx)
 
 void nc_editor_draw_pane(nc_editor_ctx_t *ctx)
 {
-    char buf[80];
+    /* Wide enough for the file path (NC_MAX_PATH-style length) plus the dirty
+       mark: the name row is the one place a whole path is formatted. */
+    char buf[128];
     int row;
     int line_cols = (NC_RIGHT_PANE_W - NC_LINE_TEXT_X_PAD) / NC_VISUAL_CHAR_W;
 
@@ -1060,6 +1222,17 @@ void nc_editor_draw_pane(nc_editor_ctx_t *ctx)
         int y = NC_CODE_Y + row * NC_VISUAL_ROW_H;
         size_t line_index = ctx->snapshot->first_line + (size_t)row;
         bool selected = line_index == nc_editor_code_line(ctx);
+        /* The rest of the cycle the marked line belongs to gets the weaker
+           mark. It is the cell RUN is on, not the whole document: a plain move
+           outside any cycle marks nothing, because the block the screen hands
+           over is the marked line itself. Copy, never a scan - which block a
+           line is in is the screen's answer (`nc_g7x_block_containing()`), so
+           the pane and the sender cannot disagree about it. */
+        bool in_block = !selected &&
+                        ctx->snapshot->block_mark &&
+                        line_index >= ctx->snapshot->block_first &&
+                        line_index <= ctx->snapshot->block_last;
+        lvds_color_t row_bg;
         char display_line[NC_MAX_LINE_LEN + 2];
         const char *line_text = ctx->snapshot->lines[row];
         int word_start = ctx->editable ? ctx->snapshot->selected_word_start : -1;
@@ -1084,20 +1257,36 @@ void nc_editor_draw_pane(nc_editor_ctx_t *ctx)
                when it is not - the same way it covers a code line on every
                other row. */
             int hint_y = (row == 0) ? NC_PANE_Y : (y - NC_VISUAL_ROW_H);
+            /* The row it covers keeps the mark that row has: while the cursor
+               sits in a cycle, the row above it is part of the pale path, and
+               the legend must not punch a hole in it exactly when the operator
+               is editing a word of that path. */
+            bool hint_pale = row > 0 &&
+                             ctx->snapshot->block_mark &&
+                             line_index - 1u >= ctx->snapshot->block_first &&
+                             line_index - 1u <= ctx->snapshot->block_last;
+            lvds_color_t hint_bg = hint_pale ? NC_VISUAL_SELECT_BLOCK
+                                             : NC_VISUAL_BG;
 
-            lvds_draw_fill_rect(NC_RIGHT_PANE_X + 2, hint_y - 3, NC_RIGHT_PANE_W - 4, NC_VISUAL_ROW_H, NC_VISUAL_BG);
+            lvds_draw_fill_rect(NC_RIGHT_PANE_X + 2, hint_y - 3, NC_RIGHT_PANE_W - 4, NC_VISUAL_ROW_H, hint_bg);
             snprintf(buf, sizeof(buf), "%c  %s", ctx->doc->selected_word >= 0 ? '>' : ' ', ctx->snapshot->selected_label);
             nc_draw_text_clip(NC_RIGHT_PANE_X + NC_LINE_TEXT_X_PAD,
                                      hint_y,
                                      buf,
                                      line_cols,
                                      NC_VISUAL_ACCENT,
-                                     NC_VISUAL_BG,
+                                     hint_bg,
                                      LVDS_FONT_NORMAL);
         }
+        /* One background for the whole row: the bright mark wins over the
+           block's pale one, and the row's own grey is what is left. The pane
+           draws the mark, so a key that moves the cursor or the sender reaches
+           it through the same repaint as the text. */
+        row_bg = selected ? NC_VISUAL_SELECT
+                          : (in_block ? NC_VISUAL_SELECT_BLOCK : NC_VISUAL_BG);
         snprintf(buf, sizeof(buf), "%3lu", (unsigned long)(ctx->snapshot->first_line + (size_t)row + 1));
         lvds_draw_text(NC_RIGHT_PANE_X + NC_LINE_NO_X_PAD, y, buf, selected ? NC_VISUAL_LINE_NO_SELECTED : NC_VISUAL_DIM,
-                       selected ? NC_VISUAL_SELECT : NC_VISUAL_BG,
+                       row_bg,
                        LVDS_FONT_NORMAL);
         nc_text_draw_line_with_word(line_text,
                                     NC_RIGHT_PANE_X + NC_LINE_TEXT_X_PAD,
@@ -1110,7 +1299,7 @@ void nc_editor_draw_pane(nc_editor_ctx_t *ctx)
                                     selected,
                                     NC_VISUAL_TEXT,
                                     NC_VISUAL_DIM,
-                                    NC_VISUAL_BG,
+                                    row_bg,
                                     NC_VISUAL_SELECT,
                                     NC_VISUAL_WORD_FG,
                                     NC_VISUAL_WORD_BG);
@@ -1139,68 +1328,6 @@ bool nc_editor_action(nc_editor_ctx_t *ctx, uint8_t action)
         return true;
     case NC_FOOTER_ACTION_TOOL_SELECT:
         nc_editor_open_field(ctx, 'T');
-        return true;
-    case NC_FOOTER_ACTION_TOOL_CHANGE:
-        if (nc_insert_line(ctx->doc, ctx->doc->cursor_line + 1u, "M6") == NC_OK) {
-            nc_cursor_down(ctx->doc);
-            strncpy(ctx->status, "Inserted M6 tool change", ctx->status_size - 1);
-        }
-        return true;
-    case NC_FOOTER_ACTION_SPINDLE_ON:
-        if (nc_insert_line(ctx->doc, ctx->doc->cursor_line + 1u, "M3 S1000") == NC_OK) {
-            nc_cursor_down(ctx->doc);
-            strncpy(ctx->status, "Inserted M3 spindle on", ctx->status_size - 1);
-        }
-        return true;
-    case NC_FOOTER_ACTION_SPINDLE_STOP:
-        if (nc_insert_line(ctx->doc, ctx->doc->cursor_line + 1u, "M5") == NC_OK) {
-            nc_cursor_down(ctx->doc);
-            strncpy(ctx->status, "Inserted M5 spindle stop", ctx->status_size - 1);
-        }
-        return true;
-    case NC_FOOTER_ACTION_SPINDLE_CCW:
-        if (nc_insert_line(ctx->doc, ctx->doc->cursor_line + 1u, "M4 S1000") == NC_OK) {
-            nc_cursor_down(ctx->doc);
-            strncpy(ctx->status, "Inserted M4 spindle CCW", ctx->status_size - 1);
-        }
-        return true;
-    case NC_FOOTER_ACTION_TAP:
-        if (nc_insert_preset_id(ctx->doc, 53)) {
-            nc_cursor_down(ctx->doc);
-            strncpy(ctx->status, "Inserted tap preset", ctx->status_size - 1);
-        } else {
-            strncpy(ctx->status, "Tap preset unavailable", ctx->status_size - 1);
-        }
-        return true;
-    case NC_FOOTER_ACTION_THREAD_OD:
-        if (nc_insert_preset_id(ctx->doc, 51)) {
-            nc_cursor_down(ctx->doc);
-            strncpy(ctx->status, "Inserted G76 OD thread", ctx->status_size - 1);
-        }
-        return true;
-    case NC_FOOTER_ACTION_THREAD_ID:
-        if (nc_insert_preset_id(ctx->doc, 52)) {
-            nc_cursor_down(ctx->doc);
-            strncpy(ctx->status, "Inserted G76 ID thread", ctx->status_size - 1);
-        }
-        return true;
-    case NC_FOOTER_ACTION_PECK_DRILL:
-        if (nc_insert_preset_id(ctx->doc, 61)) {
-            nc_cursor_down(ctx->doc);
-            strncpy(ctx->status, "Inserted drill preset", ctx->status_size - 1);
-        }
-        return true;
-    case NC_FOOTER_ACTION_PECK_PECK:
-        if (nc_insert_preset_id(ctx->doc, 62)) {
-            nc_cursor_down(ctx->doc);
-            strncpy(ctx->status, "Inserted peck preset", ctx->status_size - 1);
-        }
-        return true;
-    case NC_FOOTER_ACTION_PECK_DWELL:
-        if (nc_insert_preset_id(ctx->doc, 63)) {
-            nc_cursor_down(ctx->doc);
-            strncpy(ctx->status, "Inserted dwell preset", ctx->status_size - 1);
-        }
         return true;
     case NC_FOOTER_ACTION_FILE:
         /* Opens the folder the open file lives in, so the list can land on it;
@@ -1263,36 +1390,10 @@ bool nc_editor_action(nc_editor_ctx_t *ctx, uint8_t action)
             }
         }
         return true;
-    case NC_FOOTER_ACTION_PRESET_OD:
-        nc_editor_insert_preset(ctx, NC_PRESET_OD, "Inserted OD preset", "OD preset failed");
-        return true;
-    case NC_FOOTER_ACTION_PRESET_ID:
-        nc_editor_insert_preset(ctx, NC_PRESET_ID, "Inserted ID preset", "ID preset failed");
-        return true;
-    case NC_FOOTER_ACTION_PRESET_FACE:
-        nc_editor_insert_preset(ctx, NC_PRESET_FACE, "Inserted FACE preset", "FACE preset failed");
-        return true;
-    case NC_FOOTER_ACTION_PRESET_LINE:
-        nc_editor_insert_preset(ctx, NC_PRESET_LINE, "Inserted line preset", "Line preset failed");
-        return true;
-    case NC_FOOTER_ACTION_PRESET_ARC:
-        nc_editor_insert_preset(ctx, NC_PRESET_ARC, "Inserted arc preset", "Arc preset failed");
-        return true;
-    case NC_FOOTER_ACTION_PRESET_SETUP:
-        nc_editor_insert_preset(ctx, NC_PRESET_SETUP, "Inserted setup preset", "Setup preset failed");
-        return true;
-    case NC_FOOTER_ACTION_PRESET_END:
-        nc_editor_insert_preset(ctx, NC_PRESET_END, "Inserted G80", "G80 preset failed");
-        return true;
-    case NC_FOOTER_ACTION_SAVE:
-        if (ctx->doc->path[0] && nc_save_file(ctx->doc, ctx->doc->path) == NC_OK) {
-            nc_state_remember_path(ctx->mode, ctx->doc->path);
-            nc_state_save();
-            strncpy(ctx->status, "Saved", ctx->status_size - 1);
-        } else {
-            strncpy(ctx->status, "Save needs an opened NC file", ctx->status_size - 1);
-        }
-        return true;
+    case NC_FOOTER_ACTION_G7X_Q:
+        return nc_editor_insert_range_word(ctx, 'Q');
+    case NC_FOOTER_ACTION_G7X_N:
+        return nc_editor_insert_range_word(ctx, 'N');
     case NC_FOOTER_ACTION_NEW:
         if (nc_files_active()) {
             nc_editor_new_file_begin(ctx);

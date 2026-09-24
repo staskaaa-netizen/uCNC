@@ -25,7 +25,10 @@ def run(name, sources, flags):
     if result.returncode:
         print(result.stderr[-10000:])
         return result.returncode
-    return subprocess.run([str(exe)], timeout=120, cwd=OUT).returncode
+    # The parser suite drives the real virtual MCU through whole cycles, so it is
+    # minutes of emulated machine time, not seconds. The cap is here to catch a
+    # cycle that never ends, not to measure the suite's speed.
+    return subprocess.run([str(exe)], timeout=300, cwd=OUT).returncode
 
 if __name__ == "__main__":
     suite = sys.argv[1] if len(sys.argv) > 1 else "all"

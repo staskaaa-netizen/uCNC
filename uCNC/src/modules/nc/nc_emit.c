@@ -168,6 +168,58 @@ static bool nc_emit_feed_g7x(nc_emit_stream_t *stream)
     return false;
 }
 
+/* Feed the numbered range that sits *above* the cycle line. `G70 P Q` names the
+   profile the roughing cycle already collected - the rows are before it, not
+   after - so the finish cut is expanded from the range
+   `nc_g7x_range_above()` finds (the pane marks the same lines from the same
+   answer), fed in program order. A range that is not there is reported as
+   missing instead of being guessed. */
+static bool nc_emit_feed_g7x_range_above(nc_emit_stream_t *stream,
+                                         uint32_t p,
+                                         uint32_t q)
+{
+    size_t first = 0u;
+    size_t last = 0u;
+    size_t i;
+    bool done = false;
+
+    if (!stream || !stream->doc || p == 0u || q < p)
+        return false;
+
+    if (!nc_g7x_range_above(stream->doc, stream->source_line, p, q, &first, &last)) {
+        stream->error = G7X_RANGE_MISSING;
+        return false;
+    }
+
+    for (i = first; i <= last; i++) {
+        const char *line = nc_emit_trim(stream->doc->lines[i].text);
+
+        if (!*line || g7x_contour_cmd_from_line(line) == G7X_CONTOUR_END)
+            continue;
+        stream->g7x.pending_source_line = i;
+        stream->error = g7x_stream_add_line(&stream->g7x, line, &done);
+        if (stream->error != G7X_OK) {
+            if (stream->log) {
+                grbl_stream_printf("[MSG:NC G7X ADD FAIL %.96s]\r\n", line);
+            }
+            g7x_stream_reset(&stream->g7x);
+            stream->g7x_collecting = false;
+            stream->active = false;
+            return false;
+        }
+    }
+    /* Closing the range plays the role of G80 for the generator. */
+    stream->error = g7x_stream_add_line(&stream->g7x, "G80", &done);
+    if (stream->error != G7X_OK) {
+        g7x_stream_reset(&stream->g7x);
+        stream->g7x_collecting = false;
+        stream->active = false;
+        return false;
+    }
+    stream->g7x_collecting = false;
+    return true;
+}
+
 /* Feed the numbered profile range [p, q] from the document. Unnumbered rows
    inside the range are contour rows, matching the parser's run-time rule. */
 static bool nc_emit_feed_g7x_range(nc_emit_stream_t *stream, uint32_t p, uint32_t q)
@@ -364,7 +416,13 @@ nc_emit_result_t nc_emit_stream_next(nc_emit_stream_t *stream,
             stream->source_line = (second ? second_line : stream->source_line) + 1u;
             stream->g7x_collecting = true;
             if (numbered) {
-                if (nc_emit_feed_g7x_range(stream, pq_p, pq_q)) {
+                /* G70's range is above it - the profile the roughing cycle
+                   collected - while every other cycle's range follows it. */
+                bool fed = g7x_cycle_from_line(line) == G7X_CYCLE_G70
+                               ? nc_emit_feed_g7x_range_above(stream, pq_p, pq_q)
+                               : nc_emit_feed_g7x_range(stream, pq_p, pq_q);
+
+                if (fed) {
                     return nc_emit_g7x_next(stream, out, out_sz, source_line);
                 }
                 return NC_EMIT_ERROR;

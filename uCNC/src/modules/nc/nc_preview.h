@@ -8,8 +8,9 @@
 
    The boundary: the preview takes the request below and owns nothing the
    screen owns - what it keeps is what it draws with (the layer switches, the
-   live stock mask, the tool marker's rectangle, one frame's cache). It never
-   calls back into the screen, and the screen never draws the stock itself. */
+   live stock mask, one frame's cache, and the live band the tool marker is held
+   inside). It never calls back into the screen, and the screen never draws the
+   stock itself. */
 #ifndef NC_PREVIEW_H
 #define NC_PREVIEW_H
 
@@ -82,8 +83,11 @@ typedef struct {
     uint32_t tool;
 } nc_preview_times_t;
 
-bool nc_preview_line_word_float(const char *line, char letter, float *out);
 void nc_preview_collect(const nc_document_t *doc, nc_preview_info_t *preview);
+
+/* Coordinate mapping shared with MANUAL jog direction and the path builder. */
+int nc_preview_map_x(const nc_preview_info_t *preview, int stock_top, int stock_h, float x);
+int nc_preview_map_z(const nc_preview_info_t *preview, int z0_x, int stock_w, float z);
 
 /* Draw one frame of the preview into (x, y, w, h). */
 void nc_preview_draw(const nc_preview_ctx_t *ctx, int x, int y, int w, int h,
@@ -97,8 +101,7 @@ bool nc_preview_toggle_layer(nc_preview_layer_t layer);
 const char *nc_preview_action(uint8_t action);
 
 /* The drawing context changed (a full frame is about to be drawn): the frame
-   cache and the tool marker's rectangle no longer describe what is on the
-   panel. */
+   cache no longer describes what is on the panel. */
 void nc_preview_invalidate(void);
 
 #ifdef __cplusplus

@@ -15,11 +15,13 @@ typedef enum {
     G7X_UNSUPPORTED,
     G7X_WRITE_FAILED,
     G7X_RANGE_MISSING,    /* numbered range unavailable or evicted */
-    G7X_RANGE_AMBIGUOUS   /* duplicate block number or reversed range */
+    G7X_RANGE_AMBIGUOUS,  /* duplicate block number or reversed range */
+    G7X_CORNER_TOO_LARGE  /* an R/C does not fit the moves beside it */
 } g7x_result_t;
 
 typedef enum {
     G7X_CYCLE_NONE = 0,
+    G7X_CYCLE_G70,
     G7X_CYCLE_G71,
     G7X_CYCLE_G72,
     G7X_CYCLE_G76
@@ -80,6 +82,16 @@ typedef struct {
     int has_center;
     g7x_corner_kind_t outgoing_kind;
     float outgoing_amount;
+    /* The feed this row carries, when it carries one. A profile row's F is the
+       *finish* feed - the roughing runs at the cycle header's F, as Fanuc has it
+       - so the element keeps it and the finish cut emits it where the program
+       put it. A row without one runs at the feed before it. */
+    float feed;
+    bool has_feed;
+    /* First row of the profile was a G0. Fanuc's `P` block is a positioning
+       move: the cycle rapids to that point and starts cutting from there,
+       instead of feeding in to the profile's start. */
+    bool approach;
     size_t source_line;
 } g7x_contour_element_t;
 
@@ -118,6 +130,14 @@ typedef struct {
     float doc;
     size_t pending_source_line;
     size_t last_source_line;
+    /* Where the generator last left the tool, so a rapid that would not move it
+       is not emitted at all, and whether the current pass still needs its
+       approach (the first pass of the cycle does; the later ones are already
+       clear in X, and a facing pass does not return to the Z start). */
+    float last_x;
+    float last_z;
+    bool have_last;
+    bool pass_approach;
     g7x_contour_region_t region;
 } g7x_stream_t;
 
@@ -226,6 +246,14 @@ g7x_result_t g7x_stream_begin_parsed(g7x_stream_t *stream,
                                      float z_allow,
                                      float feed,
                                      float doc);
+/* G70: the finish cut of a contour the caller already holds. The region is
+   re-run as the finish pass - in the order programmed, at the feed each row
+   carries (the `feed` given here where a row has none) and with nothing
+   offset, because the finish *is* the profile. No roughing, no pass levels. */
+g7x_result_t g7x_stream_begin_finish(g7x_stream_t *stream,
+                                     const g7x_contour_region_t *region,
+                                     float retract,
+                                     float feed);
 g7x_result_t g7x_stream_add_parsed(g7x_stream_t *stream,
                                    g7x_contour_cmd_t cmd,
                                    float x,
@@ -240,12 +268,27 @@ g7x_result_t g7x_stream_add_parsed(g7x_stream_t *stream,
                                    bool has_k,
                                    g7x_corner_kind_t corner_kind,
                                    float corner_amount,
+                                   float feed,
+                                   bool has_feed,
                                    bool *done);
 g7x_step_result_t g7x_stream_next(g7x_stream_t *stream, char *out, size_t out_sz);
 g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event);
 g7x_step_result_t g7x_stream_next_block(g7x_stream_t *stream, g7x_motion_block_t *block);
 bool g7x_parser_busy(void);
+/* True while a cycle header is in and its contour rows are still arriving: the
+   module is *collecting*, so the lines that follow belong to it. A sender that
+   paces itself one block at a time asks this - the rows have to keep coming or
+   the contour is never completed, while the blocks of a cycle that is already
+   running belong to the machine and the next unit can wait for them. */
+bool g7x_parser_collecting(void);
 void g7x_parser_cancel(void);
+
+/* Why the last cycle line was refused, in words a panel can show: a machine
+   with no console attached still has to say what stopped it. The module owns
+   the wording - a caller only prints it. The text is *taken* (read once) by
+   the caller that shows it, so it can never be attached to a later error; an
+   empty string means this error has nothing of the module's to add. */
+const char *g7x_take_refusal_text(void);
 
 void g7x_thread_reset(g7x_thread_stream_t *stream);
 g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,

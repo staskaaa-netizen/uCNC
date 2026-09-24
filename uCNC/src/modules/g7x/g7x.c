@@ -20,6 +20,7 @@
 #include <string.h>
 
 #if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
+#define G7X_G70_EXTENDED_CODE EXTENDED_MCODE(700)
 #define G7X_EXTENDED_CODE EXTENDED_MCODE(710)
 #define G7X_G76_EXTENDED_CODE EXTENDED_MCODE(760)
 #define G7X_G33_MOTION_CODE 33
@@ -39,6 +40,23 @@ static uint32_t g7x_parser_pq_p;
 static uint32_t g7x_parser_pq_q;
 static uint32_t g7x_parser_pq_last;
 static g7x_history_t g7x_parser_history;
+/* The last numbered range this run collected, kept as it was collected (before
+   the corner expansion `prepare` does) so a later `G70 P Q` can re-run it as
+   the finish cut. A run that starts at the G70 line never collected the range:
+   the replay then refuses instead of guessing, and the DRO is what says so. */
+static g7x_contour_region_t g7x_parser_kept_region;
+static uint32_t g7x_parser_kept_p;
+static uint32_t g7x_parser_kept_q;
+static float g7x_parser_kept_feed;
+static bool g7x_parser_kept_valid;
+/* Why the line being parsed was refused, for the caller that shows errors on a
+   screen rather than a terminal. Set on the way out of a refusal, cleared at
+   the start of the next line's execution so it can never describe an older
+   line. */
+static char g7x_parser_refusal[48];
+/* The copy handed to the caller that took it: it has to outlive the clear
+   inside the take. */
+static char g7x_parser_taken_refusal[48];
 /* Fanuc two-line header: the second G71/G72 block completes the open header
    and its U/W words are finish allowances, not the depth of cut. */
 static bool g7x_parser_continuation;
@@ -55,6 +73,26 @@ static bool g7x_parser_pending_doc_set;
 static g7x_corner_kind_t g7x_parser_pending_corner_kind;
 static float g7x_parser_pending_corner_amount;
 
+static void g7x_parser_set_refusal(const char *why)
+{
+    snprintf(g7x_parser_refusal, sizeof(g7x_parser_refusal), "%s",
+             why ? why : "");
+}
+
+const char *g7x_take_refusal_text(void)
+{
+    static const char empty[] = "";
+
+    if (!g7x_parser_refusal[0])
+        return empty;
+    /* Read once: the caller that shows it owns it now, so a later error cannot
+       be explained with an older line's reason. */
+    snprintf(g7x_parser_taken_refusal, sizeof(g7x_parser_taken_refusal), "%s",
+             g7x_parser_refusal);
+    g7x_parser_refusal[0] = '\0';
+    return g7x_parser_taken_refusal;
+}
+
 bool g7x_parse(void *args);
 bool g7x_exec_modifier(void *args);
 bool g7x_reset(void *args);
@@ -67,6 +105,11 @@ CREATE_EVENT_LISTENER(gcode_exec_modifier, g7x_exec_modifier);
 CREATE_EVENT_LISTENER(parser_reset, g7x_reset);
 CREATE_EVENT_LISTENER(cnc_parse_cmd_error, g7x_parse_error);
 CREATE_EVENT_LISTENER(gcode_execute_pending, g7x_execute_pending);
+#else
+const char *g7x_take_refusal_text(void)
+{
+    return "";
+}
 #endif
 
 #if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
@@ -109,6 +152,15 @@ bool g7x_parser_busy(void)
            || g7x_parser_thread_runner_active
 #endif
            ;
+#else
+    return false;
+#endif
+}
+
+bool g7x_parser_collecting(void)
+{
+#if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
+    return g7x_parser_region_active || g7x_parser_pq_armed;
 #else
     return false;
 #endif
@@ -170,6 +222,16 @@ bool g7x_cycle_profile(g7x_cycle_t cycle, g7x_cycle_profile_t *profile)
 
     switch (cycle)
     {
+        case G7X_CYCLE_G70:
+            /* A finish cut has no pass axis and no depth of cut: the profile is
+               followed as programmed. The fields below are what the shared
+               stream machinery asks for, not what G70 uses. */
+            p.pass_axis = G7X_AXIS_X;
+            p.cut_axis = G7X_AXIS_Z;
+            p.contour_monotonic_axis = G7X_AXIS_Z;
+            p.rough_doc_word = 'U';
+            p.name = "G70";
+            break;
         case G7X_CYCLE_G71:
             p.pass_axis = G7X_AXIS_X;
             p.cut_axis = G7X_AXIS_Z;
@@ -274,13 +336,15 @@ static bool g7x_corner_tangents(g7x_v2_t p0,
         return false;
     angle = acosf(dot);
     trim = amount / tanf(angle * 0.5f);
-    max_a = g7x_v2_len(g7x_v2_sub(p0, p1)) * 0.45f;
-    max_b = g7x_v2_len(g7x_v2_sub(p2, p1)) * 0.45f;
-    if (trim > max_a)
-        trim = max_a;
-    if (trim > max_b)
-        trim = max_b;
-    if (trim <= 0.0001f)
+    /* The room each tangent has: what is left of the incoming move and all of
+       the outgoing one. A corner before this one has already taken its room out
+       of `p0` - the walk is left to right and each corner *moves* the element to
+       its tangent point - so two corners on one move can never overlap, and a
+       corner is refused only when it truly cannot fit. Callers check the same
+       limit first (`g7x_expand_corners()`), so nothing is cut down here. */
+    max_a = g7x_v2_len(g7x_v2_sub(p0, p1));
+    max_b = g7x_v2_len(g7x_v2_sub(p2, p1));
+    if (trim > max_a || trim > max_b || trim <= 0.0001f)
         return false;
 
     actual = trim * tanf(angle * 0.5f);
@@ -342,7 +406,11 @@ bool g7x_corner_fit(float prev_x, float prev_z,
     len_a = g7x_v2_len(g7x_v2_sub(p0, p1));
     len_b = g7x_v2_len(g7x_v2_sub(p2, p1));
     limit = (len_a < len_b) ? len_a : len_b;
-    max_r = limit * 0.45f * tanf(angle * 0.5f);
+    /* The tangent fits the shorter move - no more than that, and no less: a
+       round that reaches the far end of its move is a legitimate corner, and
+       the incoming side is already short of whatever the corner before it
+       took. */
+    max_r = limit * tanf(angle * 0.5f);
     if (max_amount)
         *max_amount = max_r;
     if (limit_length)
@@ -440,18 +508,43 @@ static bool g7x_expand_corner(g7x_contour_element_t *prev,
     return true;
 }
 
-static void g7x_expand_corners(g7x_contour_region_t *region, bool x_is_radius)
+/* Expand every R/C corner the contour asks for. A corner that does not fit the
+   moves beside it is **refused**, not fitted: the operator wrote a number and
+   the machine must cut that number or stop (bench: a programmed `R35` on a 20 mm
+   move with a 15 mm step came out as `R3.375` and nothing said why - "it should
+   reject it loudly"). The limit is the one `g7x_corner_fit()` reports: the
+   tangent fits the shorter move, and the incoming move is measured *after* the
+   corner before it - so two corners sharing a move cannot overlap. */
+static g7x_result_t g7x_expand_corners(g7x_contour_region_t *region, bool x_is_radius)
 {
     unsigned i;
 
     if (!region || region->count < 3)
-        return;
+        return G7X_OK;
 
     for (i = 1; i + 1 < region->count && region->count < G7X_MAX_CONTOUR_ELEMENTS; i++) {
         g7x_contour_element_t insert;
+        g7x_contour_element_t *prev = &region->elements[i - 1];
+        g7x_contour_element_t *corner = &region->elements[i];
+        g7x_contour_element_t *next = &region->elements[i + 1];
+        float max_amount = 0.0f;
         unsigned move;
 
-        if (!g7x_expand_corner(&region->elements[i - 1], &region->elements[i], &region->elements[i + 1], &insert, x_is_radius))
+        if (corner->outgoing_kind != G7X_CORNER_NONE &&
+            corner->outgoing_amount > 0.0001f) {
+            /* A straight corner leaves `max_amount` at zero - a round on a
+               straight line has nothing to fit, so it is left out rather than
+               refused. */
+            (void)g7x_corner_fit(x_is_radius ? prev->d : prev->d * 0.5f, prev->z,
+                                 x_is_radius ? corner->d : corner->d * 0.5f, corner->z,
+                                 x_is_radius ? next->d : next->d * 0.5f, next->z,
+                                 corner->outgoing_amount, &max_amount, 0);
+            if (max_amount > 0.0001f &&
+                corner->outgoing_amount > max_amount + 0.0005f) {
+                return G7X_CORNER_TOO_LARGE;
+            }
+        }
+        if (!g7x_expand_corner(prev, corner, next, &insert, x_is_radius))
             continue;
 
         for (move = region->count; move > i + 1; move--)
@@ -460,12 +553,36 @@ static void g7x_expand_corners(g7x_contour_region_t *region, bool x_is_radius)
         region->count++;
         i++;
     }
+    return G7X_OK;
 }
 
 void g7x_stream_reset(g7x_stream_t *stream)
 {
     if (stream)
         memset(stream, 0, sizeof(*stream));
+}
+
+/* One step of the roughing pass level, stopped **on** the finish allowance.
+
+   `step` is the direction the level moves in (negative for G71's X, the cut
+   direction for G72's Z), `final_pass` the allowance boundary. A finishing
+   allowance is only an allowance if the roughing leaves it: stepping past the
+   boundary would hand that whole step to the automatic finish cut, which then
+   takes many times what was programmed for it. The boundary is used once - the
+   level has to be on the near side of it for the clamp to apply, so the pass
+   that lands on it is not repeated. */
+static float g7x_rough_step(float pass, float step, float final_pass)
+{
+    float next = pass + step;
+
+    if (step < 0.0f) {
+        if (pass > final_pass + 0.0005f && next < final_pass)
+            next = final_pass;
+    } else if (step > 0.0f) {
+        if (pass < final_pass - 0.0005f && next > final_pass)
+            next = final_pass;
+    }
+    return next;
 }
 
 g7x_result_t g7x_stream_begin_parsed(g7x_stream_t *stream,
@@ -504,17 +621,57 @@ g7x_result_t g7x_stream_begin_parsed(g7x_stream_t *stream,
 
 static bool g7x_arc_is_monotonic(const g7x_contour_element_t *start,
                                 const g7x_contour_element_t *end);
+static g7x_result_t g7x_stream_prepare(g7x_stream_t *stream, bool x_is_radius);
+
+g7x_result_t g7x_stream_begin_finish(g7x_stream_t *stream,
+                                     const g7x_contour_region_t *region,
+                                     float retract,
+                                     float feed)
+{
+    if (!stream || !region || region->count < 2u)
+        return G7X_BAD_FIELD;
+    if (!isfinite(retract) || retract <= 0.0f ||
+        !isfinite(feed) || feed <= 0.0f)
+        return G7X_BAD_FIELD;
+
+    g7x_stream_reset(stream);
+    stream->region = *region;
+    stream->region.active = 1;
+    stream->region.cycle = G7X_CYCLE_G70;
+    /* Nothing is offset: the finish is the profile. What the roughing header's
+       allowances asked for was already cut by the roughing cycle. */
+    stream->region.x_allow = 0.0f;
+    stream->region.z_allow = 0.0f;
+    stream->region.retract = retract;
+    stream->feed = feed;
+    stream->doc = 1.0f;                 /* unused: G70 sets no pass level */
+    stream->pending_source_line = (size_t)-1;
+    stream->last_source_line = (size_t)-1;
+    stream->active = true;
+    return g7x_stream_prepare(stream, true);
+}
 
 static g7x_result_t g7x_stream_prepare(g7x_stream_t *stream, bool x_is_radius)
 {
     unsigned i;
     int z_dir = 0;
     int x_dir = 0;
+    /* A finish cut follows the profile as the program describes it: it takes no
+       pass levels, so a contour that doubles back is fine - what the roughing
+       has to refuse (parallel passes cannot clear a V) is not a question a
+       finish pass asks. */
+    bool finish_only;
 
     if (!stream || stream->region.count < 2)
         return G7X_BAD_FIELD;
 
-    g7x_expand_corners(&stream->region, x_is_radius);
+    finish_only = stream->region.cycle == G7X_CYCLE_G70;
+    {
+        g7x_result_t corner = g7x_expand_corners(&stream->region, x_is_radius);
+
+        if (corner != G7X_OK)
+            return corner;
+    }
 
     stream->start_x = stream->region.elements[0].d;
     stream->start_z = stream->region.elements[0].z;
@@ -525,12 +682,15 @@ static g7x_result_t g7x_stream_prepare(g7x_stream_t *stream, bool x_is_radius)
         const g7x_contour_element_t *el = &stream->region.elements[i];
         float dz = el->z - prev->z;
         float dx = el->d - prev->d;
-        if (el->kind == G7X_SEGMENT_ARC && !g7x_arc_is_monotonic(prev, el))
+        if (!finish_only && el->kind == G7X_SEGMENT_ARC &&
+            !g7x_arc_is_monotonic(prev, el))
             return G7X_UNSUPPORTED;
         if (el->d < stream->min_x) stream->min_x = el->d;
         if (el->d > stream->max_x) stream->max_x = el->d;
         if (el->z < stream->min_z) stream->min_z = el->z;
         if (el->z > stream->max_z) stream->max_z = el->z;
+        if (finish_only)
+            continue;
         if (fabsf(dz) > 0.0001f) {
             int s = dz > 0.0f ? 1 : -1;
             if (z_dir && z_dir != s)
@@ -545,25 +705,48 @@ static g7x_result_t g7x_stream_prepare(g7x_stream_t *stream, bool x_is_radius)
         }
     }
 
+    if (finish_only) {
+        /* No pass level to set and no roughing to run: the finish emission
+           starts at the clearance point and follows the profile. */
+        stream->dir = stream->start_z > ((stream->min_z + stream->max_z) * 0.5f)
+                          ? -1 : 1;
+        stream->started = false;
+        stream->finish = true;
+        stream->stage = 0;
+        stream->finish_i = 0;
+        stream->have_last = false;
+        stream->pass_approach = true;
+        return G7X_OK;
+    }
+
     if ((stream->region.cycle == G7X_CYCLE_G71 && !z_dir) ||
         (stream->region.cycle == G7X_CYCLE_G72 && !x_dir))
         return G7X_UNSUPPORTED;
 
     stream->dir = stream->start_z > ((stream->min_z + stream->max_z) * 0.5f) ? -1 : 1;
     if (stream->region.cycle == G7X_CYCLE_G72) {
-        stream->pass = stream->start_z + ((float)stream->dir * stream->doc);
         stream->final_pass = stream->dir < 0 ?
                              stream->min_z + stream->region.z_allow :
                              stream->max_z - stream->region.z_allow;
+        stream->pass = g7x_rough_step(stream->start_z,
+                                      (float)stream->dir * stream->doc,
+                                      stream->final_pass);
     } else {
-        stream->pass = stream->max_x - stream->doc;
         stream->final_pass = stream->min_x + stream->region.x_allow;
+        stream->pass = g7x_rough_step(stream->max_x,
+                                      -stream->doc,
+                                      stream->final_pass);
         stream->dir = stream->start_z > stream->region.elements[stream->region.count - 1].z ? -1 : 1;
     }
     stream->started = false;
     stream->finish = false;
     stream->stage = 0;
     stream->finish_i = 0;
+    /* The tool's position is not known until the cycle moves it, so the first
+       rapid is always emitted; and the first pass is the one that needs the
+       full approach - the later ones are already clear in X. */
+    stream->have_last = false;
+    stream->pass_approach = true;
     return G7X_OK;
 }
 
@@ -581,6 +764,8 @@ g7x_result_t g7x_stream_add_parsed(g7x_stream_t *stream,
                                    bool has_k,
                                    g7x_corner_kind_t corner_kind,
                                    float corner_amount,
+                                   float feed,
+                                   bool has_feed,
                                    bool *done)
 {
     g7x_contour_element_t *el;
@@ -621,6 +806,17 @@ g7x_result_t g7x_stream_add_parsed(g7x_stream_t *stream,
     el->d = x;
     el->z = z;
     el->source_line = stream->pending_source_line;
+    /* The first row is the profile's start point. When it was written as a
+       rapid it is Fanuc's `P` block - a positioning move - so the cycle rapids
+       to it and the cut starts with the row after it. A rapid *later* in the
+       profile is followed as a cut instead: a cycle never puts a rapid through
+       the material it is cutting. */
+    if (stream->region.count == 1u && cmd == G7X_CONTOUR_RAPID)
+        el->approach = true;
+    if (has_feed && isfinite(feed) && feed > 0.0f) {
+        el->feed = feed;
+        el->has_feed = true;
+    }
     if (el->kind == G7X_SEGMENT_ARC) {
         if (has_i || has_k) {
             el->has_center = 1;
@@ -868,7 +1064,56 @@ static void g7x_event_motion(g7x_event_t *event,
     g7x_block_set(&event->motion, motion, has_x, x, has_z, z, has_f, f);
 }
 
+/* True when this motion would not move the tool: every axis it names is already
+   where the generator last left it. Such a block is never emitted - each pass
+   used to repeat the same X retract and the same Z return twice, and a
+   zero-length feed costs a planner slot and a line of the log. */
+static bool g7x_event_is_idle(const g7x_stream_t *stream, const g7x_event_t *event)
+{
+    const g7x_motion_block_t *m;
+    bool moves = false;
+
+    if (!stream->have_last || !event || event->type != G7X_EVENT_MOTION)
+        return false;
+    m = &event->motion;
+    if (m->has_x && fabsf(m->x - stream->last_x) > 0.0005f)
+        moves = true;
+    if (m->has_z && fabsf(m->z - stream->last_z) > 0.0005f)
+        moves = true;
+    return !moves;
+}
+
+static void g7x_stream_note_motion(g7x_stream_t *stream, const g7x_event_t *event)
+{
+    const g7x_motion_block_t *m = &event->motion;
+
+    if (m->has_x)
+        stream->last_x = m->x;
+    if (m->has_z)
+        stream->last_z = m->z;
+    stream->have_last = true;
+}
+
+static g7x_step_result_t g7x_stream_next_event_raw(g7x_stream_t *stream,
+                                                   g7x_event_t *event);
+
+/* One event per call, except a motion that would not move the tool: that one is
+   dropped and the next event is fetched, so callers only ever see real moves. */
 g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event)
+{
+    for (;;) {
+        g7x_step_result_t result = g7x_stream_next_event_raw(stream, event);
+
+        if (result != G7X_STEP_LINE || event->type != G7X_EVENT_MOTION)
+            return result;
+        if (g7x_event_is_idle(stream, event))
+            continue;
+        g7x_stream_note_motion(stream, event);
+        return result;
+    }
+}
+
+static g7x_step_result_t g7x_stream_next_event_raw(g7x_stream_t *stream, g7x_event_t *event)
 {
     if (!stream || !stream->active || !event)
         return G7X_STEP_ERROR;
@@ -883,7 +1128,9 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
         stream->started = true;
         g7x_event_comment(event,
                           "NC %s generated",
-                          stream->region.cycle == G7X_CYCLE_G72 ? "G72" : "G71");
+                          stream->region.cycle == G7X_CYCLE_G72 ? "G72" :
+                          (stream->region.cycle == G7X_CYCLE_G70 ? "G70"
+                                                                 : "G71"));
         return G7X_STEP_LINE;
     }
 
@@ -901,10 +1148,18 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
                     g7x_event_comment(event, "G72 rough Z%.3f", stream->pass);
                     return G7X_STEP_LINE;
                 case 1:
+                    /* The first pass is entered from wherever the tool stands:
+                       out in X first, then to the face clearance. Every pass
+                       after it is already clear in X (the pass ends with the X
+                       retract), so the Z move goes straight to the depth - the
+                       tool is outside the OD there, and a return to the start Z
+                       would only make the rapid twice as long. */
                     g7x_event_motion(event, 0, true, clear_x, false, 0.0f, false, 0.0f);
                     return G7X_STEP_LINE;
                 case 2:
-                    g7x_event_motion(event, 0, false, 0.0f, true, clear_z, false, 0.0f);
+                    g7x_event_motion(event, 0, false, 0.0f, true,
+                                     stream->pass_approach ? clear_z : stream->pass,
+                                     false, 0.0f);
                     return G7X_STEP_LINE;
                 case 3:
                     g7x_event_motion(event, 1, false, 0.0f, true, stream->pass, true, stream->feed);
@@ -914,7 +1169,10 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
                     return G7X_STEP_LINE;
                 default:
                     stream->stage = 0;
-                    stream->pass += (float)stream->dir * stream->doc;
+                    stream->pass_approach = false;
+                    stream->pass = g7x_rough_step(stream->pass,
+                                                  (float)stream->dir * stream->doc,
+                                                  stream->final_pass);
                     g7x_event_motion(event, 0, true, clear_x, false, 0.0f, false, 0.0f);
                     return G7X_STEP_LINE;
                 }
@@ -947,7 +1205,14 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
                     return G7X_STEP_LINE;
                 default:
                     stream->stage = 0;
-                    stream->pass -= stream->doc;
+                    stream->pass_approach = false;
+                    stream->pass = g7x_rough_step(stream->pass,
+                                                  -stream->doc,
+                                                  stream->final_pass);
+                    /* Each OD pass cuts from the face end again, so the tool
+                       goes back in Z for the next one - at the clearance X it is
+                       already out at, so the return is a plain rapid in the air
+                       (and the X is not repeated: it is still clear). */
                     g7x_event_motion(event, 0, false, 0.0f, true, clear_z, false, 0.0f);
                     return G7X_STEP_LINE;
                 }
@@ -966,14 +1231,26 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
         return G7X_STEP_LINE;
     }
     if (stream->finish_i <= stream->region.count + 2u) {
-        const g7x_contour_element_t *el = &stream->region.elements[stream->finish_i - 3u];
+        unsigned index = stream->finish_i - 3u;
+        const g7x_contour_element_t *el = &stream->region.elements[index];
+        /* The first row of the profile is the point the cut starts from. When
+           the program wrote it as a `G0` - Fanuc's `P` block - the cycle rapids
+           there (the row is a positioning move, not a cut); the cut itself is
+           the row after it, and that is the one that carries the finish feed
+           when the profile did not name one. */
+        bool approach = el->approach;
+        bool first_cut = (!approach && index == 0u) ||
+                         (index == 1u && stream->region.elements[0].approach);
+
         stream->finish_i++;
         memset(event, 0, sizeof(*event));
         event->type = G7X_EVENT_MOTION;
-        event->motion.motion = el->kind == G7X_SEGMENT_ARC ? (el->gcode_cw ? 2u : 3u) : 1u;
+        event->motion.motion = approach ? 0u :
+                              (el->kind == G7X_SEGMENT_ARC ?
+                                   (el->gcode_cw ? 2u : 3u) : 1u);
         event->motion.source_line = el->source_line;
-        event->motion.has_f = stream->finish_i == 4u;
-        event->motion.f = stream->feed;
+        event->motion.has_f = el->has_feed || first_cut;
+        event->motion.f = el->has_feed ? el->feed : stream->feed;
         event->motion.has_x = true;
         event->motion.has_z = true;
         event->motion.x = el->d;
@@ -1010,6 +1287,12 @@ g7x_step_result_t g7x_stream_next_event(g7x_stream_t *stream, g7x_event_t *event
     return G7X_STEP_DONE;
 }
 
+/* The point the cycle retracts to and returns to: out of the material in X and
+   back to the clear Z. Fanuc leaves the tool at the point the cycle started
+   from after a stock-removal cycle, and a program written to that contract
+   (or one that simply continues from its own `G0` before the block) expects
+   the tool there - the cycle's own rapids are absolute, computed from the
+   profile, so the clearance corner is the only start point it can express. */
 static void g7x_return_clearance_point(const g7x_stream_t *stream, float *x, float *z)
 {
     const g7x_contour_element_t *start;
@@ -1116,6 +1399,7 @@ const char *g7x_result_text(g7x_result_t result)
         case G7X_WRITE_FAILED: return "write failed";
         case G7X_RANGE_MISSING: return "numbered range missing";
         case G7X_RANGE_AMBIGUOUS: return "numbered range ambiguous";
+        case G7X_CORNER_TOO_LARGE: return "corner does not fit";
         default: return "unknown";
     }
 }
@@ -1635,6 +1919,19 @@ static bool g7x_parser_header_waiting(void)
 static void g7x_parser_region_complete(gcode_exec_args_t *ptr)
 {
     bool done = false;
+
+    /* Keep the range as collected for a later `G70 P Q`. It is copied *before*
+       the end mark runs `prepare`, which expands corners in place: the replay
+       goes through the same prepare, so it must start from what the program
+       wrote, not from an already expanded region. */
+    if (g7x_parser_pq_collecting && g7x_parser_pq_p != 0u &&
+        g7x_parser_stream.region.count >= 2u) {
+        g7x_parser_kept_region = g7x_parser_stream.region;
+        g7x_parser_kept_p = g7x_parser_pq_p;
+        g7x_parser_kept_q = g7x_parser_pq_q;
+        g7x_parser_kept_feed = g7x_parser_stream.feed;
+        g7x_parser_kept_valid = true;
+    }
     g7x_result_t result = g7x_stream_add_parsed(&g7x_parser_stream,
                                                 G7X_CONTOUR_END,
                                                 0.0f, false,
@@ -1644,13 +1941,23 @@ static void g7x_parser_region_complete(gcode_exec_args_t *ptr)
                                                 0.0f, false,
                                                 G7X_CORNER_NONE,
                                                 0.0f,
+                                                0.0f, false,
                                                 &done);
 
     g7x_parser_region_active = false;
     g7x_parser_pq_collecting = false;
     if (result != G7X_OK) {
+        char why[48];
+
+        /* The range never became a cycle, so there is nothing for a G70 to
+           replay either: a finish cut of a contour the roughing refused is not
+           a contour this run stands behind. */
+        g7x_parser_kept_valid = false;
         proto_info("G7X parser collect failed: %s", g7x_result_text(result));
         g7x_parser_clear_state();
+        snprintf(why, sizeof(why), "contour rejected: %s",
+                 g7x_result_text(result));
+        g7x_parser_set_refusal(why);
         *(ptr->error) = STATUS_INVALID_STATEMENT;
     } else {
         proto_info("G7X region ready count=%u", (unsigned)g7x_parser_stream.region.count);
@@ -1723,7 +2030,27 @@ static uint8_t g7x_parser_exec_stream(parser_state_t *base_state, unsigned max_b
         g7_g8_motion_words_to_program(&cmd, &words);
         error = parser_exec_generated_block(&state, &words, &cmd);
         if (error != STATUS_OK) {
+            char why[48];
+
             proto_info("G7X EXEC ERROR %u", (unsigned)error);
+            /* The status alone is what the panel can show when nothing else
+               explains it, and "invalid parameters or cycle contour" on the
+               last row of a good-looking block is not an answer: name the block
+               the controller refused, so the glass carries the line the
+               operator has to look at (bench, 2026-09-23). */
+            snprintf(why, sizeof(why), "block refused: G%c",
+                     g7x_parser_motion_letter(block.motion));
+            {
+                size_t used = strlen(why);
+
+                if (block.has_x && used + 12u < sizeof(why))
+                    used += (size_t)snprintf(why + used, sizeof(why) - used,
+                                             " X%.3f", (double)block.x);
+                if (block.has_z && used + 12u < sizeof(why))
+                    used += (size_t)snprintf(why + used, sizeof(why) - used,
+                                             " Z%.3f", (double)block.z);
+            }
+            g7x_parser_set_refusal(why);
             return error;
         }
 
@@ -1845,6 +2172,53 @@ bool g7x_parse(void *args)
         return EVENT_CONTINUE;
     }
 
+    /* A lathe cycle cuts a path this module computes from the profile, and the
+       core parser takes G41/G42 for linear and arc motion but does nothing with
+       them. Running a cycle with compensation active would cut the uncompensated
+       path and call it a finish, so it is refused until a compensated contour is
+       supported (stage 1 of `docs/lathe-cutter-comp.md`). */
+    if (ptr->word == 'G' &&
+        (ptr->code == 70 || ptr->code == 71 || ptr->code == 72
+#if G7X_ENABLE_G76 && defined(G33_ENCODER)
+         || ptr->code == 76
+#endif
+        ) &&
+        ptr->new_state->groups.cutter_radius_compensation != G40) {
+        proto_print("[MSG:G7X: G41/G42 not supported in a cycle]\r\n");
+        ptr->new_state->groups.motion = G0;
+        ptr->new_state->groups.motion_mantissa = 0;
+        g7x_parser_set_refusal("no G41/G42 in a cycle");
+        *(ptr->error) = STATUS_GCODE_UNSUPPORTED_COMMAND;
+        return EVENT_HANDLED;
+    }
+
+    if (ptr->word == 'G' && ptr->code == 73) {
+        /* G73 is pattern repeating roughing: it is a different roughing model
+           from the scanline passes G71/G72 generate, not a variation of them,
+           and this module does not implement it. Say so by name instead of
+           leaving the line to the generic "unsupported command". */
+        proto_print("[MSG:G7X: G73 pattern roughing is not implemented]\r\n");
+        g7x_parser_set_refusal("G73 not implemented");
+        *(ptr->error) = STATUS_GCODE_UNSUPPORTED_COMMAND;
+        return EVENT_HANDLED;
+    }
+
+    if (ptr->word == 'G' && ptr->code == 70) {
+        /* `G70 P Q`: the finish cut of the range this run collected. The words
+           are read where every other cycle header reads them (the exec
+           modifier), so here the line is only claimed. */
+        proto_info("G7X parse G70");
+        ptr->new_state->groups.motion = G0;
+        ptr->new_state->groups.motion_mantissa = 0;
+        if (g7x_parser_busy() || ptr->cmd->group_extended != 0) {
+            *(ptr->error) = STATUS_GCODE_MODAL_GROUP_VIOLATION;
+            return EVENT_HANDLED;
+        }
+        ptr->cmd->group_extended = G7X_G70_EXTENDED_CODE;
+        *(ptr->error) = STATUS_OK;
+        return EVENT_HANDLED;
+    }
+
     if (ptr->word == 'G' && (ptr->code == 71 || ptr->code == 72
 #if G7X_ENABLE_G76 && defined(G33_ENCODER)
                              || ptr->code == 76
@@ -1936,6 +2310,11 @@ bool g7x_exec_modifier(void *args)
         return EVENT_CONTINUE;
     }
 
+    /* A new line is executing, so any reason the previous one was refused is
+       history: whatever this line does sets its own, and a caller reading the
+       text after an error always reads the reason for that error. */
+    g7x_parser_set_refusal("");
+
 #if G7X_ENABLE_G76 && defined(G33_ENCODER)
     if (ptr->cmd->group_extended == G7X_G76_EXTENDED_CODE) {
         float current[AXIS_COUNT];
@@ -1957,6 +2336,16 @@ bool g7x_exec_modifier(void *args)
             ptr->new_state->groups.plane != G18 ||
             ptr->new_state->groups.feedrate_mode != G94 ||
             spring < 0.0f || spring > G7X_MAX_THREAD_PASSES || floorf(spring) != spring) {
+            if ((ptr->cmd->words & required) != required)
+                g7x_parser_set_refusal("G76 needs X Z P Q F");
+            else if (ptr->new_state->groups.distance_mode != G90 ||
+                     ptr->new_state->groups.plane != G18 ||
+                     ptr->new_state->groups.feedrate_mode != G94)
+                g7x_parser_set_refusal("G76 needs G18 G90 G94");
+            else if (g7x_parser_busy())
+                g7x_parser_set_refusal("a cycle is already running");
+            else
+                g7x_parser_set_refusal("G76 values out of range");
             *(ptr->error) = STATUS_INVALID_STATEMENT;
             return EVENT_HANDLED;
         }
@@ -1987,6 +2376,74 @@ bool g7x_exec_modifier(void *args)
     }
 #endif
 
+    if (ptr->cmd->group_extended == G7X_G70_EXTENDED_CODE) {
+        /* `G70 P Q`: re-run a range this run already collected, as the finish
+           cut. The range must be the one that was collected - the module keeps
+           exactly one, because that is all a program can ask for: the profile
+           it just roughed. A range it never saw is refused, never guessed. */
+        bool has_p = CHECKFLAG(ptr->cmd->words, GCODE_WORD_P);
+        bool has_q = CHECKFLAG(ptr->cmd->words, GCODE_WORD_Q);
+        uint32_t pq_p = 0u;
+        uint32_t pq_q = 0u;
+        float retract = CHECKFLAG(ptr->cmd->words, GCODE_WORD_R) ?
+                        ptr->words->r : g7x_parser_kept_region.retract;
+        float feed = CHECKFLAG(ptr->cmd->words, GCODE_WORD_F) ?
+                     ptr->words->f : g7x_parser_kept_feed;
+        g7x_result_t result;
+
+        if (!has_p || !has_q ||
+            !g7x_parser_pq_number(ptr->words->p, &pq_p) ||
+            !g7x_parser_pq_number(ptr->words->d, &pq_q) || pq_q < pq_p ||
+            !g7x_parser_kept_valid ||
+            g7x_parser_kept_p != pq_p || g7x_parser_kept_q != pq_q ||
+            (ptr->cmd->words & ~(GCODE_WORD_P | GCODE_WORD_Q | GCODE_WORD_R |
+                                 GCODE_WORD_F)) ||
+            (ptr->cmd->groups & ~GCODE_GROUP_MOTION) ||
+            ptr->new_state->groups.distance_mode != G90 ||
+            ptr->new_state->groups.plane != G18 ||
+            ptr->new_state->groups.feedrate_mode != G94) {
+            proto_info("G7X G70 refused (range not collected)");
+            if (!has_p || !has_q || pq_q < pq_p)
+                g7x_parser_set_refusal("G70 needs P and Q");
+            else if (ptr->new_state->groups.distance_mode != G90 ||
+                     ptr->new_state->groups.plane != G18 ||
+                     ptr->new_state->groups.feedrate_mode != G94)
+                g7x_parser_set_refusal("G70 needs G18 G90 G94");
+            else
+                g7x_parser_set_refusal("G70 range not run yet");
+            ptr->cmd->group_extended = 0;
+            ptr->cmd->groups = 0;
+            ptr->cmd->words = 0;
+            memset(ptr->words, 0, sizeof(*ptr->words));
+            *(ptr->error) = STATUS_INVALID_STATEMENT;
+            return EVENT_HANDLED;
+        }
+        if (feed <= 0.0f)
+            feed = 120.0f;
+        if (!(retract > 0.0f))
+            retract = 1.0f;
+        result = g7x_stream_begin_finish(&g7x_parser_stream,
+                                         &g7x_parser_kept_region,
+                                         retract,
+                                         feed);
+        if (result != G7X_OK) {
+            proto_info("G7X G70 replay failed: %s", g7x_result_text(result));
+            g7x_parser_clear_state();
+            *(ptr->error) = STATUS_INVALID_STATEMENT;
+            return EVENT_HANDLED;
+        }
+        proto_info("G7X G70 finish P%u Q%u", (unsigned)pq_p, (unsigned)pq_q);
+        memcpy(&g7x_parser_runner_state, ptr->new_state,
+               sizeof(g7x_parser_runner_state));
+        g7x_parser_runner_active = true;
+        ptr->cmd->group_extended = 0;
+        ptr->cmd->groups = 0;
+        ptr->cmd->words = 0;
+        memset(ptr->words, 0, sizeof(*ptr->words));
+        *(ptr->error) = STATUS_OK;
+        return EVENT_HANDLED;
+    }
+
     if (ptr->cmd->group_extended == G7X_EXTENDED_CODE) {
         /* Second block of a Fanuc two-line header: merge it into the open
            cycle instead of starting a second one. */
@@ -2013,6 +2470,7 @@ bool g7x_exec_modifier(void *args)
                     !g7x_parser_pq_number(ptr->words->d, &pq_q) ||
                     pq_q < pq_p) {
                     g7x_parser_clear_state();
+                    g7x_parser_set_refusal("needs P and Q numbers");
                     *(ptr->error) = STATUS_INVALID_STATEMENT;
                     return EVENT_HANDLED;
                 }
@@ -2033,19 +2491,28 @@ bool g7x_exec_modifier(void *args)
                                              x_allow, z_allow, feed, doc);
             if (result != G7X_OK) {
                 g7x_parser_clear_state();
+                g7x_parser_set_refusal("cycle values out of range");
                 *(ptr->error) = STATUS_INVALID_STATEMENT;
                 return EVENT_HANDLED;
             }
             if (numbered) {
+                /* The *second* line carries the range (the usual Fanuc form), so
+                   it is this block that arms it. */
                 g7x_parser_region_active = false;
                 g7x_parser_pq_armed = true;
                 g7x_parser_pq_collecting = false;
                 g7x_parser_pq_p = pq_p;
                 g7x_parser_pq_q = pq_q;
                 g7x_parser_pq_last = 0u;
-            } else {
-                g7x_parser_region_active = true;
             }
+            /* With no range on this line the *first* line already decided what
+               the cycle is: it either armed a numbered range (waiting for its
+               N(P) row) or opened a region. Overriding that here was the bug a
+               Fanuc header pair with the range on the *first* line ran into:
+               `region_active` and `pq_armed` were both left set, so the module
+               ended the contour at the N(Q) row and then refused the G80 -
+               "invalid parameters or cycle contour" on the last row of a
+               perfectly good block (bench, 2026-09-23). */
             ptr->new_state->feedrate = feed *
                 (ptr->new_state->groups.units == G20 ? INCH_MM_MULT : 1.0f);
             ptr->new_state->groups.motion = G1;
@@ -2078,6 +2545,7 @@ bool g7x_exec_modifier(void *args)
                 !g7x_parser_pq_number(ptr->words->p, &pq_p) ||
                 !g7x_parser_pq_number(ptr->words->d, &pq_q) ||
                 pq_q < pq_p) {
+                g7x_parser_set_refusal("needs P and Q numbers");
                 *(ptr->error) = STATUS_INVALID_STATEMENT;
                 return EVENT_HANDLED;
             }
@@ -2087,6 +2555,16 @@ bool g7x_exec_modifier(void *args)
             ptr->new_state->groups.distance_mode != G90 ||
             ptr->new_state->groups.plane != G18 ||
             ptr->new_state->groups.feedrate_mode != G94) {
+            if (g7x_parser_busy())
+                g7x_parser_set_refusal("a cycle is already running");
+            else if (ptr->new_state->groups.distance_mode != G90)
+                g7x_parser_set_refusal("cycle needs G90 absolute");
+            else if (ptr->new_state->groups.plane != G18)
+                g7x_parser_set_refusal("cycle needs G18 XZ plane");
+            else if (ptr->new_state->groups.feedrate_mode != G94)
+                g7x_parser_set_refusal("cycle needs G94 feed/min");
+            else
+                g7x_parser_set_refusal("header has other modal words");
             *(ptr->error) = STATUS_INVALID_STATEMENT;
             return EVENT_HANDLED;
         }
@@ -2106,6 +2584,9 @@ bool g7x_exec_modifier(void *args)
                                                        g7x_parser_pending_doc);
 
         if (!g7x_parser_pending_doc_set || result != G7X_OK) {
+            g7x_parser_set_refusal(!g7x_parser_pending_doc_set
+                                       ? "header needs U or W depth"
+                                       : "cycle values out of range");
             *(ptr->error) = STATUS_INVALID_STATEMENT;
             return EVENT_HANDLED;
         }
@@ -2150,6 +2631,7 @@ bool g7x_exec_modifier(void *args)
             ptr->new_state->groups.motion != G3) {
             /* The N(P) block must be a contour move. */
             g7x_parser_clear_state();
+            g7x_parser_set_refusal("N(P) must be a move");
             *(ptr->error) = STATUS_INVALID_STATEMENT;
             return EVENT_HANDLED;
         }
@@ -2159,11 +2641,21 @@ bool g7x_exec_modifier(void *args)
         g7x_parser_pq_last = g7x_parser_pq_p - 1u;
     }
 
+    /* A profile row may carry the words the *finish* is to run with: Fanuc
+       reads F/S/T from the profile, not from the roughing header. So the row
+       takes them instead of refusing the line. F is kept on the element (the
+       finish cut emits it where the program wrote it); S and T are read and
+       not acted on here - the cycle runs at the speed and tool the program
+       established before it, and a stock-removal cycle must not change either
+       in the middle of a cut. Both are swallowed with the rest of the row, so
+       nothing reaches the exec stage with them. */
     if (g7x_parser_region_active &&
         ((ptr->cmd->groups & ~GCODE_GROUP_MOTION) || ptr->cmd->group_extended ||
-         (ptr->cmd->words & ~(GCODE_WORD_X | GCODE_WORD_Z | GCODE_WORD_F |
-                             GCODE_WORD_R | GCODE_WORD_I | GCODE_WORD_K)))) {
+        (ptr->cmd->words & ~(GCODE_WORD_X | GCODE_WORD_Z | GCODE_WORD_F |
+                             GCODE_WORD_R | GCODE_WORD_I | GCODE_WORD_K |
+                             GCODE_WORD_S | GCODE_WORD_T)))) {
         g7x_parser_clear_state();
+        g7x_parser_set_refusal("extra words in profile row");
         *(ptr->error) = STATUS_INVALID_STATEMENT;
         return EVENT_HANDLED;
     }
@@ -2174,6 +2666,7 @@ bool g7x_exec_modifier(void *args)
             if (g7x_parser_pq_collecting) {
                 /* A numbered range ends at N(Q), never at G80. */
                 g7x_parser_clear_state();
+                g7x_parser_set_refusal("range ends at N(Q)");
                 *(ptr->error) = STATUS_INVALID_STATEMENT;
                 return EVENT_HANDLED;
             }
@@ -2194,6 +2687,7 @@ bool g7x_exec_modifier(void *args)
                 if (number != 0u &&
                     (number <= g7x_parser_pq_last || number > g7x_parser_pq_q)) {
                     g7x_parser_clear_state();
+                    g7x_parser_set_refusal("P..Q numbers must rise");
                     *(ptr->error) = STATUS_INVALID_STATEMENT;
                     return EVENT_HANDLED;
                 }
@@ -2224,12 +2718,19 @@ bool g7x_exec_modifier(void *args)
                                            has_k,
                                            g7x_parser_pending_corner_kind,
                                            g7x_parser_pending_corner_amount,
+                                           ptr->words->f,
+                                           CHECKFLAG(ptr->cmd->words, GCODE_WORD_F),
                                            NULL);
             g7x_parser_pending_corner_kind = G7X_CORNER_NONE;
             g7x_parser_pending_corner_amount = 0.0f;
             if (result != G7X_OK) {
+                char why[48];
+
                 proto_info("G7X parser collect failed: %s", g7x_result_text(result));
                 g7x_parser_clear_state();
+                snprintf(why, sizeof(why), "contour rejected: %s",
+                         g7x_result_text(result));
+                g7x_parser_set_refusal(why);
                 *(ptr->error) = STATUS_INVALID_STATEMENT;
             } else if (g7x_parser_pq_collecting) {
                 if (number != 0u) {
@@ -2310,6 +2811,8 @@ bool g7x_reset(void *args)
 {
     (void)args;
     g7x_parser_numbered_history_reset();
+    g7x_parser_kept_valid = false;
+    g7x_parser_set_refusal("");
     g7x_parser_clear_state();
     return EVENT_CONTINUE;
 }

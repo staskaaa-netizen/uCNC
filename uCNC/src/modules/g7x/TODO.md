@@ -26,39 +26,116 @@ software-tested, not physically validated on a machine.
 
 ## Required cycle work still open
 
-- [ ] Cutter radius compensation interaction (G40/G41/G42): today the core
-  parses the group and ignores it for linear/arc motion, and G7x does not look
-  at it at all. Stage 1 must refuse G71/G72/G76 with compensation active instead
-  of cutting an uncompensated path, then later accept a compensated contour for
-  G71/G72. Threading stays uncompensated. See `docs/lathe-cutter-comp.md`.
+- [x] **The roughing must leave exactly the finish allowance.** The pass level
+  steps by `doc` from the stock end (`max_x - doc` for G71, `start_z + dir*doc`
+  for G72) and stops as soon as the *next* step would cross the allowance
+  boundary `final_pass` (`min_x + x_allow`, or the Z equivalent), so the last
+  rough pass can sit a whole step above it and the automatic finish then has to
+  take that step: measured on the bench with `G71 U2 R1 X0.5 Z0.5` over an
+  X50 to X30 (diameter) profile, the roughing stopped at X34 while the boundary
+  is X30.5, so it left 1.75 mm of radius more than the allowance asks for -
+  metal the automatic finish has to take in its own cut (`G72 W2` leaves 1.5 mm
+  of Z where `Z0.5` was asked for, the same shape one axis over). A finishing
+  allowance is only an allowance if the roughing stops *on* it. **Done:**
+  `g7x_rough_step()` is now the one place a pass level moves - it steps onto
+  `final_pass` when a full step would cross it, and only from the near side, so
+  the boundary pass is emitted once. Both cycles use it for their first pass and
+  for every step after it, so the roughing ends on the boundary: the profile
+  above emits `(G71 rough X15.250)` / `G1 X30.500 F120.000` and
+  `(G72 rough Z-9.500)` as its last roughing passes. `test_allowance_approach()`
+  pins both, in both Z directions.
+- [x] **Where a cycle leaves the tool.** After the wasted-move report (2026-09-21)
+  a block ends on the X retract at the last cut's Z, so it does **not** come back
+  to the `G0` the program made before the cycle - which is where Fanuc leaves the
+  tool after a stock-removal cycle, and what a program that assumes the cycle
+  returned to its start point expects. Today the operator follows the block with
+  their own `G0`; decide between that (the program says where the tool goes) and
+  returning to the cycle's start point (X, or X and Z) at the end. Applies to
+  G71 and G72 both - the report was about G72, where the tail is the last facing
+  depth rather than the end of the part.
+  **Decided and done:** the cycle returns to the **clearance point** - the X
+  retract it always had, then the Z return the wasted-move cleanup had dropped -
+  for G71 and G72 both. That is the corner a `G0` before the cycle establishes
+  (the operator's `G0 X52 Z2`), and where a program written to the Fanuc
+  contract expects the tool. The cycle cannot express the operator's exact
+  pre-cycle point because it never reads it: its own rapids are absolute,
+  computed from the profile. The per-pass trims stay - a `G72` pass still goes
+  straight to the next facing depth, and a rapid that would not move the tool is
+  still dropped.
+- [x] **Stage 1 of the cutter radius compensation interaction (G40/G41/G42).**
+  The core parses the group and ignores it for linear/arc motion, so a cycle run
+  with compensation active would cut the uncompensated path and call the result
+  a finish. The module now refuses `G70/G71/G72/G76` while
+  `groups.cutter_radius_compensation != G40` (status "unsupported command", and
+  the console says which it was), tested in `g7x_parser_test.c`. Threading was
+  already uncompensated and stays so.
+- [ ] **Stage 2:** accept a compensated contour for G71/G72 (threading stays
+  uncompensated). See `docs/lathe-cutter-comp.md`.
 - [x] Simple explicit approach with BOTH X and Z finish allowances plus R in
   the existing positive-allowance/outside-X subset. Separate X then Z clearance
   moves precede roughing/finishing; final retract uses the same clear point.
   No inferred stock shape or automatic avoidance. Starting-path clearance
   remains the caller's responsibility; see TESTING.md. Bench validation open.
+  (The moves around that were tightened later, by bench report: the clearance
+  approach belongs to the first pass only, a `G72` pass does not return to the
+  start Z, an emitted motion always moves the tool, and the cycle ends on the X
+  retract instead of going back to the point it started from.)
 - [x] One-line `G71/G72 ... P Q` numbered-range lookup. The parser starts the
   range at `N(P)`, treats unnumbered rows inside as contour rows and closes on
   `N(Q)`; NC preview uses the same rule. G7x owns `g7x_source_t` plus a bounded
   serial history, and reports missing/evicted or ambiguous ranges instead of
-  guessing. Two-line headers and `G70` replay from the retained range stay open
-  below.
+  guessing. (Two-line headers and `G70` replay from the retained range were the
+  following items and are done - see below.)
 - [x] Fanuc one-line and two-line G71/G72 headers with Fanuc word meanings: the
   first block's U/W is the depth of cut and R the retract, the second block's
   U/W are the X/Z finish allowances. A second block of the same cycle completes
   the open header only before any contour row is collected. Haas' D-word depth
   variant stays unsupported because this parser shares the D and Q word slot.
-- [ ] First P block as approach only; profile F/S/T accepted and ignored for
-  roughing (they currently reject the profile row).
+- [x] **First `P` block as approach; profile `F`/`S`/`T` read from the row.**
+  A `G0` written as the range's first block is Fanuc's positioning move: the
+  cycle rapids to that point and the cut starts with the row after it (a rapid
+  *later* in the profile is followed as a cut - a cycle never puts a rapid
+  through the material). A profile row's `F` is the **finish** feed and is
+  emitted where the program wrote it, on the inline finish and on a `G70`
+  replay alike; `S`/`T` are taken off the row so it is no longer refused, and
+  are not acted on (see the remaining item below).
 - [ ] Finish stock U/W, direction from allowance signs and 45-degree retract.
   Native inline X/Z allowances and U/W depth words are a different contract;
   negative inline allowances currently fail validation.
-- [ ] G70 P/Q replay with current finish feed/tool/spindle and no rough offsets.
-  Automatic inline finishing is not this feature.
-- [ ] Retain/regression-test inline G80 mode as P/Q support is added.
+- [ ] Apply a profile row's `S`/`T` to the finish cut. They are accepted and read
+  today (the row is not refused any more), and not acted on: the generator emits
+  motion with a feed and has no event for a speed or tool change, and a cycle
+  must not change either in the middle of a cut. Fanuc reads them for the
+  finish, so this is a generator change (an S/T event) rather than a parser one.
+- [ ] A `P` block that names only one axis (`N10 G0 X26`, the common Fanuc
+  spelling). The range's first block is the profile's *start point*, and G7x
+  never guesses the tool's position, so it must name both X and Z today. Filling
+  the missing axis needs a position the module does not have.
+- [ ] The refusals are named in the console (`G73 pattern roughing is not
+  implemented`, `G41/G42 not supported in a cycle`) but the panel shows the
+  status it returns - "Unsupported command". A message the operator sees on the
+  glass needs a status of its own (core) or a feedback entry (NC).
+- [x] **G70 P/Q replay** with the profile's feed, no rough offsets and no
+  roughing: the module keeps the last collected numbered range and re-runs it as
+  the finish cut (`g7x_stream_begin_finish()`), refusing any other range instead
+  of guessing. Automatic inline finishing is not this feature and still runs, so
+  a Fanuc `G71 P Q` + `G70 P Q` pair cuts the finish twice - the second pass is
+  air, and the README says so. Keeping the range costs one
+  `g7x_contour_region_t` of static RAM: the LEANCAM-LVDS build went from
+  379,072 to **382,184 bytes** (72.3% to 72.9% of the RP2350's 512 kB) with the
+  kept range and the new refusal paths in. It is cleared on parser reset, so a
+  new program does not replay the one before it.
+- [x] Inline `G80` mode regression-tested as P/Q support was added: every
+  `G80`-terminated cycle in `g7x_host_test.c` and `g7x_parser_test.c` still runs
+  through the same generator, and the two-line/P-Q tests compare against the
+  inline spelling rather than replacing it.
 - [ ] Depth-per-pass override: explicit engaged/return phases, decrease-only
   during engagement and deferred increase for next pass, including queued
   motion and remaining-stock handling. NC owns knob/UI input (see NC TODO).
 - [ ] Physical G76/G33 spindle phase/pitch and spindle-loss validation.
+- [ ] G73 pattern repeating roughing stays out of scope: it is a different
+  roughing model from the scanline passes G71/G72 generate, so it is refused by
+  name rather than approximated.
 
 ## Optional later G76 dialect work
 
@@ -74,11 +151,25 @@ software-tested, not physically validated on a machine.
   native spring passes and generated G33 failure propagation.
 - [x] P/Q G71 one-line parser and preview regressions, including missing,
   ambiguous and out-of-range numbering.
-- [ ] P/Q G71 two-line, G72 two-line and `G70` replay regressions.
-- [x] Both-axis approach/finish/return clearance for G71/G72, both Z directions.
+- [x] P/Q G71 two-line, G72 two-line and `G70` replay regressions: the two-line
+  form is compared against the one-line spelling for both cycles, `G70` is
+  parsed, refused for a range this run did not collect, and replayed with the
+  profile's feed (`g7x_parser_test.c`), and the preview expands it by walking
+  back to the range (`nc_emit_host_test.c`).
+- [x] A cycle refuses to run with cutter compensation active, and `G73` is
+  refused by name.
+- [x] Both-axis approach/finish/return clearance for G71/G72, both Z directions:
+  the first pass approaches through the clear point, the finish starts there as
+  far as it needs to, and the cycle ends there again (X retract, then Z) - the
+  per-pass returns are trimmed to what each pass needs.
+- [x] Roughing stops **on** the finish allowance (`g7x_rough_step()`), and the
+  boundary pass is pinned for both cycles and both Z directions.
 - [x] Real parser test target linking no NC sources: `test_g7x.py standalone`.
 - [ ] Allowance signs and 45-degree retract.
-- [ ] G70 replay and complete corner-modifier/direction matrix.
+- [x] `G70` replay (host, parser and NC preview targets). (The complete
+  corner-modifier/direction matrix is still open - the corner tests cover the
+  radius and chamfer fits on the cycles, not every modifier against every
+  direction.)
 - [ ] Machine validation; virtual tests intercept G33 and do not test timing.
 
 Run software suites with `python tools/test_g7x.py all`. Native supported

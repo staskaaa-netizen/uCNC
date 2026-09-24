@@ -32,9 +32,10 @@ static const lvds_palette_color_def_t g_color_def[LC_COLOR_COUNT] = {
     [green] = {"green", "#24c863"},
     [white] = {"white", "#DDDDDD"},
     [yellow_pale] = {"yellow_pale", "#fff701"},
-    [tool_orange] = {"tool_orange", "#BF6E1E"},
+    [tool_orange] = {"tool_orange", "#EAFA41"},
     [red_bright] = {"red_bright", "#ff0000"},
     [green_bright] = {"green_bright", "#3eff24"},
+    [tool_tip] = {"tool_tip", "#242506"},
     
 };
 

@@ -11,6 +11,7 @@
 #include "nc_manual.h"
 #include "nc_menu.h"
 #include "nc_palette.h"
+#include "nc_path_builder.h"
 #include "nc_presets.h"
 #include "nc_run.h"
 #include "nc_preview.h"
@@ -46,16 +47,38 @@ static uint8_t nc_visual_settings_error(void)
 #endif
 }
 
+/* The wording of an error: the module that refused the line knows *why* and
+   hands its reason in (`g7x_take_refusal_text()` - reading it takes it, so it
+   can never explain a later line); otherwise the status name is all there is. */
+static const char *nc_visual_error_text(uint8_t error)
+{
+    const char *why = g7x_take_refusal_text();
+
+    return (why && why[0]) ? why : nc_feedback_error(error);
+}
+
+/* One error line for the operator. `line` is 1-based, or 0 for an error that
+   belongs to no source line. */
+static void nc_visual_command_error_line(unsigned long line, uint8_t error)
+{
+    const char *why = nc_visual_error_text(error);
+
+    if (line)
+        snprintf(g_nc_visual_command_error, sizeof(g_nc_visual_command_error),
+                 "Line %lu error %u: %s", line, error, why);
+    else
+        snprintf(g_nc_visual_command_error, sizeof(g_nc_visual_command_error),
+                 "Error %u: %s", error, why);
+}
+
 static bool nc_visual_parse_error(void *args)
 {
     uint8_t error = *(uint8_t *)args;
+
     if (nc_run_error())
-        snprintf(g_nc_visual_command_error, sizeof(g_nc_visual_command_error),
-                 "Line %lu error %u: %s", (unsigned long)(nc_run_error_line() + 1),
-                 error, nc_feedback_error(error));
+        nc_visual_command_error_line(nc_run_error_line() + 1, error);
     else
-        snprintf(g_nc_visual_command_error, sizeof(g_nc_visual_command_error),
-                 "Error %u: %s", error, nc_feedback_error(error));
+        nc_visual_command_error_line(0u, error);
     g_nc_visual_dirty = true;
     return EVENT_CONTINUE;
 }
@@ -119,6 +142,15 @@ static bool nc_visual_runtime_busy(const nc_runtime_state_t *runtime)
     return runtime && (runtime->exec_state & (EXEC_RUN | EXEC_HOLD));
 }
 
+/* Is the machine in a run? A run that is held is still a run, and the panel's
+   own stream counts as one from the moment it starts, so this is the same
+   question the tab strip answers with "RUN ACTIVE"/"RUN HOLD" - one definition,
+   so the DRO's colour and the strip's words cannot disagree. */
+static bool nc_visual_running(const nc_runtime_state_t *runtime)
+{
+    return nc_visual_runtime_busy(runtime) || nc_run_active() || nc_run_hold();
+}
+
 /* The work coordinate offset the parser is applying. parser_get_wco() reports
    at a limited rate and leaves the array untouched when it declines, so the
    last answer is kept: a caption must not flicker between two meanings. The
@@ -156,15 +188,15 @@ static void nc_visual_offset_label(char *out, size_t out_sz)
              (double)wco[AXIS_X], (double)wco[AXIS_Z]);
 }
 
-/* MANUAL's pane: this frame's figures, and the offset the readout is cut from.
-   The screen reads both once - the header above shows the same label. */
-static void nc_visual_manual_pane(const nc_runtime_state_t *runtime)
+/* MANUAL's pane: the offset its stops read in, which the screen reads once (the
+   header above shows the same label). The machine's own figures are the header
+   DRO's and do not reach the pane - it draws what the operator is setting up. */
+static void nc_visual_manual_pane(void)
 {
     nc_manual_view_t view;
     float wco[AXIS_COUNT] = {0};
     char label[16];
 
-    view.runtime = runtime;
     view.have_wco = nc_visual_wco(wco);
     view.wco_x = wco[AXIS_X];
     view.wco_z = wco[AXIS_Z];
@@ -200,6 +232,8 @@ static uint8_t g_nc_visual_selected_action = NC_FOOTER_ACTION_NONE;
    stops moving, never in the middle of a screen change. */
 #define NC_VISUAL_IDLE_FLUSH_MS 400u
 static uint32_t g_nc_visual_last_input_ms;
+/* Set once the idle period has been written; a key clears it. */
+static bool g_nc_visual_idle_flushed;
 
 /* The editor's view of this screen: the document is the screen's, and so are the
    status line and the repaint flag. `s` is the frame being drawn, which only the
@@ -229,6 +263,10 @@ static const char *nc_visual_tool_path(void)
    strip have to agree, or a key would be labelled one thing and do another. */
 static const nc_footer_item_t *nc_visual_footer_items(size_t *count)
 {
+    if (nc_path_builder_active()) {
+        /* The pad owns the digits: the strip carries the keys it does not. */
+        return nc_path_builder_footer(count);
+    }
     if (nc_visual_full_preview()) {
         return nc_menu_preview_footer(count);
     }
@@ -255,6 +293,10 @@ static void nc_visual_set_mode(nc_mode_t mode)
     /* Leaving MANUAL must not leave a jog running behind the next screen. */
     nc_visual_manual_screen(&manual);
     nc_manual_feed_cancel(&manual);
+    /* Leaving EDIT ends the path builder session: the lines already written are
+       ordinary program text and stay in the document (the screen change saved
+       them); only the builder's own state goes. */
+    nc_path_builder_leave();
     g_nc_visual_mode = mode;
     nc_state_set_mode(mode);
     nc_state_save();
@@ -295,7 +337,7 @@ static const char *nc_visual_run_state_text(const nc_runtime_state_t *runtime)
     if (nc_run_hold() || (runtime && (runtime->exec_state & EXEC_HOLD))) {
         return "RUN HOLD";
     }
-    if (nc_visual_runtime_busy(runtime) || nc_run_active()) {
+    if (nc_visual_running(runtime)) {
         return "RUN ACTIVE";
     }
     if (nc_run_done()) {
@@ -443,14 +485,32 @@ static uint8_t nc_visual_footer_action_for_key(nc_visual_key_t key)
     return NC_FOOTER_ACTION_NONE;
 }
 
-static void nc_visual_run_arm(size_t line, const char *label)
+/* Start a run from `line` to the end of the program.
+
+   `nc_run_arm()` alone only sets the run state: FROM and FULL said "Run from
+   line N" and the machine never received a character, because nothing handed
+   the reader to the run. The single-line and one-shot paths do that with
+   `grbl_stream_readonly()`; a whole-program run is the same stream with no end
+   line, which is what `nc_run_start_stream()` opens. */
+static void nc_visual_run_start(size_t line, const char *label)
 {
     /* A text file is text: it opens in the editor, it is not a program to read
        as G-code or to run. */
     if (!nc_visual_document_is_program()) {
         return;
     }
-    if (!nc_run_arm(&g_nc_visual_doc, line)) {
+    /* The same guard as the single step: an armed run must not queue into a
+       locked parser. */
+    if (cnc_get_exec_state(EXEC_GCODE_LOCKED) || cnc_has_alarm()) {
+        snprintf(g_nc_visual_status,
+                 sizeof(g_nc_visual_status),
+                 "RUN locked: check controller status (?)");
+        grbl_stream_printf("[MSG:NC RUN locked state=%u alarm=%u; check ?]\r\n",
+                           cnc_get_exec_state(EXEC_ALLACTIVE),
+                           (unsigned)cnc_has_alarm());
+        return;
+    }
+    if (!nc_run_start_stream(&g_nc_visual_doc, line)) {
         strncpy(g_nc_visual_status, "RUN needs a program", sizeof(g_nc_visual_status) - 1);
         return;
     }
@@ -465,9 +525,30 @@ static void nc_visual_run_arm(size_t line, const char *label)
              (unsigned long)(nc_run_line() + 1));
 }
 
+/* The line RUN is on - what the pane marks and what `1 SINGLE` acts on. It is
+   the line in play, not the sender's position (`nc_run_display_line()`): the
+   line a step was taken from, or the unit a run is walking through, with a unit
+   that has finished keeping it until the operator takes the cursor. The sender
+   walks on without it, so the two are *not* the same answer in general - a pane
+   that followed the sender marked the line after a block, which in the bench's
+   file was a cycle header that had never run. It is clamped into the program: a
+   finished run stands just past its last line, and both the pane's mark and
+   `1 SINGLE` need a line that exists - the last one. */
+static size_t nc_visual_run_line(const nc_document_t *doc)
+{
+    size_t line = nc_run_display_line();
+
+    if (doc && doc->line_count && line >= doc->line_count) {
+        line = doc->line_count - 1u;
+    }
+    return line;
+}
+
 static void nc_visual_run_step(void)
 {
-    size_t line = g_nc_visual_doc.cursor_line;
+    /* The line the pane marks: one cursor in RUN, so the key acts on what the
+       operator sees marked. */
+    size_t line = nc_visual_run_line(&g_nc_visual_doc);
     g_nc_visual_command_error[0] = '\0';
 
     if (!nc_visual_document_is_program()) {
@@ -628,6 +709,9 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
     if (nc_editor_action(&editor, action)) {
         return;
     }
+    if (nc_path_builder_action(&editor, action)) {
+        return;
+    }
     message = nc_preview_action(action);
     if (message) {
         strncpy(g_nc_visual_status, message, sizeof(g_nc_visual_status) - 1);
@@ -640,12 +724,6 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
     switch (action) {
     case NC_FOOTER_ACTION_TOOL_EDIT:
         strncpy(g_nc_visual_status, "Tool edit", sizeof(g_nc_visual_status) - 1);
-        break;
-    case NC_FOOTER_ACTION_G7X_Q:
-        strncpy(g_nc_visual_status, "G71 Q: numbered contour end", sizeof(g_nc_visual_status) - 1);
-        break;
-    case NC_FOOTER_ACTION_G7X_N:
-        strncpy(g_nc_visual_status, "G71 N: numbered block", sizeof(g_nc_visual_status) - 1);
         break;
     case NC_FOOTER_ACTION_TOOL:
         if (g_nc_visual_mode == NC_MODE_PROGRAM) {
@@ -688,6 +766,10 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
         }
         break;
     case NC_FOOTER_ACTION_RESET:
+        /* BACK from the file list, or `# RELOAD` in RUN: the operator is
+           clearing the screen's state, and the last fault goes with it. Nothing
+           else clears the message - a fault stands until it is answered. */
+        g_nc_visual_command_error[0] = '\0';
         if (nc_files_active()) {
             /* BACK leaves the list in one press and puts the screen back the
                way it was - the file that is open is still the open file. Going
@@ -712,6 +794,9 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
         }
         break;
     case NC_FOOTER_ACTION_FULL:
+        /* A fresh run answers the last fault: the operator has read it and is
+           starting something. */
+        g_nc_visual_command_error[0] = '\0';
         if (nc_files_active()) {
             char path[NC_PATH_MAX];
             nc_result_t r;
@@ -739,12 +824,12 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
                 nc_visual_set_mode(NC_MODE_RUN);
                 nc_state_remember_path(NC_MODE_RUN, path);
                 nc_state_save();
-                nc_visual_run_arm(0, "Run loaded");
+                nc_visual_run_start(0, "Run loaded");
             } else {
                 snprintf(g_nc_visual_status, sizeof(g_nc_visual_status), "Run open failed: %s", nc_result_text(r));
             }
         } else {
-            nc_visual_run_arm(0, "Full run armed");
+            nc_visual_run_start(0, "Full run");
         }
         break;
     case NC_FOOTER_ACTION_VIEW:
@@ -754,10 +839,12 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
                 sizeof(g_nc_visual_status) - 1);
         break;
     case NC_FOOTER_ACTION_SINGLE:
+        g_nc_visual_command_error[0] = '\0';   /* a fresh attempt answers the last one */
         nc_visual_run_step();
         break;
     case NC_FOOTER_ACTION_FROM:
-        nc_visual_run_arm(g_nc_visual_doc.cursor_line, "Run from");
+        g_nc_visual_command_error[0] = '\0';
+        nc_visual_run_start(g_nc_visual_doc.cursor_line, "Run from");
         break;
     case NC_FOOTER_ACTION_HOLD:
         if (nc_run_toggle_hold()) {
@@ -921,11 +1008,11 @@ static void nc_visual_draw_tool_screen(void)
     }
 
     lvds_draw_line(18, detail_y, LVDS_HSTX_WIDTH - 18, detail_y, NC_VISUAL_DIM);
-    nc_draw_text_clip(38, detail_y + 12, "Tool tip", 12, NC_VISUAL_TEXT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+    nc_draw_text_clip(38, detail_y + 12, "Tool tip", 12, NC_VISUAL_TOOL_TIP, NC_VISUAL_BG, LVDS_FONT_NORMAL);
     lvds_draw_line(52, detail_y + 76, 142, detail_y + 76, NC_VISUAL_DIM);
     lvds_draw_line(96, detail_y + 34, 96, detail_y + 120, NC_VISUAL_DIM);
-    nc_draw_text_clip(102, detail_y + 34, "X0", 4, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_SMALL);
-    nc_draw_text_clip(122, detail_y + 82, "Z0", 4, NC_VISUAL_DIM, NC_VISUAL_BG, LVDS_FONT_SMALL);
+    nc_draw_text_clip(102, detail_y + 34, "X0", 4, NC_VISUAL_TOOL_TIP, NC_VISUAL_BG, LVDS_FONT_SMALL);
+    nc_draw_text_clip(122, detail_y + 82, "Z0", 4, NC_VISUAL_TOOL_TIP, NC_VISUAL_BG, LVDS_FONT_SMALL);
 
     if (selected_line >= 0) {
         nc_tool_t tool;
@@ -934,7 +1021,7 @@ static void nc_visual_draw_tool_screen(void)
         (void)nc_tool_from_line(line, &tool);
         nc_draw_tool_glyph(96, detail_y + 76, 44, &tool, NC_VISUAL_BG, false);
         snprintf(buf, sizeof(buf), "Line %d: %.48s", selected_line + 1, line);
-        nc_draw_text_clip(170, detail_y + 18, buf, 70, NC_VISUAL_TEXT, NC_VISUAL_BG, LVDS_FONT_NORMAL);
+        nc_draw_text_clip(170, detail_y + 18, buf, 70, NC_VISUAL_TOOL_TIP, NC_VISUAL_BG, LVDS_FONT_NORMAL);
         nc_draw_tool_param(line, 'T', "T", 170, detail_y + 44, 8, selected_line == active_line && active_letter == 'T');
         nc_draw_tool_param(line, 'O', "Orient", 170, detail_y + 64, 8, selected_line == active_line && active_letter == 'O');
         nc_draw_tool_param(line, 'R', "Radius", 170, detail_y + 84, 8, selected_line == active_line && active_letter == 'R');
@@ -966,12 +1053,14 @@ static const char *nc_visual_notice(char *buf,
         notice = g_nc_visual_command_error;
     }
     if (!notice[0] && nc_run_error()) {
+        const char *why = nc_visual_error_text(nc_run_error());
+
         snprintf(buf,
                  buf_sz,
                  "Line %lu error %u: %s",
                  (unsigned long)(nc_run_error_line() + 1),
                  nc_run_error(),
-                 nc_feedback_error(nc_run_error()));
+                 why);
         notice = buf;
     }
     if (!notice[0] && nc_message_kind() != NC_MSG_NONE && nc_message_text()[0]) {
@@ -1063,27 +1152,152 @@ static void nc_visual_draw_tabs(const char *message,
             len = cols;
         }
         if (len > 0) {
-            nc_draw_text_clip(LVDS_HSTX_WIDTH - 26 - len * NC_VISUAL_CHAR_W,
-                                     NC_TAB_Y + 4,
-                                     message,
-                                     len,
-                                     message_fg,
-                                     NC_VISUAL_HEADER,
-                                     LVDS_FONT_NORMAL);
+            /* A fault is drawn by the header, as a block over this area and the
+               DRO below it (`nc_visual_draw_fault()`); everything else is a
+               line of the strip's own text. */
+            if (message_fg != NC_VISUAL_ERROR) {
+                nc_draw_text_clip(LVDS_HSTX_WIDTH - 26 - len * NC_VISUAL_CHAR_W,
+                                         NC_TAB_Y + 4,
+                                         message,
+                                         len,
+                                         message_fg,
+                                         NC_VISUAL_HEADER,
+                                         LVDS_FONT_NORMAL);
+            }
         }
     }
 }
 
-static void nc_visual_draw_header(const nc_snapshot_t *s)
+/* The frame counter, in its own corner below the DRO. Drawn at the end of every
+   path, so the live path (which repaints only the header and the band) keeps it
+   counting too. It is a debug reading: dim, small, and out of everything the
+   operator reads. */
+static void nc_visual_draw_fps(void)
+{
+    char fps[16];
+
+    snprintf(fps, sizeof(fps), "%u FPS", (unsigned)g_nc_visual_fps);
+    nc_draw_text_clip(LVDS_HSTX_WIDTH - NC_FPS_X_PAD -
+                              lvds_draw_text_width(fps, LVDS_FONT_SMALL),
+                             NC_FPS_Y,
+                             fps,
+                             8,
+                             NC_VISUAL_DIM,
+                             NC_VISUAL_BG,
+                             LVDS_FONT_SMALL);
+}
+
+/* The controller's own state, short enough for a corner: what the machine is
+   doing (or refusing to do) at this moment, on every screen. The tab strip
+   still carries the sentence that explains a fault; this is the word an
+   operator glances at. */
+static const char *nc_visual_state_label(const nc_runtime_state_t *runtime)
+{
+    uint16_t state = runtime ? runtime->exec_state : 0;
+
+    if (cnc_has_alarm()) return "ALARM";
+    if (state & EXEC_KILL) return "KILLED";
+    if (state & EXEC_LIMITS) return "LIMITS";
+    if (state & EXEC_POSITION_MAYBE_LOST) return "POS LOST";
+    if (nc_visual_settings_error()) return "SETTINGS";
+    if (state & EXEC_DOOR) return "DOOR";
+    if (nc_run_hold() || (state & EXEC_HOLD)) return "HOLD";
+    if (nc_visual_running(runtime)) return "RUN";
+    if (state & EXEC_JOG) return "JOG";
+    if (nc_run_error()) return "ERROR";
+    return "IDLE";
+}
+
+/* True when that state is a fault: it wears the same red label in the DRO as
+   the message area uses, so a machine that needs attention says so twice. */
+static bool nc_visual_state_is_fault(const nc_runtime_state_t *runtime)
+{
+    uint16_t state = runtime ? runtime->exec_state : 0;
+
+    return cnc_has_alarm() || nc_visual_settings_error() ||
+           (state & (EXEC_KILL | EXEC_LIMITS | EXEC_POSITION_MAYBE_LOST)) ||
+           nc_run_error();
+}
+
+/* Wrap a message into the fault block's width, at spaces, from the start: the
+   beginning of a message is the part that says what happened. A word longer
+   than the width is cut. */
+static int nc_visual_fault_lines(const char *message, char lines[][NC_FAULT_COLS + 1])
+{
+    int count = 0;
+
+    while (message && *message && count < NC_FAULT_LINES) {
+        int len = (int)strlen(message);
+        int take = len > NC_FAULT_COLS ? NC_FAULT_COLS : len;
+
+        if (len > NC_FAULT_COLS) {
+            int i;
+
+            for (i = take; i > 0; i--) {
+                if (message[i - 1] == ' ') {
+                    take = i - 1;
+                    break;
+                }
+            }
+        }
+        if (take <= 0) {
+            take = NC_FAULT_COLS;      /* one long word: cut it */
+        }
+        memcpy(lines[count], message, (size_t)take);
+        lines[count][take] = '\0';
+        count++;
+        message += take;
+        while (*message == ' ') {
+            message++;
+        }
+    }
+    return count;
+}
+
+/* The fault block: white letters on red, over the tab strip's message area and
+   down over the DRO beside the machine's figures. */
+static void nc_visual_draw_fault(const char *message)
+{
+    char lines[NC_FAULT_LINES][NC_FAULT_COLS + 1];
+    int count;
+    int i;
+
+    if (!message || !message[0]) {
+        return;
+    }
+    count = nc_visual_fault_lines(message, lines);
+    lvds_draw_fill_rect(NC_FAULT_X, NC_TAB_Y, NC_FAULT_W, NC_FAULT_H, NC_VISUAL_ERROR);
+    for (i = 0; i < count; i++) {
+        nc_draw_text_clip(NC_FAULT_X + 4, NC_TAB_Y + 2 + i * NC_FAULT_ROW_H,
+                                 lines[i], NC_FAULT_COLS,
+                                 NC_VISUAL_WORD_FG, NC_VISUAL_ERROR,
+                                 LVDS_FONT_NORMAL);
+    }
+}
+
+static void nc_visual_draw_header(const nc_snapshot_t *s,
+                                  const char *message,
+                                  lvds_color_t message_fg)
 {
     char buf[96];
-    char fps[16];
     const nc_runtime_state_t *runtime = s ? &s->runtime : 0;
     const int hy = NC_HEADER_Y;
     /* The snapshot carries the machine position; the operator works in the
        work (nominal) system, so subtract the offsets for the first column and
        keep the machine figures for the third. */
     float work[AXIS_COUNT] = {0};
+    /* The DRO wears the panel's green while the machine is in a run and its own
+       grey otherwise: one glance at the top says whether the machine is running,
+       on every screen. A fault takes the colour away again - a machine stopped
+       by a problem must not still say "running", and the red block on the right
+       is what carries the alarm. The tab strip above keeps its grey - the screen
+       names live there, and the state is what this band carries. The figures are
+       dark in every state, so they read on all of them. */
+    const lvds_color_t bg = (message_fg == NC_VISUAL_ERROR)
+                                ? NC_VISUAL_HEADER
+                                : (nc_visual_running(runtime)
+                                       ? NC_VISUAL_HEADER_RUN
+                                       : NC_VISUAL_HEADER);
     /* Columns, each with room for what it holds: the position in the offset in
        use (large), the machine figure it is cut from (normal, one cell of its
        own so the two never meet), then feed and spindle (large). */
@@ -1097,24 +1311,32 @@ static void nc_visual_draw_header(const nc_snapshot_t *s)
         parser_machine_to_work(work);
     }
 
-    lvds_draw_fill_rect(0, hy, LVDS_HSTX_WIDTH, NC_HEADER_H, NC_VISUAL_HEADER);
-    lvds_draw_line(0, hy + NC_HEADER_H - 1, LVDS_HSTX_WIDTH, hy + NC_HEADER_H - 1, NC_VISUAL_DIM);
-    /* MANUAL carries no DRO at all - its pane is the readout. */
-    if (g_nc_visual_mode != NC_MODE_MANUAL) {
+    lvds_draw_fill_rect(0, hy, LVDS_HSTX_WIDTH, NC_HEADER_H, bg);
+    /* No rule along the bottom of the band. It was there to separate the DRO
+       from the code when both were plain grey; the band's own colour is the
+       boundary now - it wears the panel's green while a run is going, and the
+       pane below it is the page's, not the band's - so the line was one more
+       thing on the glass that said nothing (bench: "we have one black line under
+       dro, now it is obsolete"). The columns keep their own separators: those
+       divide readings inside the band, which is what the band is for. */
+    /* Every screen carries the DRO, MANUAL included: the header band is the one
+       place with room for the work position, the machine figures and F/S, and
+       the pane needs its own space for the stops and the jog values (see
+       nc_manual.h). It used to be blank on MANUAL, which showed the same numbers
+       in the pane instead. */
+    {
         lvds_draw_line(182, hy + 6, 182, hy + 61, NC_VISUAL_DIM);
         lvds_draw_line(292, hy + 6, 292, hy + 61, NC_VISUAL_DIM);
     }
 
-    /* MANUAL shows the same numbers big in its own pane, so the strip copies
-       are left out there. */
-    if (g_nc_visual_mode != NC_MODE_MANUAL) {
+    {
         /* Column 1: the work (nominal) position. */
-        nc_draw_text_clip(col_work_x, hy + 4, "X", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_work_x, hy + 4, "X", 1, NC_VISUAL_DIM, bg, LVDS_FONT_LARGE);
         snprintf(buf, sizeof(buf), "%9.3f", (double)work[AXIS_X]);
-        nc_draw_text_clip(col_work_x + 18, hy + 4, buf, 9, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
-        nc_draw_text_clip(col_work_x, hy + 36, "Z", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_work_x + 18, hy + 4, buf, 9, NC_VISUAL_TEXT, bg, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_work_x, hy + 36, "Z", 1, NC_VISUAL_DIM, bg, LVDS_FONT_LARGE);
         snprintf(buf, sizeof(buf), "%9.3f", (double)work[AXIS_Z]);
-        nc_draw_text_clip(col_work_x + 18, hy + 36, buf, 9, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_work_x + 18, hy + 36, buf, 9, NC_VISUAL_TEXT, bg, LVDS_FONT_LARGE);
 
         /* Column 2: the machine figures, in their own cell and one font
            smaller, with the offset they differ by named above them. */
@@ -1123,32 +1345,56 @@ static void nc_visual_draw_header(const nc_snapshot_t *s)
 
             nc_visual_offset_label(offset, sizeof(offset));
             nc_draw_text_clip(col_mach_x, hy + 1, offset, 16,
-                                     NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_SMALL);
+                                     NC_VISUAL_DIM, bg, LVDS_FONT_SMALL);
             snprintf(buf, sizeof(buf), "%8.3f", (double)(runtime ? runtime->x : 0.0f));
             nc_draw_text_clip(col_mach_x, hy + 11, buf, 8,
-                                     NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_NORMAL);
+                                     NC_VISUAL_DIM, bg, LVDS_FONT_NORMAL);
             snprintf(buf, sizeof(buf), "%8.3f", (double)(runtime ? runtime->z : 0.0f));
             nc_draw_text_clip(col_mach_x, hy + 43, buf, 8,
-                                     NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_NORMAL);
+                                     NC_VISUAL_DIM, bg, LVDS_FONT_NORMAL);
         }
 
         /* Column 3: feed and spindle. */
-        nc_draw_text_clip(col_fs_x, hy + 4, "F", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_fs_x, hy + 4, "F", 1, NC_VISUAL_DIM, bg, LVDS_FONT_LARGE);
         snprintf(buf, sizeof(buf), "%8.1f", (double)(runtime ? runtime->feed : 0.0f));
-        nc_draw_text_clip(col_fs_x + 18, hy + 4, buf, 8, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
-        nc_draw_text_clip(col_fs_x, hy + 36, "S", 1, NC_VISUAL_DIM, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_fs_x + 18, hy + 4, buf, 8, NC_VISUAL_TEXT, bg, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_fs_x, hy + 36, "S", 1, NC_VISUAL_DIM, bg, LVDS_FONT_LARGE);
         snprintf(buf, sizeof(buf), "%8u", runtime ? runtime->spindle : 0u);
-        nc_draw_text_clip(col_fs_x + 18, hy + 36, buf, 8, NC_VISUAL_TEXT, NC_VISUAL_HEADER, LVDS_FONT_LARGE);
+        nc_draw_text_clip(col_fs_x + 18, hy + 36, buf, 8, NC_VISUAL_TEXT, bg, LVDS_FONT_LARGE);
     }
 
-    snprintf(fps, sizeof(fps), "%u FPS", (unsigned)g_nc_visual_fps);
-    nc_draw_text_clip(LVDS_HSTX_WIDTH - lvds_draw_text_width(fps, LVDS_FONT_SMALL) - 8,
-                             hy + 6,
-                             fps,
-                             8,
-                             NC_VISUAL_DIM,
-                             NC_VISUAL_HEADER,
-                             LVDS_FONT_SMALL);
+    /* The controller's state, bottom right of the DRO - the one band that is on
+       every screen - so "idle, running, held or in a fault" needs no screen
+       change to answer. `for start`: more of the machine's own status may move
+       here as the panel grows. */
+    {
+        char state_text[24];
+        int state_w;
+        int state_x;
+
+        snprintf(state_text, sizeof(state_text), "uCNC %s",
+                 nc_visual_state_label(runtime));
+        state_w = lvds_draw_text_width(state_text, LVDS_FONT_NORMAL);
+        state_x = LVDS_HSTX_WIDTH - state_w - 8;
+        if (nc_visual_state_is_fault(runtime)) {
+            lvds_draw_fill_rect(state_x - 5, hy + 46, state_w + 10,
+                                NC_VISUAL_ROW_H - 4, NC_VISUAL_ERROR);
+            nc_draw_text_clip(state_x, hy + 50, state_text, 20,
+                                     NC_VISUAL_WORD_FG, NC_VISUAL_ERROR,
+                                     LVDS_FONT_NORMAL);
+        } else {
+            nc_draw_text_clip(state_x, hy + 50, state_text, 20,
+                                     NC_VISUAL_DIM, bg, LVDS_FONT_NORMAL);
+        }
+    }
+
+    /* A fault is a block over the strip's message area and the room this band
+       has beside the machine's figures - drawn last, so the DRO cannot paint
+       over it. The bottom-right corner and the F/S column are outside it by its
+       geometry, not by this call. */
+    if (message_fg == NC_VISUAL_ERROR) {
+        nc_visual_draw_fault(message);
+    }
 }
 
 
@@ -1175,8 +1421,8 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
         const char *notice = nc_visual_notice(notice_buf, sizeof(notice_buf),
                                               &notice_fg, &s->runtime);
         nc_visual_draw_tabs(notice, notice_fg);
+        nc_visual_draw_header(s, notice, notice_fg);
     }
-    nc_visual_draw_header(s);
     t1 = mcu_micros();
 
     /* Body first, as page background: a frame can be a partial redraw, and how
@@ -1225,17 +1471,21 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
     } else if (nc_visual_is_code_view() && !full_preview) {
         nc_editor_draw_pane(&editor);
     } else if (g_nc_visual_mode == NC_MODE_MANUAL) {
-        nc_visual_manual_pane(&s->runtime);
+        nc_visual_manual_pane();
     }
     /* Nothing else to draw in the body: the screens above cover every mode -
        and in EDIT's full-screen state the preview *is* the body, so the old
        "no controls on this screen" placeholder must not be painted over it. */
 
     nc_editor_draw_aids(&editor);
+    /* The builder's pad sits where the floating helper sits: it is the same
+       grid, drawn for the same line. */
+    nc_path_builder_draw(&editor);
     t3 = mcu_micros();
 
     nc_visual_footer_text(footer_text, sizeof(footer_text));
     nc_draw_footer_status("", footer_text);
+    nc_visual_draw_fps();
     t4 = mcu_micros();
 
     g_nc_visual_frame_header_us += t1 - t0;
@@ -1260,11 +1510,12 @@ static void nc_visual_draw_live_snapshot(const nc_snapshot_t *s)
         const char *notice = nc_visual_notice(notice_buf, sizeof(notice_buf),
                                               &notice_fg, &s->runtime);
         nc_visual_draw_tabs(notice, notice_fg);
+        nc_visual_draw_header(s, notice, notice_fg);
     }
-    nc_visual_draw_header(s);
     t1 = mcu_micros();
     nc_visual_preview(s, &g_nc_visual_doc, NC_LEFT_PANE_X, NC_PANE_Y,
                       NC_LEFT_PANE_W, NC_PANE_H, false);
+    nc_visual_draw_fps();
     t2 = mcu_micros();
     g_nc_visual_frame_header_us += t1 - t0;
     g_nc_visual_frame_preview_us += t2 - t1;
@@ -1329,6 +1580,14 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
         if (editor.follow != NC_FOOTER_ACTION_NONE) {
             nc_visual_dispatch_footer_action(editor.follow);
         }
+        return;
+    }
+    /* The path builder is the second modal on this screen: while it is up its
+       pad owns the digits, and a key that types into a marked word is handed
+       back to the editor's own field flow. */
+    if (nc_path_builder_key(&editor, key, key_ch)) {
+        g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
+        g_nc_visual_dirty = true;
         return;
     }
     if (!nc_files_active() && g_nc_visual_mode == NC_MODE_MANUAL) {
@@ -1430,6 +1689,9 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
 void nc_visual_handle_key(nc_visual_key_t key)
 {
     g_nc_visual_last_input_ms = mcu_millis();
+    /* A key ends the screen's idle period: whatever was written while it was
+       quiet, the operator is working again. */
+    g_nc_visual_idle_flushed = false;
     nc_visual_handle_key_impl(key);
     /* Browsing the card may have moved the list's cursor: refresh the preview
        of whatever is pointed at now. A no-op unless the selection changed. */
@@ -1438,14 +1700,31 @@ void nc_visual_handle_key(nc_visual_key_t key)
     }
 }
 
-/* Called from the main loop: write the remembered state once the operator has
-   stopped pressing keys, so no FAT write sits in the middle of a screen
-   change. */
+/* Called from the main loop: once the operator has stopped pressing keys, write
+   what the panel owes the card - the program being edited and the remembered
+   state - so no FAT write sits in the middle of a screen change, and an edit
+   does not need a save key to survive. One write per idle period: a key starts a
+   new one, so a card that cannot be written to is retried when the operator
+   works again and not on every pass. */
 void nc_visual_idle_tasks(void)
 {
     if (g_nc_visual_last_input_ms == 0u ||
         (uint32_t)(mcu_millis() - g_nc_visual_last_input_ms) < NC_VISUAL_IDLE_FLUSH_MS) {
         return;
+    }
+    if (!g_nc_visual_idle_flushed) {
+        nc_editor_ctx_t editor;
+
+        g_nc_visual_idle_flushed = true;
+        /* The screen has been left alone and the program is unsaved: this is the
+           save. The `*` in the name row is what says the write happened - it is
+           the editor's own dirty mark, and it is read in the same place the
+           operator typed. */
+        nc_visual_editor_ctx(&editor, 0);
+        if (editor.doc && editor.doc->dirty && nc_path_text(editor.doc->path)) {
+            (void)nc_editor_save_current(&editor);
+            g_nc_visual_dirty = true;
+        }
     }
     nc_state_flush();
 }
@@ -1491,12 +1770,170 @@ nc_visual_key_t nc_visual_key_for_char(char key)
 
 const char *nc_visual_key_hint(char key)
 {
-    if (g_nc_visual_mode != NC_MODE_MANUAL || nc_files_active()) {
+    if (nc_files_active()) {
+        return 0;
+    }
+    /* The builder's pad is the screen's while it is up: a shell labels its own
+       keypad from the same table the pad is drawn with. */
+    if (nc_path_builder_active()) {
+        return nc_path_builder_key_hint(key);
+    }
+    if (g_nc_visual_mode != NC_MODE_MANUAL) {
         return 0;
     }
     /* The pad's meanings are the MANUAL screen's: it states them once, for the
        pad it draws and for the shell that labels its own keypad. */
     return nc_manual_key_hint(key);
+}
+
+bool nc_visual_key_meaning(char key, nc_visual_key_meaning_t *meaning)
+{
+    const nc_footer_item_t *footer;
+    const char *hint;
+    size_t count = 0u;
+    size_t i;
+
+    if (!meaning) {
+        return false;
+    }
+    meaning->label = 0;
+    meaning->on_menu = false;
+    meaning->step = false;
+    /* The footer the strip draws is the one that says a key is on the menu -
+       EDIT's own, the preview's while it has the whole body, or the builder's
+       while its pad owns the digits. */
+    footer = nc_visual_footer_items(&count);
+    for (i = 0u; i < count; i++) {
+        if (footer[i].key == key && footer[i].label[0] != '\0') {
+            meaning->label = footer[i].label;
+            meaning->on_menu = true;
+            break;
+        }
+    }
+    if (!meaning->on_menu) {
+        hint = nc_visual_key_hint(key);
+        if (hint && hint[0]) {
+            meaning->label = hint;
+        }
+    }
+    /* `B`/`C` are the keypad's step keys: the footer names them AXIS-/AXIS+ on
+       MANUAL, the editor walks equal fields and the file list steps a row with
+       them everywhere else - so a shell draws the arrow the key acts as, not
+       the letter. The builder's pad owns its own digits and the full-screen
+       preview has nothing to step. */
+    if ((key == 'B' || key == 'C') &&
+        !nc_path_builder_active() && !nc_visual_full_preview()) {
+        meaning->step = true;
+    }
+    return meaning->label != 0 || meaning->step;
+}
+
+const char *nc_visual_screen_name(void)
+{
+    if (nc_path_builder_active()) {
+        return "DRAW";
+    }
+    if (nc_files_active()) {
+        return "FILES";
+    }
+    if (nc_visual_full_preview()) {
+        return "PREVIEW";
+    }
+    return nc_menu_mode_name(g_nc_visual_mode);
+}
+
+/* What each screen says it is: the words an operator reads beside the machine.
+   The screen that acts on a key names it here, so a shell never states a key
+   meaning of its own (and a screen that renames a key renames it here too). */
+size_t nc_visual_usage(const char *const **lines)
+{
+    static const char *const manual[] = {
+        "Jog the machine by hand.",
+        "Digits jog: 2/8 X, 4/6 Z.",
+        "7/9 spindle CCW/CW, 5 stop.",
+        "1/3 pick the step or the feed.",
+        "B/C (arrows) pick the axis.",
+        "* types the stops, # step|feed.",
+        "0 zero, D touch-off."
+    };
+    static const char *const program[] = {
+        "The program, one line at a time.",
+        "Arrows move, the digits type.",
+        "B/C step between equal words.",
+        "1 OPS  2 TOOL  3 WORD  4 G7X.",
+        "5 THREAD  6 PECK  7 DRAW.",
+        "# VIEW  * DEL  0 files."
+    };
+    static const char *const tools[] = {
+        "The tool table, one tool a line.",
+        "Arrows move, the digits type.",
+        "B/C step between equal words.",
+        "1 ADD  7 INS  * DEL.",
+        "8 FILES opens the card."
+    };
+    static const char *const run[] = {
+        "Send the program to the machine.",
+        "1 SINGLE  2 FROM  3 FULL.",
+        "4 HOLD (again resumes)  5 STOP.",
+        "6 DIM  # RELOAD  0 files."
+    };
+    static const char *const files[] = {
+        "Pick a program from the card.",
+        "B/C or arrows step the list.",
+        "4 or D opens the file.",
+        "5 new  6 delete  8 refresh.",
+        "# runs it, * back."
+    };
+    static const char *const preview[] = {
+        "The part as the program cuts it.",
+        "4 STOCK  5 TRACE  6 ROUGH.",
+        "7 DIM  # back to the code."
+    };
+    static const char *const builder[] = {
+        "DRAW: the 3x3 builds the profile.",
+        "3x3 moves one step: 2/8 X,",
+        "4/6 Z, the corners both.",
+        "* takes one point back.",
+        "# step size, 5 ends, 0 cancels."
+    };
+    const char *const *table;
+    size_t count;
+
+    if (!lines) {
+        return 0u;
+    }
+    if (nc_path_builder_active()) {
+        table = builder;
+        count = sizeof(builder) / sizeof(builder[0]);
+    } else if (nc_files_active()) {
+        table = files;
+        count = sizeof(files) / sizeof(files[0]);
+    } else if (nc_visual_full_preview()) {
+        table = preview;
+        count = sizeof(preview) / sizeof(preview[0]);
+    } else {
+        switch (g_nc_visual_mode) {
+        case NC_MODE_MANUAL:
+            table = manual;
+            count = sizeof(manual) / sizeof(manual[0]);
+            break;
+        case NC_MODE_TOOLS:
+            table = tools;
+            count = sizeof(tools) / sizeof(tools[0]);
+            break;
+        case NC_MODE_RUN:
+            table = run;
+            count = sizeof(run) / sizeof(run[0]);
+            break;
+        case NC_MODE_PROGRAM:
+        default:
+            table = program;
+            count = sizeof(program) / sizeof(program[0]);
+            break;
+        }
+    }
+    *lines = table;
+    return count;
 }
 
 bool nc_visual_periodic_needed(void)
@@ -1545,6 +1982,50 @@ void nc_visual_draw(void)
     g_nc_visual_frame_preview_geom_us = 0;
     g_nc_visual_frame_preview_tool_us = 0;
     t0 = mcu_micros();
+    /* RUN has one cursor: the line the sender is on. The pane marks that line
+       and `1 SINGLE` sends it, so the mark can never be a line away from what
+       the key acts on. A streamed run advances the sender's line; the
+       document's cursor used to stay where the block started, and SINGLE - which
+       reads the document's cursor - then re-sent that block while the pane
+       showed the next line (bench: "it was marking next line after current g71,
+       but then i pressed run single - it still seems to have marked original one
+       with g71. only if i go back/forward it is ok", because the line keys sync
+       the two). */
+    /* The cycle the marked line belongs to gets the pane's weaker mark - the
+       *path* of the block the bright line is the head of. This is the code
+       screens' one rule, and it is the same rule in both of them: the bright
+       line is the line in play (in RUN the unit the machine is on, in EDIT the
+       line the cursor and the keys are on) and the pale rows are the rest of
+       the cycle that line belongs to. The answer comes from the same
+       `nc_g7x_block_containing()` the sender uses to decide what a line sends,
+       so the pale rows are exactly the lines that go with the bright one - no
+       extracted path list, and nothing the stream and the mark can drift apart
+       on. A line outside every cycle has no path: the mark stays on that line.
+
+       The editor keeps the bright mark on its cursor rather than on the block's
+       header: the cursor is what the digits type into and what the legend names,
+       and an editor that moves its own cursor mark to another line would be
+       lying about where the typing goes. */
+    if (nc_visual_is_code_view()) {
+        size_t mark = (g_nc_visual_mode == NC_MODE_RUN)
+                          ? nc_visual_run_line(&g_nc_visual_doc)
+                          : g_nc_visual_doc.cursor_line;
+        size_t block_first = mark;
+        size_t block_last = mark;
+        bool in_block;
+
+        if (g_nc_visual_mode == NC_MODE_RUN) {
+            g_nc_visual_doc.cursor_line = mark;
+        }
+        /* `nc_g7x_line_path()`: the block for a row inside a cycle, and for a
+           `G70 P Q` the numbered range it replays - a finish cut's path is the
+           profile above it, which is the same answer the preview feeds from. */
+        in_block = nc_g7x_line_path(&g_nc_visual_doc, mark,
+                                    &block_first, &block_last);
+        nc_state_set_run_block(in_block, block_first, block_last);
+    } else {
+        nc_state_set_run_block(false, 0u, 0u);
+    }
     nc_state_snapshot(&g_nc_visual_doc, &snapshot);
     t1 = mcu_micros();
     run_line = nc_run_line();

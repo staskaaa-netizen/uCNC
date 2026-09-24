@@ -42,6 +42,19 @@
    else, so the header below it is free to carry state and file. */
 #define NC_TAB_Y           0
 #define NC_TAB_H           24
+/* A fault is a panel, not a line of text: the message area of the tab strip
+   continued down over the DRO, so it is read before anything behind it. Its
+   geometry is what keeps the machine's own readings out of it: it stops left of
+   the F/S column and above the DRO's bottom-right corner, which belongs to the
+   uCNC state, and runs to the panel's right edge otherwise - the FPS counter is
+   a debug reading and lives below the DRO, not in this band. */
+#define NC_FAULT_COLS      42
+#define NC_FAULT_RIGHT_PAD 0
+#define NC_FAULT_X         (LVDS_HSTX_WIDTH - NC_FAULT_RIGHT_PAD - NC_FAULT_W)
+#define NC_FAULT_W         (NC_FAULT_COLS * NC_VISUAL_CHAR_W + 8)
+#define NC_FAULT_LINES     3
+#define NC_FAULT_ROW_H     18
+#define NC_FAULT_H         (NC_FAULT_LINES * NC_FAULT_ROW_H + 4)
 #define NC_HEADER_Y        (NC_TAB_Y + NC_TAB_H)
 #define NC_HEADER_H        68
 /* Code/graphic pane. The tab strip is paid for by the pane caption that used
@@ -56,6 +69,10 @@
 #define NC_FOOTER_Y        (NC_PANE_BOTTOM + 14)
 #define NC_FOOTER_H        (LVDS_HSTX_HEIGHT - NC_FOOTER_Y)
 /* Footer keys carry a short label; three lines is the whole button height. */
+/* The frame counter is a debug reading: it sits in its own corner *below* the
+   DRO, so nothing the operator reads has to make room for it. */
+#define NC_FPS_X_PAD       8
+#define NC_FPS_Y           (NC_PANE_Y + 4)
 #define NC_FOOTER_LINES    3
 /* The strip is the same eight slots on every screen: the keys are drawn at the
    same places and the same width whatever screen is up, and a screen with
@@ -66,14 +83,28 @@
 #define NC_FULL_PREVIEW_X  20
 #define NC_FULL_PREVIEW_W  (LVDS_HSTX_WIDTH - 40)
 
-/* MANUAL readout row: the axis letter, its position in the offset in use, the
-   stop and the machine figure the offset is cut from - three numbers on the
-   line, one row per axis. */
+/* MANUAL readout row: the axis and the two limits it works between (minus and
+   plus) - one row per axis - and, below the axis rows, the STEP and FEED values
+   the value keys change. */
 #define NC_MANUAL_ROW_H    62
 #define NC_MANUAL_COL_X    40
-#define NC_MANUAL_COL_POS  76
-#define NC_MANUAL_COL_STOP 250
-#define NC_MANUAL_COL_MACH 340
+/* The touch-off value `D` types: after the row's label and before its first
+   stop, in the one font the pane's values share, so the row reads left to right
+   - what this line is, the position being set, the two limits it works
+   between. */
+#define NC_MANUAL_COL_TOUCH 104
+#define NC_MANUAL_TOUCH_W   (9 * NC_VISUAL_CHAR_W)
+/* The two stops sit left of centre: the machine figures and F/S are in the
+   header DRO, so nothing needs the middle of the pane, and the values read
+   closer to the axis letter they belong to. */
+#define NC_MANUAL_COL_STOP 180
+#define NC_MANUAL_COL_STOP_PLUS 280
+/* The row's text is centred in the band the mark covers. */
+#define NC_MANUAL_TEXT_DY  6
+/* The picked axis (and the value row in use) is marked across the values it
+   owns, not the whole pane: the mark ends past the plus stop column, well short
+   of the pad in the corner. */
+#define NC_MANUAL_MARK_RIGHT (NC_MANUAL_COL_STOP_PLUS + 9 * NC_VISUAL_CHAR_W + 16)
 
 /* Floating 3x3 helper: the nine keys and nothing else. No panel box and no
    title strip - the editor line above it carries the label - so the keys read

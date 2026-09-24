@@ -1,4 +1,5 @@
 #include "nc_presets.h"
+#include "nc_vocab.h"
 
 #include "../file_system.h"
 
@@ -24,89 +25,113 @@ static int g_nc_preset_count;
 static bool g_nc_presets_file_settled;
 static bool g_nc_presets_from_file;
 
-static const char *const g_nc_preset_od[] = {
-    "G71 U0 R0 X0 Z0 F0 P0 Q0 N0"
-};
-static const char *const g_nc_preset_id[] = {
-    "G72 W0 R0 X0 Z0 F0 P0 Q0 N0"
-};
-static const char *const g_nc_preset_face[] = {
-    "G72 W0 R0 X0 Z0 F0 P0 Q0 N0"
-};
-static const char *const g_nc_preset_thread_od[] = {
-    "G76 X0 Z0 P0 Q0 F0 I0 L0 R0"
-};
-static const char *const g_nc_preset_thread_id[] = {
-    "G76 X0 Z0 P0 Q0 F0 I-0.2 L0 R0"
-};
-static const char *const g_nc_preset_tap[] = {
-    "G33 X0 Z0 K0 F0"
-};
-static const char *const g_nc_preset_drill[] = {
-    "G1 X0 Z0 F0"
-};
-static const char *const g_nc_preset_peck[] = {
-    "G1 X0 Z0 F0"
-};
-static const char *const g_nc_preset_dwell[] = {
-    "G4 P0"
-};
-static const char *const g_nc_preset_end[] = {
-    "G80"
-};
-static const char *const g_nc_preset_setup[] = {
-    "G970 X0 U0 Z0 W0",
-    "G971 X0 Z0 I0 E0",
-    "G972 C0",
-    "G973 P0"
-};
-static const char *const g_nc_preset_line[] = {
-    "G1 X0 Z0 C0 R0"
-};
-static const char *const g_nc_preset_arc[] = {
-    "G2 X0 Z0 R0 I0 K0 F0"
+/* The compiled entries, one row each: an id (the key path, see
+   `nc_presets.h`), the name the key reads as, and the rows it writes - `\n`
+   separated, because a section's rows are lines of a program. Everything the
+   card can change about an entry is here and nowhere else in the code.
+
+   Two of them are worth the note: `11` writes *nothing* (a blank line is a
+   section like any other, and a separator comment or a command the operator
+   keeps needing is their edit), and `32`/`33` start with a space so they add
+   their word to the line the cursor is on rather than starting one. */
+typedef struct {
+    int id;
+    const char *name;
+    const char *rows;
+} nc_preset_builtin_t;
+
+static const nc_preset_builtin_t g_nc_preset_builtins[] = {
+    { NC_PRESET_ID_INS, "INS", "" },
+    { NC_PRESET_ID_END, "G80", "G80" },
+    { NC_PRESET_ID_SETUP, "SETUP",
+      "G970 X0 U0 Z0 W0\nG971 X0 Z0 I0 E0\nG972 C0\nG973 P0" },
+    { NC_PRESET_ID_M6, "M6", "M6" },
+    { NC_PRESET_ID_M3, "M3", "M3 S1000" },
+    { NC_PRESET_ID_STOP, "STOP", "M5" },
+    { NC_PRESET_ID_M4, "M4", "M4 S1000" },
+    { NC_PRESET_ID_CHMF, "CHMF", " C0" },
+    { NC_PRESET_ID_RND, "RND", " R0" },
+    { NC_PRESET_ID_OD, "OD ROUGH", 0 },
+    { NC_PRESET_ID_BORE, "ID BORE", 0 },
+    { NC_PRESET_ID_FACE, "FACE", 0 },
+    { NC_PRESET_ID_FINISH, "FINISH", "G70 P0 Q0" },
+    { NC_PRESET_ID_THREAD_OD, "THREAD OD", "G76 X0 Z0 P0 Q0 F0 I0 L0 R0" },
+    { NC_PRESET_ID_THREAD_ID, "THREAD ID", "G76 X0 Z0 P0 Q0 F0 I-0.2 L0 R0" },
+    { NC_PRESET_ID_TAP, "TAP", "G33 X0 Z0 K0 F0" },
+    { NC_PRESET_ID_DRILL, "DRILL", "G1 X0 Z0 F0" },
+    { NC_PRESET_ID_PECK, "PECK", "G1 X0 Z0 F0" },
+    { NC_PRESET_ID_DWELL, "DWELL", "G4 P0" }
 };
 
 static void nc_preset_add_builtin(int id,
                                   const char *name,
-                                  const char *const *lines,
-                                  int count)
+                                  const char *rows)
 {
     nc_preset_rec_t *rec;
+    const char *row;
     int i;
 
-    if (g_nc_preset_count >= NC_PRESET_MAX || count <= 0) {
+    if (g_nc_preset_count >= NC_PRESET_MAX || !rows) {
         return;
     }
     rec = &g_nc_presets[g_nc_preset_count++];
     memset(rec, 0, sizeof(*rec));
     rec->id = id;
     strncpy(rec->name, name, sizeof(rec->name) - 1);
-    if (count > NC_PRESET_MAX_LINES) {
-        count = NC_PRESET_MAX_LINES;
-    }
-    rec->count = (uint8_t)count;
-    for (i = 0; i < count; i++) {
-        strncpy(rec->lines[i], lines[i], sizeof(rec->lines[i]) - 1);
+    row = rows;
+    for (i = 0; i < NC_PRESET_MAX_LINES; i++) {
+        const char *end = strchr(row, '\n');
+        size_t len = end ? (size_t)(end - row) : strlen(row);
+
+        if (len >= sizeof(rec->lines[0])) {
+            len = sizeof(rec->lines[0]) - 1u;
+        }
+        memcpy(rec->lines[rec->count], row, len);
+        rec->lines[rec->count][len] = '\0';
+        rec->count++;
+        if (!end) {
+            break;              /* the last row */
+        }
+        row = end + 1;
     }
 }
 
 static void nc_presets_load_builtin(void)
 {
+    size_t i;
+
     g_nc_preset_count = 0;
-    nc_preset_add_builtin(41, "OD ROUGH", g_nc_preset_od, 1);
-    nc_preset_add_builtin(42, "ID BORE", g_nc_preset_id, 1);
-    nc_preset_add_builtin(43, "FACE", g_nc_preset_face, 1);
-    nc_preset_add_builtin(51, "THREAD OD", g_nc_preset_thread_od, 1);
-    nc_preset_add_builtin(52, "THREAD ID", g_nc_preset_thread_id, 1);
-    nc_preset_add_builtin(53, "TAP", g_nc_preset_tap, 1);
-    nc_preset_add_builtin(61, "DRILL", g_nc_preset_drill, 1);
-    nc_preset_add_builtin(62, "PECK", g_nc_preset_peck, 1);
-    nc_preset_add_builtin(63, "DWELL", g_nc_preset_dwell, 1);
-    nc_preset_add_builtin(80, "END", g_nc_preset_end, 1);
-    nc_preset_add_builtin(10, "SETUP", g_nc_preset_setup, 4);
-    nc_preset_add_builtin(21, "LINE", g_nc_preset_line, 1);
-    nc_preset_add_builtin(22, "ARC", g_nc_preset_arc, 1);
+    for (i = 0u; i < sizeof(g_nc_preset_builtins) / sizeof(g_nc_preset_builtins[0]); i++) {
+        const char *rows = g_nc_preset_builtins[i].rows;
+        if (g_nc_preset_builtins[i].id == NC_PRESET_ID_OD) {
+            rows = nc_vocab_gcode_template(71);
+        } else if (g_nc_preset_builtins[i].id == NC_PRESET_ID_BORE ||
+                   g_nc_preset_builtins[i].id == NC_PRESET_ID_FACE) {
+            rows = nc_vocab_gcode_template(72);
+        }
+        nc_preset_add_builtin(g_nc_preset_builtins[i].id,
+                              g_nc_preset_builtins[i].name,
+                              rows);
+    }
+}
+
+/* Ids the menus used to hold, mapped to the entry they always named: `10` was a
+   one-level path on an older footer, `44`/`80` were two levels of the layout
+   before the G7X and OPS menus were arranged as they are now. A card's section
+   keeps meaning what it meant - the operator's edited text is not thrown away
+   for a renumbering - and the file is not rewritten behind their back; the name
+   is theirs to fix when they next open the file.
+
+   `80`'s entry is the end mark, which the OPS menu no longer offers (the G7X
+   menu's `6 G80` is the one key for it), so its id is that path: `46`. */
+static int nc_preset_id_current(int id)
+{
+    switch (id) {
+    case 10: return 16;              /* setup:  OPS `1` then `6` */
+    case 44: return 48;              /* finish: G7X `4` then `8` */
+    case 80: return 46;              /* end:    G7X `4` then `6` */
+    default: return id;
+    }
 }
 
 static bool nc_presets_write_builtin_file(void)
@@ -155,6 +180,7 @@ static bool nc_presets_write_builtin_file(void)
 static nc_preset_rec_t *nc_preset_find_id(int id)
 {
     int i;
+
     for (i = 0; i < g_nc_preset_count; i++) {
         if (g_nc_presets[i].id == id) {
             return &g_nc_presets[i];
@@ -168,22 +194,28 @@ static bool nc_preset_valid_name(const char *name)
     return name && name[0] && strlen(name) < 16;
 }
 
-static nc_preset_rec_t *nc_preset_begin_section(int id)
+/* One section of the file, applied over the compiled set. The file defines the
+   entries it names - an edited `[41]` is the operator's OD preset and stays so -
+   while an id the file does not mention keeps its compiled entry, so a card
+   written before an entry existed still offers it (that is how `44 FINISH`
+   survives a `presets.txt` from an older build). A section without a name or
+   without a line is dropped, which leaves the compiled entry it would have
+   replaced in place. */
+static void nc_preset_apply_section(const nc_preset_rec_t *section)
 {
-    nc_preset_rec_t *rec;
+    nc_preset_rec_t *dst;
 
-    if (id <= 0 || g_nc_preset_count >= NC_PRESET_MAX) {
-        return 0;
+    if (!section || section->id <= 0 || section->count == 0 ||
+        !nc_preset_valid_name(section->name)) {
+        return;
     }
-    rec = &g_nc_presets[g_nc_preset_count];
-    memset(rec, 0, sizeof(*rec));
-    rec->id = id;
-    return rec;
-}
-
-static void nc_preset_commit_section(nc_preset_rec_t *rec)
-{
-    if (rec && rec->count > 0 && nc_preset_valid_name(rec->name)) {
+    dst = nc_preset_find_id(section->id);
+    if (dst) {
+        *dst = *section;
+        return;
+    }
+    if (g_nc_preset_count < NC_PRESET_MAX) {
+        g_nc_presets[g_nc_preset_count] = *section;
         g_nc_preset_count++;
     }
 }
@@ -194,13 +226,13 @@ static bool nc_presets_read_file(void)
     char line[NC_MAX_LINE_LEN + 8];
     size_t used = 0;
     int read_count = 0;
-    nc_preset_rec_t *current = 0;
+    nc_preset_rec_t section;
+    bool have_section = false;
 
     fp = fs_open(NC_PRESET_FILE_PATH, "r");
     if (!fp) {
         return false;
     }
-    g_nc_preset_count = 0;
     while (fs_available(fp) && read_count < 4096) {
         char c;
         if (fs_read(fp, (uint8_t *)&c, 1u) != 1u) {
@@ -217,30 +249,39 @@ static bool nc_presets_read_file(void)
             if (*p == '[') {
                 int id = 0;
                 if (sscanf(p, "[%d]", &id) == 1) {
-                    nc_preset_commit_section(current);
-                    current = nc_preset_begin_section(id);
+                    if (have_section) {
+                        nc_preset_apply_section(&section);
+                    }
+                    memset(&section, 0, sizeof(section));
+                    /* An id the menus used to hold is read as the entry it
+                       always named, so the rest of the file's rules - "the
+                       section replaces the compiled entry with that id", "the
+                       last section to name an entry wins" - work on one id per
+                       entry, whatever the card was written with. */
+                    section.id = nc_preset_id_current(id);
+                    have_section = true;
                 }
-            } else if (current && strncmp(p, "name=", 5u) == 0) {
-                strncpy(current->name, p + 5, sizeof(current->name) - 1);
-            } else if (current && strncmp(p, "line=", 5u) == 0) {
-                if (current->count < NC_PRESET_MAX_LINES) {
-                    strncpy(current->lines[current->count],
+            } else if (have_section && strncmp(p, "name=", 5u) == 0) {
+                strncpy(section.name, p + 5, sizeof(section.name) - 1);
+            } else if (have_section && strncmp(p, "line=", 5u) == 0) {
+                if (section.count < NC_PRESET_MAX_LINES) {
+                    strncpy(section.lines[section.count],
                             p + 5,
-                            sizeof(current->lines[0]) - 1);
-                    current->count++;
+                            sizeof(section.lines[0]) - 1);
+                    section.count++;
                 }
             }
         } else if (c != '\r') {
             line[used++] = c;
         }
     }
-    nc_preset_commit_section(current);
-    fs_close(fp);
-    if (g_nc_preset_count == 0) {
-        nc_presets_load_builtin();
-        return false;
+    if (have_section) {
+        nc_preset_apply_section(&section);
     }
-    return true;
+    fs_close(fp);
+    /* Anything the file defines is in place now; the compiled entries it does
+       not define are untouched and still available. */
+    return have_section;
 }
 
 /* Settles the preset file once the drive can answer: loads it when it is
@@ -280,6 +321,9 @@ static nc_result_t nc_preset_insert_lines(nc_document_t *doc,
                                           const nc_preset_rec_t *rec)
 {
     size_t at;
+    size_t last;
+    bool inserted = false;
+    bool appended = false;
     int i;
 
     if (!doc || !rec || rec->count == 0) {
@@ -289,14 +333,54 @@ static nc_result_t nc_preset_insert_lines(nc_document_t *doc,
     if (doc->line_count == 0) {
         at = 0;
     }
+    /* The line an appending row continues: the one above the insert point, or
+       the last row this entry wrote. */
+    last = at > 0u ? at - 1u : (size_t)-1;
     for (i = 0; i < rec->count; i++) {
-        nc_result_t r = nc_insert_line(doc, at + (size_t)i, rec->lines[i]);
+        const char *text = rec->lines[i];
+        nc_result_t r;
+
+        /* A row that starts with a space **continues the line above** instead of
+           starting one: that is how a value that belongs on the line already
+           written - a `Q` on a cycle header, a `C`/`R` on a contour row - gets
+           into the program without the controller ever seeing a line break
+           (bench: "on N/Q or other things to be added inline - just use trick by
+           not have a new line before values. so controller will know it all"). */
+        if (text[0] == ' ' && last != (size_t)-1) {
+            char joined[NC_MAX_LINE_LEN];
+             nc_word_t words[24];
+             int count;
+             int n = snprintf(joined, sizeof(joined), "%s%s",
+                              doc->lines[last].text, text);
+
+            if (n <= 0 || n >= (int)sizeof(joined)) {
+                return NC_ERR_BAD_ARG;
+            }
+            r = nc_set_line(doc, last, joined);
+            if (r != NC_OK) {
+                return r;
+            }
+            /* A value written to be typed is left picked, and the line under the
+               cursor stays the cursor's: this row is part of the line the
+               operator is already on. */
+            count = nc_parse_words(joined, words, 24);
+            doc->selected_word = count > 0 ? count - 1 : -1;
+            appended = true;
+            continue;
+        }
+        r = nc_insert_line(doc, at + (size_t)i, text);
         if (r != NC_OK) {
             return r;
         }
+        last = at + (size_t)i;
+        inserted = true;
     }
-    doc->cursor_line = at;
-    doc->selected_word = -1;
+    if (inserted) {
+        doc->cursor_line = at;
+        if (!appended) {
+            doc->selected_word = -1;
+        }
+    }
     return NC_OK;
 }
 
@@ -309,24 +393,20 @@ bool nc_insert_preset_id(nc_document_t *doc, int id)
     return rec && nc_preset_insert_lines(doc, rec) == NC_OK;
 }
 
-nc_result_t nc_insert_preset(nc_document_t *doc, nc_preset_t preset)
+bool nc_preset_name_for_id(int id, char *out, size_t out_sz)
 {
-    switch (preset) {
-    case NC_PRESET_OD:
-        return nc_insert_preset_id(doc, 41) ? NC_OK : NC_ERR_BAD_ARG;
-    case NC_PRESET_ID:
-        return nc_insert_preset_id(doc, 42) ? NC_OK : NC_ERR_BAD_ARG;
-    case NC_PRESET_FACE:
-        return nc_insert_preset_id(doc, 43) ? NC_OK : NC_ERR_BAD_ARG;
-    case NC_PRESET_LINE:
-        return nc_insert_preset_id(doc, 21) ? NC_OK : NC_ERR_BAD_ARG;
-    case NC_PRESET_ARC:
-        return nc_insert_preset_id(doc, 22) ? NC_OK : NC_ERR_BAD_ARG;
-    case NC_PRESET_SETUP:
-        return nc_insert_preset_id(doc, 10) ? NC_OK : NC_ERR_BAD_ARG;
-    case NC_PRESET_END:
-        return nc_insert_preset_id(doc, 80) ? NC_OK : NC_ERR_BAD_ARG;
-    default:
-        return NC_ERR_BAD_ARG;
+    nc_preset_rec_t *rec;
+
+    if (!out || out_sz == 0u) {
+        return false;
     }
+    out[0] = '\0';
+    (void)nc_presets_sync();
+    rec = nc_preset_find_id(id);
+    if (!rec || !nc_preset_valid_name(rec->name)) {
+        return false;
+    }
+    strncpy(out, rec->name, out_sz - 1u);
+    out[out_sz - 1u] = '\0';
+    return true;
 }

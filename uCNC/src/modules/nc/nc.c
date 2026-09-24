@@ -185,7 +185,11 @@ nc_result_t nc_load_file(nc_document_t *doc, const char *path)
     if (!doc || !path) {
         return NC_ERR_BAD_ARG;
     }
-    if (!nc_path_supported(path)) {
+    /* A program or the text beside one: the editor shows either, and the file
+       list carries both on purpose (the preset file is the text this is for).
+       The preview parses only programs, and RUN refuses text, so widening this
+       does not make a `.txt` runnable. */
+    if (!nc_path_text(path)) {
         return NC_ERR_UNSUPPORTED_FILE;
     }
 
@@ -471,6 +475,24 @@ bool nc_word_value(const char *line, const nc_word_t *word, float *value)
 
     *value = (float)strtod(line + word->start + 1, &parse_end);
     return parse_end == line + word->end;
+}
+
+bool nc_line_word_float(const char *line, char letter, float *value)
+{
+    nc_word_t words[16];
+    int count;
+    int i;
+
+    if (!line || !value) {
+        return false;
+    }
+    count = nc_parse_words(line, words, 16);
+    for (i = 0; i < count; i++) {
+        if (words[i].letter == letter) {
+            return nc_word_value(line, &words[i], value);
+        }
+    }
+    return false;
 }
 
 nc_result_t nc_select_next_word(nc_document_t *doc)

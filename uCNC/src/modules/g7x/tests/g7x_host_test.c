@@ -87,11 +87,33 @@ static int add_line(g7x_stream_t *stream, const char *line)
 static int test_allowance_approach(void)
 {
     /* Diameter source coordinates: X allowance 0.5 and radial R1 produce
-       X52.5 clearance. Z allowance 0.5 plus R1 produces +/-1.5 clearance. */
+       X52.5 clearance. Z allowance 0.5 plus R1 produces +/-1.5 clearance.
+
+       What is checked is where the cycle stands, not which lines it prints: a
+       rapid that would not move the tool is never emitted, each pass retracts
+       in X only (the OD pass returns in Z because it cuts from the face end
+       again, the facing pass does not), and the cycle ends on the X retract
+       followed by the Z return to the clearance point - the corner a `G0`
+       before the cycle establishes, and where Fanuc leaves the tool after a
+       stock-removal cycle.
+
+       And the roughing has to leave **exactly** the finish allowance: the last
+       rough pass steps onto the boundary instead of stopping a whole step short
+       of it (that step used to become the automatic finish cut). With X0.5
+       diameter allowance over an X50 to X30 profile the boundary is X30.5, so
+       that pass has to be in the stream. */
     for (int cycle = 71; cycle <= 72; cycle++) {
         for (int direction = -1; direction <= 1; direction += 2) {
             g7x_stream_t stream;
             sink_t sink;
+            float x = 0.0f;
+            float z = 0.0f;
+            float finish_x = 0.0f;
+            float finish_z = 0.0f;
+            bool have = false;
+            bool finish_seen = false;
+            bool finish_have = false;
+            int idle = 0;
             const char *header = cycle == 71 ? "G71 U2 R1 X0.5 Z0.5 F120" :
                                                 "G72 W2 R1 X0.5 Z0.5 F120";
             if (g7x_stream_begin(&stream, header) != G7X_OK ||
@@ -99,25 +121,88 @@ static int test_allowance_approach(void)
                 add_line(&stream, direction < 0 ? "G1 X30 Z-10" : "G1 X30 Z10") ||
                 add_line(&stream, "G80") || collect_g7x(&stream, &sink)) return 1;
             const char *zclear = direction < 0 ? "G0 Z1.500" : "G0 Z-1.500";
+            float zclear_value = direction < 0 ? 1.5f : -1.5f;
             if (sink.count < 5 || strcmp(sink.lines[2], "G0 X52.500") ||
                 strcmp(sink.lines[3], zclear)) {
                 printf("FAIL G%d approach direction %d\n", cycle, direction); return 1;
             }
             for (int i = 0; i < sink.count; i++) {
+                float nx = x;
+                float nz = z;
+                const char *px;
+                const char *pz;
+                bool moved = false;
+
                 if (!strncmp(sink.lines[i], "G0 ", 3) &&
                     strchr(sink.lines[i], 'X') && strchr(sink.lines[i], 'Z')) {
                     puts("FAIL diagonal rapid in cycle"); return 1;
                 }
                 if (!strcmp(sink.lines[i], "(G7x finish contour)")) {
-                    if (i + 2 >= sink.count || strcmp(sink.lines[i+1], "G0 X52.500") ||
-                        strcmp(sink.lines[i+2], zclear)) {
-                        puts("FAIL finish approach clearance"); return 1;
-                    }
+                    finish_seen = true;
+                    continue;
                 }
+                if (sink.lines[i][0] != 'G')
+                    continue;
+                /* Where the finish *cut* starts: the rapid approach before it
+                   (when one is needed) has already been replayed above. */
+                if (finish_seen && !finish_have && sink.lines[i][1] != '0') {
+                    finish_x = x;
+                    finish_z = z;
+                    finish_have = true;
+                }
+                px = strchr(sink.lines[i], 'X');
+                pz = strchr(sink.lines[i], 'Z');
+                if (px && sscanf(px + 1, "%f", &nx) == 1 &&
+                    (!have || fabsf(nx - x) > 0.0005f))
+                    moved = true;
+                if (pz && sscanf(pz + 1, "%f", &nz) == 1 &&
+                    (!have || fabsf(nz - z) > 0.0005f))
+                    moved = true;
+                if (have && !moved)
+                    idle++;
+                x = nx;
+                z = nz;
+                have = true;
             }
-            if (strcmp(sink.lines[sink.count-2], "G0 X52.500") ||
-                strcmp(sink.lines[sink.count-1], zclear)) {
-                puts("FAIL final allowance clearance"); return 1;
+            if (idle) {
+                printf("FAIL G%d emits %d rapid(s) that do not move\n", cycle, idle);
+                return 1;
+            }
+            if (!finish_have) {
+                puts("FAIL no finish contour"); return 1;
+            }
+            /* The last rough pass is on the allowance boundary. */
+            if (cycle == 71) {
+                if (!has_exact(&sink, "G1 X30.500 F120.000")) {
+                    puts("FAIL G71 does not leave the X allowance"); return 1;
+                }
+            } else if (!has_exact(&sink, direction < 0 ? "G0 Z-9.500" : "G0 Z9.500")) {
+                puts("FAIL G72 does not leave the Z allowance"); return 1;
+            }
+            /* The finish cut starts from the clearance point, whether the
+               generator had to move there or was already there. */
+            if (fabsf(finish_x - 52.5f) > 0.0005f ||
+                fabsf(finish_z - zclear_value) > 0.0005f) {
+                printf("FAIL finish starts at X%.3f Z%.3f, wanted X52.500 Z%.3f\n",
+                       (double)finish_x, (double)finish_z, (double)zclear_value);
+                return 1;
+            }
+            /* And it ends back at the clearance point: out in X first, then the
+               Z return, which is where the program's `G0` before the cycle put
+               the tool. */
+            if (sink.count < 2 || strcmp(sink.lines[sink.count - 2], "G0 X52.500") ||
+                strcmp(sink.lines[sink.count - 1], zclear)) {
+                printf("FAIL G%d ends on \"%s\" / \"%s\", wanted the clearance "
+                       "point\n",
+                       cycle,
+                       sink.count > 1 ? sink.lines[sink.count - 2] : "",
+                       sink.count > 0 ? sink.lines[sink.count - 1] : "");
+                return 1;
+            }
+            if (fabsf(x - 52.5f) > 0.0005f ||
+                fabsf(z - zclear_value) > 0.0005f) {
+                puts("FAIL the cycle does not end at the clearance point");
+                return 1;
             }
         }
     }
@@ -167,6 +252,90 @@ static int test_g72_basic(void)
         !has_exact(&sink, "G1 X10.000 Z-25.000 F120.000") ||
         !has_exact(&sink, "G1 X40.000 Z0.000")) {
         printf("FAIL G72 basic output\n");
+        return 1;
+    }
+    return 0;
+}
+
+/* G70 is the finish cut of a contour the caller already holds: the profile as
+   programmed, at the feed the rows carry, with nothing offset and no roughing
+   at all. A contour that doubles back is fine here - parallel passes cannot
+   clear a V, but a finish cut only follows the line the program describes. */
+static int test_g70_finish_only(void)
+{
+    g7x_stream_t stream;
+    sink_t sink;
+
+    if (g7x_stream_begin(&stream, "G70 P100 Q200 F0.3") != G7X_OK)
+        return 1;
+    if (add_line(&stream, "N100 G0 X52 Z4") ||          /* the P block */
+        add_line(&stream, "N110 G1 X50 Z0") ||
+        add_line(&stream, "N120 G1 X50 Z-10 F180") ||   /* the profile's feed */
+        add_line(&stream, "N130 G1 X40 Z-10") ||
+        add_line(&stream, "N200 G1 X36 Z-4") ||         /* doubles back in Z */
+        add_line(&stream, "G80"))
+        return 1;
+    if (collect_g7x(&stream, &sink))
+        return 1;
+    if (contains(&sink, "(G71 rough") || contains(&sink, "(G72 rough")) {
+        puts("FAIL G70 emitted roughing passes");
+        return 1;
+    }
+    if (!has_exact(&sink, "G0 X52.000 Z4.000")) {
+        puts("FAIL G70 did not rapid to the profile's start");
+        return 1;
+    }
+    if (!has_exact(&sink, "G1 X50.000 Z0.000 F0.300")) {
+        puts("FAIL G70 did not take the cycle feed");
+        return 1;
+    }
+    if (!has_exact(&sink, "G1 X50.000 Z-10.000 F180.000")) {
+        puts("FAIL G70 did not take the row's own feed");
+        return 1;
+    }
+    if (!has_exact(&sink, "G1 X36.000 Z-4.000")) {
+        puts("FAIL G70 did not follow the profile");
+        return 1;
+    }
+    return 0;
+}
+
+/* The `P` block of a numbered range: written as a `G0` it is Fanuc's
+   positioning move, so the cycle rapids to that point and the cut starts with
+   the row after it. A profile row's own `F` is the *finish* feed - the roughing
+   runs at the cycle header's feed - and it is emitted where the program wrote
+   it, not once for the whole finish pass. A rapid *later* in the profile is
+   followed as a cut: a cycle never puts a rapid through the material. */
+static int test_profile_feed_and_approach(void)
+{
+    g7x_stream_t stream;
+    sink_t sink;
+
+    if (g7x_stream_begin(&stream, "G71 U2 R1 X0.5 Z0.5 F120") != G7X_OK)
+        return 1;
+    if (add_line(&stream, "G0 X52 Z4") ||            /* the `P` block: approach */
+        add_line(&stream, "G1 X50 Z0") ||
+        add_line(&stream, "G1 X50 Z-10 F180") ||     /* the profile's feed */
+        add_line(&stream, "G0 X40 Z-10") ||          /* a rapid inside: a cut */
+        add_line(&stream, "G1 X30 Z-25") ||
+        add_line(&stream, "G80"))
+        return 1;
+    if (collect_g7x(&stream, &sink))
+        return 1;
+    if (!has_exact(&sink, "G0 X52.000 Z4.000")) {
+        puts("FAIL the P block was not rapid to");
+        return 1;
+    }
+    if (!has_exact(&sink, "G1 X50.000 Z0.000 F120.000")) {
+        puts("FAIL the cut after the P block did not carry the finish feed");
+        return 1;
+    }
+    if (!has_exact(&sink, "G1 X50.000 Z-10.000 F180.000")) {
+        puts("FAIL the profile's own feed was not emitted");
+        return 1;
+    }
+    if (has_exact(&sink, "G0 X40.000 Z-10.000")) {
+        puts("FAIL a rapid inside the profile was emitted as a rapid");
         return 1;
     }
     return 0;
@@ -564,6 +733,8 @@ int main(void)
     fails += test_g71_basic();
     fails += test_allowance_approach();
     fails += test_g72_basic();
+    fails += test_profile_feed_and_approach();
+    fails += test_g70_finish_only();
     fails += test_g71_corner_radius();
     fails += test_bad_contour_rejected();
     fails += test_g76_basic();

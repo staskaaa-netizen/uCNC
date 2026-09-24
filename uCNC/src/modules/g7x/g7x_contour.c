@@ -195,6 +195,8 @@ bool g7x_modal_apply_line(g7x_modal_t *modal, const char *line)
 g7x_cycle_t g7x_cycle_from_line(const char *line)
 {
     line = g7x_skip_line_number(line);
+    if (g7x_command_is(line, "G70"))
+        return G7X_CYCLE_G70;
     if (g7x_command_is(line, "G71"))
         return G7X_CYCLE_G71;
     if (g7x_command_is(line, "G72"))
@@ -253,8 +255,16 @@ g7x_result_t g7x_stream_begin(g7x_stream_t *stream, const char *cycle_line)
         x_allow *= 0.5f;
     (void)g7x_contour_field_float(cycle_line, 'Z', &z_allow);
     (void)g7x_contour_field_float(cycle_line, 'F', &feed);
-    if (!g7x_contour_field_float(cycle_line, profile.rough_doc_word, &doc))
+    /* A finish cut has no depth of cut, so G70 is not asked for one. Everything
+       else about the region - the rows the caller adds after this - is the same
+       contour the roughing cycles take. */
+    if (cycle == G7X_CYCLE_G70) {
+        doc = 1.0f;
+        x_allow = 0.0f;
+        z_allow = 0.0f;
+    } else if (!g7x_contour_field_float(cycle_line, profile.rough_doc_word, &doc)) {
         return G7X_BAD_FIELD;
+    }
 
     return g7x_stream_begin_parsed(stream, cycle, retract, x_allow, z_allow, feed, doc);
 }
@@ -315,11 +325,13 @@ g7x_result_t g7x_stream_add_line(g7x_stream_t *stream, const char *line, bool *d
     float i = 0.0f;
     float k = 0.0f;
     float corner_amount = 0.0f;
+    float feed = 0.0f;
     bool has_x;
     bool has_z;
     bool has_r;
     bool has_i;
     bool has_k;
+    bool has_feed;
 
     if (done)
         *done = false;
@@ -330,7 +342,7 @@ g7x_result_t g7x_stream_add_line(g7x_stream_t *stream, const char *line, bool *d
     if (cmd == G7X_CONTOUR_END)
         return g7x_stream_add_parsed(stream, cmd, 0.0f, false, 0.0f, false,
                                      0.0f, false, 0.0f, false, 0.0f, false,
-                                     G7X_CORNER_NONE, 0.0f, done);
+                                     G7X_CORNER_NONE, 0.0f, 0.0f, false, done);
     if (cmd != G7X_CONTOUR_RAPID &&
         cmd != G7X_CONTOUR_LINE &&
         cmd != G7X_CONTOUR_ARC_CW &&
@@ -344,6 +356,8 @@ g7x_result_t g7x_stream_add_line(g7x_stream_t *stream, const char *line, bool *d
     has_r = g7x_contour_field_float(line, 'R', &r);
     has_i = g7x_contour_field_float(line, 'I', &i);
     has_k = g7x_contour_field_float(line, 'K', &k);
+    /* A profile row's feed is the finish feed (see g7x_contour_element_t). */
+    has_feed = g7x_contour_field_float(line, 'F', &feed);
 
     if (cmd == G7X_CONTOUR_LINE) {
         if (g7x_contour_field_float(line, 'C', &corner_amount)) {
@@ -356,7 +370,7 @@ g7x_result_t g7x_stream_add_line(g7x_stream_t *stream, const char *line, bool *d
 
     return g7x_stream_add_parsed(stream, cmd, x, has_x, z, has_z, r, has_r,
                                  i, has_i, k, has_k, corner_kind,
-                                 corner_amount, done);
+                                 corner_amount, feed, has_feed, done);
 }
 
 #if G7X_ENABLE_G76

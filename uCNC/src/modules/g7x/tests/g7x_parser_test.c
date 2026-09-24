@@ -54,6 +54,23 @@ static bool record_thread(void *args)
 }
 CREATE_EVENT_LISTENER(gcode_exec, record_thread);
 
+/* The last F word a generated feed block carried, so a test can see that a
+   profile row's feed reached the planner where the program wrote it. */
+static float generated_feed;
+static unsigned generated_feed_blocks;
+
+static bool record_generated_feed(void *args)
+{
+    gcode_exec_args_t *p = args;
+
+    if ((p->cmd->words & GCODE_ALL_AXIS) && (p->cmd->words & GCODE_WORD_F)) {
+        generated_feed = p->words->f;
+        generated_feed_blocks++;
+    }
+    return EVENT_CONTINUE;
+}
+CREATE_EVENT_LISTENER(gcode_exec_modifier, record_generated_feed);
+
 static int command(const char *line, uint8_t want)
 {
     char input[160];
@@ -74,6 +91,74 @@ static void ignore_history_block(void *user, uint32_t number, const char *text)
     (void)text;
 }
 
+#ifndef G7X_STANDALONE_TEST
+/* The panel's RUN sender is paced, and the pacer lives in the main loop:
+   `cnc_dotasks()` is where it hands the machine one block, waits for the machine
+   to run it, and only then hands over the next unit. The old reader gave the
+   whole program at once, so a test could take a whole program from one
+   `grbl_stream_available()`. Now a pass has to be given first, and a program
+   only ends when the pacer has run out of lines.
+
+   `nc_parse_block()` takes the block the pacer offered, if any.
+   `nc_run_to_end()` drives a program to its end and reports the first parse
+   answer that was not OK. */
+static bool nc_parse_block(uint8_t *status)
+{
+    cnc_dotasks();
+    if (!grbl_stream_available()) {
+        return false;                       /* the pacer is waiting for the
+                                               machine, not for the parser */
+    }
+    if (status) {
+        *status = cnc_parse_cmd();
+    }
+    return true;
+}
+
+static uint8_t nc_run_to_end(void)
+{
+    uint8_t first_error = STATUS_OK;
+
+    for (int i = 0; i < 20000; i++) {
+        uint8_t status = STATUS_OK;
+
+        if (nc_parse_block(&status) && status != STATUS_OK && first_error == STATUS_OK) {
+            first_error = status;
+        }
+        mcu_unit_test_advance_time(1000);
+        if (!nc_run_streaming() && !grbl_stream_available() &&
+            !g7x_parser_busy() && planner_buffer_is_empty() && itp_is_empty()) {
+            break;
+        }
+    }
+    return first_error;
+}
+
+/* Let the machine finish what it already has. The sections above drive the
+   parser directly and leave motion queued without running it; a paced run waits
+   for the machine before it hands over its first block, so it has to start from
+   an idle machine. */
+static void nc_drain_machine(void)
+{
+    for (int i = 0; i < 20000; i++) {
+        if (!g7x_parser_busy() && planner_buffer_is_empty() && itp_is_empty()) {
+            break;
+        }
+        cnc_dotasks();
+        mcu_unit_test_advance_time(1000);
+    }
+}
+
+/* Start a paced run from a machine that has finished everything it was given:
+   the pacer waits for the machine before its first block, and the sections above
+   leave motion queued without running it. */
+static bool nc_start_run(nc_document_t *doc, size_t line)
+{
+    nc_drain_machine();
+    return nc_run_start_stream(doc, line);
+}
+#endif
+
 int main(void)
 {
     int fails = 0;
@@ -89,6 +174,7 @@ int main(void)
     cnc_unit_test_start();
     ADD_EVENT_LISTENER(gcode_exec, record_thread);
     ADD_EVENT_LISTENER(gcode_exec_modifier, observe_motion);
+    ADD_EVENT_LISTENER(gcode_exec_modifier, record_generated_feed);
 #ifndef G7X_STANDALONE_TEST
     nc_run_init();
 #endif
@@ -267,8 +353,172 @@ int main(void)
                two_line_x, pos[AXIS_X], two_line_z, pos[AXIS_Z]);
         fails++;
     }
+
+    /* The same two-line form for G72: the facing cycle must take its P/Q range
+       and its U/W allowances from the second block exactly as G71 does. */
+    fails += command("G0 X54 Z2", STATUS_OK);
+    fails += command("G72 W2 R1", STATUS_OK);
+    fails += command("G72 P100 Q200 U0.5 W0.25 F300", STATUS_OK);
+    fails += command("N100 G1 X10 Z-25", STATUS_OK);
+    fails += command("G1 X40 Z-25", STATUS_OK);
+    fails += command("N200 G1 X40 Z0", STATUS_OK);
+    if (g7x_parser_busy()) { puts("FAIL two-line G72 cleanup"); fails++; }
+    mc_get_position(pos);
+    float g72_two_line_x = pos[AXIS_X];
+    float g72_two_line_z = pos[AXIS_Z];
+    fails += command("G0 X54 Z2", STATUS_OK);
+    fails += command("G72 W2 R1 X0.5 Z0.25 F300", STATUS_OK);
+    fails += command("G1 X10 Z-25", STATUS_OK);
+    fails += command("G1 X40 Z-25", STATUS_OK);
+    fails += command("G1 X40 Z0", STATUS_OK);
+    fails += command("G80", STATUS_OK);
+    mc_get_position(pos);
+    if (fabsf(pos[AXIS_X] - g72_two_line_x) > 0.001f ||
+        fabsf(pos[AXIS_Z] - g72_two_line_z) > 0.001f) {
+        printf("FAIL two-line G72 X%.3f/%.3f Z%.3f/%.3f\n",
+               g72_two_line_x, pos[AXIS_X], g72_two_line_z, pos[AXIS_Z]);
+        fails++;
+    }
+
+    /* A profile row may carry the words the finish is to run with: Fanuc reads
+       F/S/T from the profile, so the row is taken instead of refused. The
+       profile's F must reach the planner at the row that wrote it, and the
+       range's `P` block may be the approach - a `G0` that positions the tool.
+       Fanuc's own programs are written both ways. */
+    fails += command("G0 X54 Z2", STATUS_OK);
+    generated_feed = 0.0f;
+    generated_feed_blocks = 0u;
+    fails += command("G71 U1 R1 P100 Q200 X0.1 Z0.1 F300", STATUS_OK);
+    fails += command("N100 G0 X52 Z4", STATUS_OK);        /* the P block */
+    fails += command("G1 X50 Z0", STATUS_OK);
+    fails += command("N200 G1 X50 Z-6 F200 S800 T2", STATUS_OK);
+    if (g7x_parser_busy()) { puts("FAIL profile words cleanup"); fails++; }
+    if (generated_feed_blocks == 0u || fabsf(generated_feed - 200.0f) > 0.5f) {
+        printf("FAIL profile feed did not reach the planner (last F %.3f)\n",
+               (double)generated_feed);
+        fails++;
+    }
+
+    /* G70 P Q: the finish cut of the range this run collected. It is the
+       profile again, nothing offset and no roughing - and it takes the row's
+       own feed. A range the run never collected is refused, not guessed. */
+    fails += command("G0 X54 Z2", STATUS_OK);
+    fails += command("G71 U1 R1 P100 Q200 X0.1 Z0.1 F300", STATUS_OK);
+    fails += command("N100 G0 X52 Z4", STATUS_OK);
+    fails += command("N110 G1 X50 Z0", STATUS_OK);
+    fails += command("N200 G1 X50 Z-6 F200", STATUS_OK);
+    if (g7x_parser_busy()) { puts("FAIL G71 before G70 cleanup"); fails++; }
+    generated_feed = 0.0f;
+    before = motion_count;
+    fails += command("G70 P100 Q200", STATUS_OK);
+    if (g7x_parser_busy()) { puts("FAIL G70 cleanup"); fails++; }
+    if (motion_count <= before) { puts("FAIL G70 did not move"); fails++; }
+    if (motion_count - before > 12u) {
+        printf("FAIL G70 emitted %u blocks: that is a roughing cycle\n",
+               motion_count - before);
+        fails++;
+    }
+    if (fabsf(generated_feed - 200.0f) > 0.5f) {
+        printf("FAIL G70 last feed %.3f, expected the profile's 200\n",
+               (double)generated_feed);
+        fails++;
+    }
+    fails += command("G70 P300 Q400", STATUS_INVALID_STATEMENT);
+
+    /* A cycle must not run with cutter compensation active: the core takes
+       G41/G42 for motion and does nothing with them, so the cycle would cut the
+       uncompensated path. Refused, not approximated. */
+    fails += command("G41", STATUS_OK);
+    fails += command("G71 U1 R1 P100 Q200 X0.1 Z0.1 F300", STATUS_GCODE_UNSUPPORTED_COMMAND);
+    fails += command("G72 W1 R1 X0.1 Z0.1 F300", STATUS_GCODE_UNSUPPORTED_COMMAND);
+    fails += command("G70 P100 Q200", STATUS_GCODE_UNSUPPORTED_COMMAND);
+    fails += command("G40", STATUS_OK);
+    if (g7x_parser_busy()) { puts("FAIL compensation refusal left a cycle open"); fails++; }
+
+    /* G73 is a different roughing model and is not implemented: refused by
+       name (the console says which cycle), not left to the generic answer. */
+    fails += command("G73 U1 W1 R2 P100 Q200", STATUS_GCODE_UNSUPPORTED_COMMAND);
+
+    /* The refusal text is the module's, and a caller *takes* it: a panel with no
+       terminal shows it on the glass, and taking it means it can never explain
+       a later line's error. */
+    if (strstr(g7x_take_refusal_text(), "G73") == NULL) {
+        puts("FAIL the G73 refusal is not named");
+        fails++;
+    }
+    if (g7x_take_refusal_text()[0] != '\0') {
+        puts("FAIL the refusal text was not taken once");
+        fails++;
+    }
+    /* A cycle that runs leaves nothing behind for a later error to borrow. */
+    fails += command("G0 X54 Z2", STATUS_OK);
+    fails += command("G71 U1 R1 X0.1 Z0.1 F300", STATUS_OK);
+    fails += command("G1 X50 Z0", STATUS_OK);
+    fails += command("G1 X50 Z-10", STATUS_OK);
+    fails += command("G80", STATUS_OK);
+    if (g7x_take_refusal_text()[0] != '\0') {
+        puts("FAIL a good cycle left a refusal text behind");
+        fails++;
+    }
+
+    /* A corner the moves beside it cannot hold is refused, not fitted: the
+       operator wrote a number and the machine must cut that number or say so
+       (bench: a programmed R35 on a 20 mm move with a 15 mm step came out as
+       R3.375 with nothing to explain it - "it should reject it loudly"). R35
+       needs 35 mm of room on a 7.5 mm step, so this is the bench's own case. */
+    fails += command("G0 X54 Z2", STATUS_OK);
+    fails += command("G71 U1 R1 X0.1 Z0.1 F300", STATUS_OK);
+    fails += command("G1 X35 Z0", STATUS_OK);
+    fails += command("G1 X35 Z-20 R35", STATUS_OK);
+    fails += command("G1 X50 Z-20", STATUS_OK);
+    fails += command("G80", STATUS_INVALID_STATEMENT);
+    if (strstr(g7x_take_refusal_text(), "corner") == NULL) {
+        puts("FAIL a corner that cannot fit is not refused by name");
+        fails++;
+    }
+    if (g7x_parser_busy()) {
+        puts("FAIL the refused corner left the collector armed");
+        fails++;
+    }
+    /* And one that fits is cut as written. */
+    fails += command("G0 X54 Z2", STATUS_OK);
+    fails += command("G71 U1 R1 X0.1 Z0.1 F300", STATUS_OK);
+    fails += command("G1 X35 Z0", STATUS_OK);
+    fails += command("G1 X35 Z-20 R3", STATUS_OK);
+    fails += command("G1 X50 Z-20", STATUS_OK);
+    fails += command("G80", STATUS_OK);
+    if (g7x_take_refusal_text()[0] != '\0') {
+        puts("FAIL a corner that fits left a refusal behind");
+        fails++;
+    }
+
+    /* The bench's Fanuc pair with the range on the **first** line: the first
+       pair opened a numbered range and the second carried only the cycle's
+       values. The continuation used to override what the first line decided,
+       leaving the range armed *and* the region active - the contour then ended
+       at the N(Q) row and the G80 was refused, which the bench saw as "line 13
+       says invalid parameter or cycle contour" when it pressed `1 SINGLE` on
+       line 8 (the whole block is sent, so the module collects all of it). */
+    fails += command("G0 X54 Z2", STATUS_OK);
+    fails += command("G71 U2 R1 X0 Z0 F50 P50 Q55", STATUS_OK);
+    fails += command("G71 U2 R0.2 X0.5 Z0.5 F450", STATUS_OK);
+    fails += command("N50 G1 X30 Z2", STATUS_OK);
+    fails += command("G1 X30 Z-15 C2", STATUS_OK);
+    fails += command("G1 X35 Z-15", STATUS_OK);
+    fails += command("G1 X35 Z-25", STATUS_OK);
+    fails += command("N55 G1 X52 Z-25", STATUS_OK);
+    fails += command("G80", STATUS_OK);
+    if (g7x_parser_busy()) {
+        puts("FAIL the range-on-first-line pair left the collector armed");
+        fails++;
+    }
+    if (g7x_take_refusal_text()[0] != '\0') {
+        puts("FAIL the range-on-first-line pair left a refusal behind");
+        fails++;
+    }
 #ifndef G7X_STANDALONE_TEST
     static nc_document_t doc;
+    nc_drain_machine();
     nc_document_init(&doc);
     nc_insert_line(&doc, 0, "G71 U1 F300");
     nc_insert_line(&doc, 1, "G1 X40 Z0");
@@ -276,10 +526,18 @@ int main(void)
     nc_insert_line(&doc, 3, "X35 Z-5");
     nc_insert_line(&doc, 4, "G80");
     nc_insert_line(&doc, 5, "G0 X999");
-    nc_run_start_stream(&doc, 0);
-    for (int i = 0; i < 4; i++) if (cnc_parse_cmd() != STATUS_OK) fails++;
-    if (cnc_parse_cmd() != STATUS_INVALID_STATEMENT || nc_run_active()) {
-        puts("FAIL NC abort on contour error"); fails++;
+    nc_start_run(&doc, 0);
+    for (int i = 0; i < 4; i++) {
+        uint8_t status = STATUS_OK;
+
+        if (!nc_parse_block(&status) || status != STATUS_OK) fails++;
+    }
+    {
+        uint8_t status = STATUS_OK;
+        (void)nc_parse_block(&status);
+        if (status != STATUS_INVALID_STATEMENT || nc_run_active()) {
+            puts("FAIL NC abort on contour error"); fails++;
+        }
     }
     if (nc_run_error() != STATUS_INVALID_STATEMENT || nc_run_error_line() != 4) {
         puts("FAIL NC source error location"); fails++;
@@ -292,10 +550,19 @@ int main(void)
     nc_insert_line(&doc, 2, "X20 Z-20");
     nc_insert_line(&doc, 3, "G80");
     nc_insert_line(&doc, 4, "G0 X999");
-    nc_run_start_stream(&doc, 0);
-    for (int i = 0; i < 3; i++) if (cnc_parse_cmd() != STATUS_OK) fails++;
+    nc_start_run(&doc, 0);
+    for (int i = 0; i < 3; i++) {
+        uint8_t status = STATUS_OK;
+
+        if (!nc_parse_block(&status) || status != STATUS_OK) fails++;
+    }
     stop_motion_at = motion_count + 3;
-    if (cnc_parse_cmd() != STATUS_SYSTEM_GC_LOCK) { puts("FAIL NC Stop status"); fails++; }
+    {
+        uint8_t status = STATUS_OK;
+
+        (void)nc_parse_block(&status);
+        if (status != STATUS_SYSTEM_GC_LOCK) { puts("FAIL NC Stop status"); fails++; }
+    }
     stop_motion_at = 0;
     for (int i = 0; i < 10000 && cnc_get_exec_state(EXEC_CANCELING); i++) {
         cnc_dotasks(); mcu_unit_test_advance_time(1000);
@@ -306,9 +573,12 @@ int main(void)
     /* EOF is not completion: controls must still affect the queued tail. */
     nc_document_init(&doc);
     nc_insert_line(&doc, 0, "G1 X80 Z0 F300");
-    nc_run_start_stream(&doc, 0);
-    if (cnc_parse_cmd() != STATUS_OK) fails++;
-    (void)grbl_stream_available();
+    nc_start_run(&doc, 0);
+    {
+        uint8_t status = STATUS_OK;
+
+        if (!nc_parse_block(&status) || status != STATUS_OK) fails++;
+    }
     if (!nc_run_active() || nc_run_done()) { puts("FAIL early NC completion"); fails++; }
     if (!nc_run_toggle_hold() || !cnc_get_exec_state(EXEC_HOLD)) {
         puts("FAIL NC hold queued tail"); fails++;
@@ -324,14 +594,18 @@ int main(void)
                cnc_get_exec_state(EXEC_ALLACTIVE), planner_buffer_is_empty(), itp_is_empty()); fails++;
     }
     /* A held Stop must retain the hardware hold and expose it on restart. */
-    nc_run_start_stream(&doc, 0);
-    if (cnc_parse_cmd() != STATUS_OK) fails++;
+    nc_start_run(&doc, 0);
+    {
+        uint8_t status = STATUS_OK;
+
+        if (!nc_parse_block(&status) || status != STATUS_OK) fails++;
+    }
     if (!nc_run_toggle_hold()) fails++;
     nc_run_stop();
     for (int i = 0; i < 10000 && cnc_get_exec_state(EXEC_CANCELING); i++) {
         cnc_dotasks(); mcu_unit_test_advance_time(1000);
     }
-    nc_run_start_stream(&doc, 0);
+    nc_start_run(&doc, 0);
     if (!nc_run_hold() || !cnc_get_exec_state(EXEC_HOLD)) {
         puts("FAIL held Stop restart state"); fails++;
     }
@@ -347,9 +621,15 @@ int main(void)
     nc_document_init(&doc);
     nc_insert_line(&doc, 0, "G71 U1 F300");
     nc_insert_line(&doc, 1, "G1 X40 Z0");
-    nc_run_start_stream(&doc, 0);
-    if (cnc_parse_cmd() != STATUS_OK || cnc_parse_cmd() != STATUS_OK) fails++;
-    (void)grbl_stream_available();
+    nc_start_run(&doc, 0);
+    for (int i = 0; i < 2; i++) {
+        uint8_t status = STATUS_OK;
+
+        if (!nc_parse_block(&status) || status != STATUS_OK) fails++;
+    }
+    /* The document has no end mark: the pacer runs out of lines and the run has
+       to end there, without leaving the contour collector armed. */
+    (void)nc_run_to_end();
     if (g7x_parser_busy() || nc_run_active() || nc_run_done()) {
         puts("FAIL unterminated NC contour"); fails++;
     }
@@ -358,11 +638,15 @@ int main(void)
     if (motion_count != before + 1) { puts("FAIL stale EOF collector"); fails++; }
     nc_insert_line(&doc, 2, "X38 Z-1");
     nc_insert_line(&doc, 3, "G80");
-    nc_run_start_stream(&doc, 0);
+    nc_start_run(&doc, 0);
     for (int i = 0; i < 4; i++) {
-        if (cnc_parse_cmd() != STATUS_OK) { puts("FAIL complete NC contour"); fails++; }
+        uint8_t status = STATUS_OK;
+
+        if (!nc_parse_block(&status) || status != STATUS_OK) {
+            puts("FAIL complete NC contour"); fails++;
+        }
     }
-    (void)grbl_stream_available();
+    (void)nc_run_to_end();
     if (g7x_parser_busy()) { puts("FAIL complete NC collector cleanup"); fails++; }
 
     /* A numbered range that never reaches N(Q) is an incomplete cycle. */
@@ -370,10 +654,13 @@ int main(void)
     nc_insert_line(&doc, 0, "G71 U1 R1 P100 Q200 X0.1 Z0.1 F300");
     nc_insert_line(&doc, 1, "N100 G1 X50 Z0");
     nc_insert_line(&doc, 2, "G1 X45 Z-5");
-    nc_run_start_stream(&doc, 0);
-    if (cnc_parse_cmd() != STATUS_OK || cnc_parse_cmd() != STATUS_OK ||
-        cnc_parse_cmd() != STATUS_OK) fails++;
-    (void)grbl_stream_available();
+    nc_start_run(&doc, 0);
+    for (int i = 0; i < 3; i++) {
+        uint8_t status = STATUS_OK;
+
+        if (!nc_parse_block(&status) || status != STATUS_OK) fails++;
+    }
+    (void)nc_run_to_end();
     if (g7x_parser_busy() || nc_run_active() || nc_run_done()) {
         puts("FAIL unterminated NC numbered range"); fails++;
     }
@@ -390,17 +677,19 @@ int main(void)
     nc_insert_line(&doc, 3, "G1 X50 Z-10");
     nc_insert_line(&doc, 4, "N200 G1 X40 Z-10");
     nc_insert_line(&doc, 5, "G0 X80 Z0");
+    nc_drain_machine();
     if (!nc_run_send_document_line(&doc, 1)) {
         puts("FAIL two-line selected send arm"); fails++;
     }
-    for (int i = 0; i < 6 && nc_run_active(); i++) {
-        if (cnc_parse_cmd() != STATUS_OK) {
-            puts("FAIL two-line selected send"); fails++;
-            break;
+    {
+        uint8_t first = nc_run_to_end();
+
+        if (first != STATUS_OK) {
+            printf("FAIL two-line selected send (status %u)\n", (unsigned)first);
+            fails++;
         }
     }
     if (g7x_parser_busy()) { puts("FAIL two-line selected send cleanup"); fails++; }
-    (void)grbl_stream_available();
 
     /* Whole-file RUN through a two-line numbered range and a trailing line. */
     nc_document_init(&doc);
@@ -411,12 +700,9 @@ int main(void)
     nc_insert_line(&doc, 4, "G1 X50 Z-10");
     nc_insert_line(&doc, 5, "N200 G1 X40 Z-10");
     nc_insert_line(&doc, 6, "G0 X80 Z0");
-    nc_run_start_stream(&doc, 0);
-    for (int i = 0; i < 7; i++) {
-        if (cnc_parse_cmd() != STATUS_OK) {
-            puts("FAIL two-line RUN stream"); fails++;
-            break;
-        }
+    nc_start_run(&doc, 0);
+    if (nc_run_to_end() != STATUS_OK) {
+        puts("FAIL two-line RUN stream"); fails++;
     }
     if (g7x_parser_busy() || nc_run_error()) {
         puts("FAIL two-line RUN cleanup"); fails++;
@@ -426,7 +712,6 @@ int main(void)
         printf("FAIL two-line RUN trailing line X%.3f\n", pos[AXIS_X]);
         fails++;
     }
-    (void)grbl_stream_available();
 
     nc_document_init(&doc);
     nc_insert_line(&doc, 0, "G1 Xbad");

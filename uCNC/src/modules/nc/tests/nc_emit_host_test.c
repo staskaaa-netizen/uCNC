@@ -103,6 +103,132 @@ static int expect_rejected_with(nc_emit_stream_t *stream, g7x_result_t want)
     return 0;
 }
 
+/* G76 threading is not expanded by the preview: the shared threading generator
+   is not wired into the emitted path yet, so the stream must stop with an error
+   the screen can show ("Preview: ... at line N") instead of drawing part of a
+   thread or, worse, drawing it as a contour. */
+static int test_g76_preview_error(void)
+{
+    nc_document_t doc;
+    nc_emit_stream_t stream;
+    char out[96];
+    size_t source = 0u;
+    nc_emit_result_t got = NC_EMIT_SKIP;
+    int i;
+
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G0 X40 Z2");
+    (void)nc_insert_line(&doc, 1, "G76 X36 Z-20 P2 Q1 F1.5");
+    (void)nc_insert_line(&doc, 2, "G0 X80 Z0");
+    nc_emit_stream_begin(&stream, &doc, 0);
+
+    for (i = 0; i < 8 && stream.active; i++) {
+        got = nc_emit_stream_next(&stream, out, sizeof(out), &source);
+        if (got == NC_EMIT_ERROR)
+            break;
+    }
+    if (got != NC_EMIT_ERROR || stream.error == G7X_OK) {
+        printf("FAIL a G76 line did not stop the preview (result=%d error=%d)\n",
+               (int)got, (int)stream.error);
+        return 1;
+    }
+    return 0;
+}
+
+/* `G70 P Q` in preview: the finish cut of the range *above* it. The roughing
+   cycle comes first and collects the profile; the G70 line then replays it, so
+   the preview must walk back to N(P)/N(Q) instead of looking below the line for
+   a range that is not there. */
+/* The bench's ugly file (2026-09-23): a Fanuc two-line header with the range on
+   the *first* line, a tight chamfer (`C2` on a 2.5 mm step), and a second cycle
+   header at the end whose range never arrives. The first block has to expand
+   with its chamfer, and the second has to be an error - a header with no rows is
+   a cycle the machine cannot run, and a preview that drops it quietly is worse
+   than one that stops. */
+static int test_two_line_header_and_open_range(void)
+{
+    nc_document_t doc;
+    nc_emit_stream_t stream;
+    char line[NC_MAX_LINE_LEN];
+    size_t emitted = 0u;
+    size_t source = 0u;
+    nc_emit_result_t got = NC_EMIT_SKIP;
+    bool saw_chamfer = false;
+    int fails = 0;
+    int i;
+
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U2 R1 X0 Z0 F50 P50 Q55");
+    (void)nc_insert_line(&doc, 1, "G71 U2 R0.2 X0.5 Z0.5 F450");
+    (void)nc_insert_line(&doc, 2, "N50 G1 X30 Z2");
+    (void)nc_insert_line(&doc, 3, "G1 X30 Z-15 C2");
+    (void)nc_insert_line(&doc, 4, "G1 X35 Z-15");
+    (void)nc_insert_line(&doc, 5, "G1 X35 Z-25");
+    (void)nc_insert_line(&doc, 6, "N55 G1 X52 Z-25");
+    (void)nc_insert_line(&doc, 7, "G80");
+    (void)nc_insert_line(&doc, 8, "G71 U2 R1 X1 Z1 F500 P100 Q200");
+    nc_emit_stream_begin(&stream, &doc, 0);
+
+    for (i = 0; i < 400 && stream.active; i++) {
+        got = nc_emit_stream_next(&stream, line, sizeof(line), &source);
+        if (got == NC_EMIT_ERROR)
+            break;
+        /* The chamfer trims the Z move two millimetres short of the corner and
+           leaves it two millimetres up the X move: (X30 Z-13) to (X34 Z-15) in
+           the program's own frame. */
+        if (got == NC_EMIT_LINE && strstr(line, "X30.000 Z-13.000") != 0) {
+            saw_chamfer = true;
+        }
+        emitted++;
+    }
+    if (!saw_chamfer) {
+        printf("FAIL the two-line header's chamfer did not expand (%u lines)\n",
+               (unsigned)emitted);
+        fails++;
+    }
+    if (got != NC_EMIT_ERROR || stream.error != G7X_RANGE_MISSING) {
+        printf("FAIL a cycle header with no rows was not refused "
+               "(result=%d error=%d)\n", (int)got, (int)stream.error);
+        fails++;
+    }
+    return fails;
+}
+
+static int test_g70_preview(void)
+{
+    nc_document_t doc;
+    nc_emit_stream_t stream;
+
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U1 R1 P100 Q200 X0.5 Z0.5 F120");
+    (void)nc_insert_line(&doc, 1, "N100 G0 X52 Z4");
+    (void)nc_insert_line(&doc, 2, "N110 G1 X50 Z0");
+    (void)nc_insert_line(&doc, 3, "N200 G1 X50 Z-10 F180");
+    (void)nc_insert_line(&doc, 4, "G70 P100 Q200");
+    (void)nc_insert_line(&doc, 5, "G0 X80 Z0");
+    nc_emit_stream_begin(&stream, &doc, 0);
+
+    /* The roughing cycle, then the finish cut of the same profile: the P block
+       as a rapid, the rows at the feed they carry, and the source continuing on
+       the line after the G70. */
+    return expect_find_line(&stream, "(G7x finish contour)") ||
+           expect_line(&stream, "G0 X52.000 Z4.000") ||
+           expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
+           expect_line(&stream, "G1 X50.000 Z-10.000 F180.000") ||
+           expect_line(&stream, "G0 X54.500") ||
+           expect_line(&stream, "G0 Z5.500") ||
+           expect_find_line(&stream, "(NC G70 generated)") ||
+           expect_line(&stream, "(G7x finish contour)") ||
+           expect_line(&stream, "G0 X54.000") ||
+           expect_line(&stream, "G0 Z5.000") ||
+           expect_line(&stream, "G0 X52.000 Z4.000") ||
+           expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
+           expect_line(&stream, "G1 X50.000 Z-10.000 F180.000") ||
+           expect_line(&stream, "G0 X54.000") ||
+           expect_line(&stream, "G0 Z5.000") ||
+           expect_line(&stream, "G0 X80 Z0");
+}
+
 /* Fanuc/Haas numbered range in preview: N(P)..N(Q) supplies the contour and
    the source continues with the line after N(Q). */
 static int test_g71_numbered_range(void)
@@ -118,9 +244,10 @@ static int test_g71_numbered_range(void)
     (void)nc_insert_line(&doc, 4, "G0 X80 Z0");
     nc_emit_stream_begin(&stream, &doc, 0);
 
+    /* The last rough pass leaves the tool at the clearance point, so the finish
+       cut follows its comment with no repeated rapid; the cycle ends by
+       returning to that point (X, then Z) and the source resumes after it. */
     return expect_find_line(&stream, "(G7x finish contour)") ||
-           expect_line(&stream, "G0 X52.500") ||
-           expect_line(&stream, "G0 Z1.500") ||
            expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
            expect_line(&stream, "G1 X50.000 Z-10.000") ||
            expect_line(&stream, "G1 X40.000 Z-10.000") ||
@@ -179,8 +306,6 @@ static int test_g71_two_line_numbered_range(void)
     nc_emit_stream_begin(&stream, &doc, 0);
 
     return expect_find_line(&stream, "(G7x finish contour)") ||
-           expect_line(&stream, "G0 X52.500") ||
-           expect_line(&stream, "G0 Z1.250") ||
            expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
            expect_line(&stream, "G1 X50.000 Z-10.000") ||
            expect_line(&stream, "G1 X40.000 Z-10.000") ||
@@ -207,8 +332,6 @@ static int test_g71_two_line_g80(void)
     nc_emit_stream_begin(&stream, &doc, 0);
 
     return expect_find_line(&stream, "(G7x finish contour)") ||
-           expect_line(&stream, "G0 X52.500") ||
-           expect_line(&stream, "G0 Z1.250") ||
            expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
            expect_line(&stream, "G1 X50.000 Z-10.000") ||
            expect_line(&stream, "G1 X40.000 Z-10.000") ||
@@ -225,6 +348,7 @@ static int test_g7x_block_scan(void)
     uint32_t p = 0u;
     uint32_t q = 0u;
     size_t end = 0u;
+    size_t row;
 
     nc_document_init(&doc);
     (void)nc_insert_line(&doc, 0, "G71 U1 R1");
@@ -259,6 +383,73 @@ static int test_g7x_block_scan(void)
         nc_g7x_line_is_contour(&doc, 0u, 5u)) {
         puts("FAIL block scan contour range");
         return 1;
+    }
+
+    /* The bench's shape: the P/Q range is on the *first* line of the pair, so
+       the second line is the continuation. Every row of the cycle has to answer
+       with the same block - the one the pair starts, running to the cycle's end
+       mark (the `G80` after N(Q) here, N(Q) itself when the file has none) -
+       because a step taken from inside the contour sends the block it is in: a
+       second answer sent a headerless profile, and the pane marked a `G71` row
+       above the line the operator was on (bench: "it still marks next row with
+       g71, not the one starting with N50"). */
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U2 R1 X0 Z0 F50 P50 Q55");
+    (void)nc_insert_line(&doc, 1, "G71 U2 R0.2 X0.5 Z0.5 F450");
+    (void)nc_insert_line(&doc, 2, "N50 G1 X30 Z2");
+    (void)nc_insert_line(&doc, 3, "G1 X35 Z-15");
+    (void)nc_insert_line(&doc, 4, "N55 G1 X52 Z-25");
+    (void)nc_insert_line(&doc, 5, "G80");
+    (void)nc_insert_line(&doc, 6, "G71 U2 R1 X1 Z1 F500 P100 Q200");
+    if (nc_g7x_block_start(&doc, 1u) != 0u) {
+        puts("FAIL the pair's second line does not start at the first");
+        return 1;
+    }
+    for (row = 0u; row <= 5u; row++) {
+        size_t first = 9u;
+        size_t last = 9u;
+
+        if (!nc_g7x_block_containing(&doc, row, &first, &last) ||
+            first != 0u || last != 5u) {
+            printf("FAIL row %u of the pair's cycle is in block %lu..%lu\n",
+                   (unsigned)(row + 1u), (unsigned long)(first + 1u),
+                   (unsigned long)(last + 1u));
+            return 1;
+        }
+    }
+    /* The same rows whichever end mark the cycle has: `G80` alone closes a
+       range-less cycle over the same contour. */
+    nc_document_init(&doc);
+    (void)nc_insert_line(&doc, 0, "G71 U2 R1 X0 Z0 F50");
+    (void)nc_insert_line(&doc, 1, "G71 U2 R0.2 X0.5 Z0.5 F450");
+    (void)nc_insert_line(&doc, 2, "G1 X30 Z2");
+    (void)nc_insert_line(&doc, 3, "G1 X35 Z-15");
+    (void)nc_insert_line(&doc, 4, "G1 X52 Z-25");
+    (void)nc_insert_line(&doc, 5, "G80");
+    for (row = 0u; row <= 5u; row++) {
+        size_t first = 9u;
+        size_t last = 9u;
+
+        if (!nc_g7x_block_containing(&doc, row, &first, &last) ||
+            first != 0u || last != 5u) {
+            printf("FAIL row %u of the G80 cycle is in block %lu..%lu\n",
+                   (unsigned)(row + 1u), (unsigned long)(first + 1u),
+                   (unsigned long)(last + 1u));
+            return 1;
+        }
+    }
+
+    /* The naked header below is in no block: a header with no rows has nothing
+       to be the block of, and it is not swallowed by the cycle above it. */
+    {
+        size_t first = 9u;
+        size_t last = 9u;
+
+        (void)nc_insert_line(&doc, 6, "G71 U2 R1 X1 Z1 F500 P100 Q200");
+        if (nc_g7x_block_containing(&doc, 6u, &first, &last)) {
+            puts("FAIL the naked header read as a block");
+            return 1;
+        }
     }
 
     /* Plain G80 cycle: the terminator is the end and is not contour. */
@@ -525,8 +716,6 @@ static int test_g71_corner_rounding(void)
     nc_emit_stream_begin(&stream, &doc, 0);
 
     return expect_find_line(&stream, "(G7x finish contour)") ||
-           expect_line(&stream, "G0 X52.500") ||
-           expect_line(&stream, "G0 Z1.500") ||
            expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
            expect_line(&stream, "G1 X50.000 Z-9.000") ||
            expect_line(&stream, "G3 X48.000 Z-10.000 I-1.000 K0.000");
@@ -547,8 +736,6 @@ static int test_g71_corner_chamfer(void)
     nc_emit_stream_begin(&stream, &doc, 0);
 
     return expect_find_line(&stream, "(G7x finish contour)") ||
-           expect_line(&stream, "G0 X52.500") ||
-           expect_line(&stream, "G0 Z1.500") ||
            expect_line(&stream, "G1 X50.000 Z0.000 F120.000") ||
            expect_line(&stream, "G1 X50.000 Z-9.000") ||
            expect_line(&stream, "G1 X48.000 Z-10.000");
@@ -679,8 +866,11 @@ int main(void)
     fails += test_g71_sample_features();
     fails += test_g71_numbered_range();
     fails += test_g71_numbered_range_errors();
+    fails += test_two_line_header_and_open_range();
     fails += test_g71_two_line_numbered_range();
     fails += test_g71_two_line_g80();
+    fails += test_g70_preview();
+    fails += test_g76_preview_error();
     fails += test_g7x_block_scan();
     fails += test_numbered_source_cursor();
     fails += test_g72_basic();

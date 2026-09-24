@@ -7,6 +7,11 @@
 extern "C" {
 #endif
 
+/* The colours the panel may draw with. **This table is full**: sixteen entries
+   against `LVDS_RENDERER_MAX_PALETTE_COLORS` (the HSTX output is paletted, and
+   `lvds_palette.c` fails the build above it). A new colour therefore means
+   retiring one - reuse an entry, or give the new thing an element below instead
+   of a colour. Elements are free: only the colours are capped. */
 typedef enum {
     gray_192 = 0,
     gray_128,
@@ -23,6 +28,8 @@ typedef enum {
     tool_orange,
     red_bright,
     green_bright,
+    /* The NC TOOLS screen's tool tip block (nc_palette.c's NC_VISUAL_TOOL_TIP). */
+    tool_tip,
     LC_COLOR_COUNT
 } lvds_palette_color_id_t;
 

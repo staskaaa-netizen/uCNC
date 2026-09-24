@@ -86,20 +86,18 @@ static size_t nc_g7x_header_end(const nc_document_t *doc, size_t start_line)
     return next;
 }
 
-size_t nc_g7x_block_start(const nc_document_t *doc, size_t line)
+/* The line a header belongs to: the *first* block of a Fanuc pair for both of
+   its lines, the line itself otherwise. Either line of the pair may carry the
+   P/Q range (the usual form puts it on the second, the bench's file on the
+   first), and which one does must not change which block a row is in - a cycle
+   whose rows answered with two different blocks handed the machine a headerless
+   profile when a step was taken from inside the contour. */
+static size_t nc_g7x_header_head(const nc_document_t *doc, size_t line)
 {
-    uint32_t p = 0u;
-    uint32_t q = 0u;
-    size_t previous;
+    size_t previous = line;
 
     if (!doc || line >= doc->line_count)
         return line;
-    if (!nc_g7x_line_is_header(nc_g7x_line(doc, line)) ||
-        !nc_g7x_line_range(nc_g7x_line(doc, line), &p, &q))
-        return line;
-
-    /* The P/Q block of a two-line header belongs to the line above it. */
-    previous = line;
     while (previous > 0u) {
         previous--;
         if (*nc_g7x_line(doc, previous))
@@ -112,8 +110,17 @@ size_t nc_g7x_block_start(const nc_document_t *doc, size_t line)
     return line;
 }
 
+size_t nc_g7x_block_start(const nc_document_t *doc, size_t line)
+{
+    if (!doc || line >= doc->line_count)
+        return line;
+    if (!nc_g7x_line_is_header(nc_g7x_line(doc, line)))
+        return line;
+    return nc_g7x_header_head(doc, line);
+}
+
 /* Header line that carries the P/Q selection: the first line of a one-line
-   header, or the second line of a Fanuc two-line header. */
+   header, or whichever line of a Fanuc two-line header names the range. */
 static size_t nc_g7x_range_header(const nc_document_t *doc, size_t start_line)
 {
     size_t header = nc_g7x_header_end(doc, start_line);
@@ -147,6 +154,21 @@ bool nc_g7x_block_end(const nc_document_t *doc,
         uint32_t number = 0u;
         for (i = header + 1u; i < doc->line_count; i++) {
             if (g7x_line_number(nc_g7x_line(doc, i), &number) && number == q) {
+                size_t next = nc_g7x_next_content_line(doc, i);
+
+                /* A `G80` written after the range is the cycle's end mark, and
+                   it belongs to the same block. The two ways of writing a cycle
+                   have to answer with the same rows: the block is what a step
+                   hands the machine, so a range-terminated cycle that left its
+                   end mark behind was sent in two pieces and the pane drew a
+                   different pale block from the one a `G80`-terminated cycle
+                   drew (bench: "now it colorize both g71 and path if any g71 is
+                   select. with pq or with g80"). */
+                if (next < doc->line_count &&
+                    g7x_contour_cmd_from_line(nc_g7x_line(doc, next)) ==
+                        G7X_CONTOUR_END) {
+                    i = next;
+                }
                 *end_line = i;
                 return true;
             }
@@ -161,6 +183,127 @@ bool nc_g7x_block_end(const nc_document_t *doc,
         }
     }
     return false;
+}
+
+bool nc_g7x_block_containing(const nc_document_t *doc,
+                             size_t line,
+                             size_t *start_line,
+                             size_t *end_line)
+{
+    size_t i;
+
+    if (start_line)
+        *start_line = line;
+    if (end_line)
+        *end_line = line;
+    if (!doc || line >= doc->line_count)
+        return false;
+
+    /* The closest header at or above the line whose block reaches it. Headers
+       cannot nest, so the first one that closes over the line is the block it
+       belongs to - and a header is asked for the *pair* it heads, so the second
+       line of a two-line header answers with the block the first one does. */
+    i = line + 1u;
+    while (i > 0u) {
+        size_t candidate = i - 1u;
+        size_t head;
+        size_t block_end;
+
+        if (!nc_g7x_line_is_header(nc_g7x_line(doc, candidate))) {
+            i--;
+            continue;
+        }
+        head = nc_g7x_header_head(doc, candidate);
+        if (nc_g7x_block_end(doc, head, &block_end) && block_end >= line) {
+            if (start_line)
+                *start_line = head;
+            if (end_line)
+                *end_line = block_end;
+            return true;
+        }
+        i--;
+    }
+    return false;
+}
+
+bool nc_g7x_range_above(const nc_document_t *doc,
+                        size_t line,
+                        uint32_t p,
+                        uint32_t q,
+                        size_t *first,
+                        size_t *last)
+{
+    size_t found_first = (size_t)-1;
+    size_t found_last = (size_t)-1;
+    size_t i;
+    uint32_t number = 0u;
+
+    if (!doc || line == 0u || line > doc->line_count || p == 0u || q < p) {
+        return false;
+    }
+    /* Below the line that names the range, and no further back than the row that
+       closes it: N(Q) first, then N(P). */
+    for (i = line; i > 0u; i--) {
+        const char *text = nc_g7x_line(doc, i - 1u);
+
+        if (!g7x_line_number(text, &number) || number == 0u) {
+            continue;
+        }
+        if (found_last == (size_t)-1) {
+            if (number == q) {
+                found_last = i - 1u;
+            }
+            continue;
+        }
+        if (number == p) {
+            found_first = i - 1u;
+            break;
+        }
+        if (number < p) {
+            break;              /* walked past the range without meeting N(P) */
+        }
+    }
+    if (found_first == (size_t)-1 || found_last == (size_t)-1 ||
+        found_first > found_last) {
+        return false;
+    }
+    if (first) {
+        *first = found_first;
+    }
+    if (last) {
+        *last = found_last;
+    }
+    return true;
+}
+
+bool nc_g7x_line_path(const nc_document_t *doc,
+                      size_t line,
+                      size_t *first,
+                      size_t *last)
+{
+    uint32_t p = 0u;
+    uint32_t q = 0u;
+
+    if (first) {
+        *first = line;
+    }
+    if (last) {
+        *last = line;
+    }
+    if (!doc || line >= doc->line_count) {
+        return false;
+    }
+    /* A row inside a cycle belongs with the cycle's block. */
+    if (nc_g7x_block_containing(doc, line, first, last)) {
+        return true;
+    }
+    /* A finish cut names a range instead of *being* one: it replays rows the
+       roughing cycle collected above it. */
+    if (g7x_cycle_from_line(nc_g7x_line(doc, line)) != G7X_CYCLE_G70 ||
+        !nc_g7x_line_range(nc_g7x_line(doc, line), &p, &q)) {
+        return false;
+    }
+    return nc_g7x_range_above(doc, line, p, q, first, last);
 }
 
 bool nc_g7x_line_is_contour(const nc_document_t *doc,

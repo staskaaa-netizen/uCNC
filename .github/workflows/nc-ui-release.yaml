@@ -53,6 +53,23 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: uCNC programming station ${{ github.ref_name }}
+          body: |
+            The uCNC programming station for Windows: the NC screen, the machine's
+            own keypad and the G7x lathe cycles on a PC, built from this
+            repository's sources (`tools/nc_ui_win`).
+
+            Download `uCNC-programming-station-win64.zip`, unpack it anywhere and
+            run `uCNC-programming-station.exe`. The `examples\` folder beside it is
+            the demo: a station that has no card of its own seeds one from it, so
+            the first start opens with `lathe-demo.nc` and the tool table it calls.
+
+            The station is the whole of what is published here. The RP2350 image
+            drives this machine's own HSTX-connected LVDS panel, so it is built and
+            flashed from the bench (`pio run -e RP2350-LEANCAM-LVDS`, see
+            AGENTS.md) rather than released.
+
+            `uCNC-programming-station.exe --version` - and the window title - say
+            which build an exe is, so a copy can be matched against this one.
           draft: false
           prerelease: false
           files: tools/nc_ui_win/dist/uCNC-programming-station-win64.zip

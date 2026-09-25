@@ -120,6 +120,18 @@ line=G76 X0 Z0 P0 Q0 F0 I0 L0 R0
 
   inserts the single line `G1 X0 Z0 C0 R0`.
 - Maximum 24 sections, 8 lines per section, and `NC_MAX_LINE_LEN` per line.
+
+  Those are the module's storage, not a policy. `nc_presets.c` keeps
+  `NC_PRESET_MAX` (24) records of `NC_PRESET_MAX_LINES` (8) rows of
+  `NC_MAX_LINE_LEN` (96) bytes in one static array - under 20 KB of RAM that is
+  visible in the map and never allocated - because the panel's side of the
+  firmware has no heap, and a card must not be able to grow it. The compiled
+  defaults occupy nineteen of those records, so a card's own entries have five
+  free ones (editing a section that reuses an existing id costs none, and a
+  section that arrives with the array full is dropped without a word - see
+  `nc/TODO.md`). `NC_WRAP_LINE_LEN` (46) is a different kind of number: it is the
+  panel's own row width, so a longer row is drawn as two panel rows with a tab
+  marking the continuation - fine for a program, awkward for a preset's text.
 - The file defines the entries it names: a section replaces the compiled entry
   with the same id (an edited `[41]` is the operator's OD preset and stays so).
   An id the file does not mention keeps its **compiled** text, so a card written

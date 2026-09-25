@@ -253,7 +253,18 @@ line=G973 P7
   parses and then falls back to the defaults, and it is **left alone** so you can
   repair it - only a missing file is created.
 - Limits: 24 sections, 8 lines per section, and the panel's own line width per
-  line (keep them under 46 characters like the program rows).
+  line (keep them under 46 characters like the program rows). The first two are
+  the panel's storage - a fixed table it fills from the card, so nothing it
+  reads can grow it - and the width is the panel's own row: a longer row is drawn
+  as two rows with a tab, which is fine for a program and awkward for a label.
+
+**A word the pads do not offer** can be added from the card rather than waiting
+for one: give the entry an id whose key path is a free slot on the pad you want
+it on - OPS `12`-`15` and `17`-`19`, TOOL `27`-`29`, WORD `34`-`39`, G7X `49`,
+THREAD `54`-`59`, PECK `64`-`69` - then a `name=` and the `line=` rows it
+writes. The panel holds 24 entries and nineteen are built in, so five new names
+fit; editing an existing id costs none of them. (`10`, `44` and `80` are the
+older spellings of the setup, finish and end mark, so leave those alone.)
 
 The entries you are most likely to edit:
 

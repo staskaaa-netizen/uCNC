@@ -1108,6 +1108,53 @@ Bench items, not software:
     should show the diameter instead - and say which it is on screen either way.
 - [ ] Add preview zoom/pan with a visible anchor, then finish chuck/setup layers.
 
+### Input, words and presets (bench report 2026-09-25)
+
+Written down from an operator's afternoon of real programs on the station. Each
+one is an option to weigh, not a decision - except the first, which is already
+possible today and only needs saying out loud.
+
+- [ ] **A word the pads do not offer is addable from the card today.** Every
+  helper entry is a section, and a section whose id is a free key path appears on
+  that pad, so the missing words do not have to wait for code: OPS `12`-`15` and
+  `17`-`19`, TOOL `27`-`29`, WORD `34`-`39`, G7X `49`, THREAD `54`-`59`, PECK
+  `64`-`69` (`10`, `44` and `80` are the older spellings of the setup, finish and
+  end mark - leave those alone). Two limits bite before the slots run out, and
+  `docs/nc-preset-file.md` now says why: 24 records of 8 rows of 96 bytes, of
+  which nineteen are the compiled defaults, so **five** new names fit (editing an
+  existing id costs none). Open: which entries the panel should ship as defaults
+  (coolant `M8`/`M9`, work offsets `G54`-`G59`, program end `M0`/`M30`, ...), and
+  whether a section dropped for want of a record should report itself instead of
+  vanishing quietly.
+- [ ] **A `presets/` folder beside the file.** Idea from the bench: one file per
+  entry, the *name* being the key path (`41`, `16`, `11`) and the *content* the
+  rows to insert - no `[id]`/`name=`/`line=` parsing, no 24/8 ceiling, and the
+  file list already walks folders. It would fill the same record table
+  (`nc_preset_apply_section()`), so the pads, the editor, RUN and the checks stay
+  exactly as they are; what has to be settled first is the name an entry reads as
+  (the file name is the path, not the label), the ordering, and whether the
+  folder *replaces* the single file or lives beside it. Not implemented - the
+  single file stays the owner until that is decided.
+- [ ] **Nothing can type a character the keypad does not have.** The editor takes
+  digits into the selected word and inserts whole entries from the 3x3 and the
+  card; letters and symbols are unreachable (`%`, `(`, `)`, `;`, `[`, `]`, a
+  second `G` on a line, any word no entry names). The machine's keypad is a 4x4
+  pad with no letters, so the question is about the shell: `tools/nc_ui_win`
+  could type any printable character into the selected word the way it already
+  types a digit, leaving the panel's own model untouched. Decide whether that is
+  a station feature (a PC keyboard where the machine has a pad) or a change the
+  screens should carry for both.
+- [ ] **Select code and paste it somewhere - or keep it as a preset.** Take a
+  range of lines and put them back into the program at another place, or save
+  them as an entry with its own key. The pieces are here: the editor's cursor and
+  the document model (`nc_insert_line`, `nc_set_line`), the run mark that already
+  selects a unit of code, `nc_presets`' writer, and the file list for a name.
+  Missing are the selection itself (a mark that survives editing around it) and
+  the two destinations: paste at the cursor, and keep as an entry. The operator's
+  own programs are the source, so what lands in the card is the same
+  `[id]`/`line=` shape the file already uses, and the library grows out of the
+  work rather than out of the compiled defaults.
+
 Before changing storage behavior, read the history and bench checklist in
 [`docs/sd-card-history.md`](../../../../docs/sd-card-history.md).
 

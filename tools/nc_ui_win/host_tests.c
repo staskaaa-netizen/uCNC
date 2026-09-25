@@ -25,6 +25,7 @@
 #include "file_system.h"
 #include "nc.h"
 #include "nc_state.h"
+#include "nc_editor.h"
 #include "nc_presets.h"
 #include "nc_run.h"
 #include "nc_menu.h"

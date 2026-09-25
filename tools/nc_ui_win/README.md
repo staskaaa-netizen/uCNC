@@ -280,6 +280,18 @@ MODE key still cycles for the machine.
 
 ## Headless checks
 
+**Pre-flight with the compiler the CI uses.** This build passes `-w` (the
+firmware module sources carry warnings this tool does not own), so a missing
+`#include` is silent here - and gcc 14 and newer make an implicit function
+declaration a *hard error*, which is how `--contourtest` first broke the release
+job instead of the local build. The CI's toolchain is MSYS2's MinGW-w64; before
+pushing, build with it the same way:
+
+```powershell
+$env:CC = 'C:\acc\openconnect\msys64\mingw64\bin\gcc.exe'
+python tools\test_nc_ui.py
+```
+
 - `--fstest` lists `/D` through the firmware `fs_*` API.
 - `--presettest` checks the preset entries, which are the card's: one file per
   address in `/D/presets` (`41.txt` is G7X `4` then `2`), first row the name,

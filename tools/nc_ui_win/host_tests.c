@@ -3244,9 +3244,44 @@ static int host_demotest(void)
         return 1;
     }
 
+    /* 1b. and the entries themselves are files the operator can read and edit.
+       The release ships one per address (`--dump-presets` writes them out of
+       the compiled table), and this is seeded into a folder of its own: an
+       operator whose card already holds programs is exactly the one whose
+       `presets` folder is empty, so it is not gated by the rule above. */
+    copied = host_seed_presets(g_files_root, examples);
+    printf("demotest: seeded %d preset files\n", copied);
+    if (copied < 10) {
+        puts("demotest: FAIL the entries were not seeded as files");
+        return 1;
+    }
+
     /* 2. the demo is a program, read the way the panel reads it: the loader,
        the block scan (two numbered ranges) and the shared expansion. */
     host_init_core();
+
+    /* The card's own file is what a key writes, not the compiled table: give
+       the U INC entry a value of its own and press it. */
+    if (!host_fs_write_text("/D/presets/34.txt", "U INC\n U7\n")) {
+        puts("demotest: FAIL cannot write the card's own entry");
+        return 1;
+    }
+    {
+        nc_document_t entry;
+
+        nc_document_init(&entry);
+        (void)nc_insert_line(&entry, 0u, "G1 X30 Z-15");
+        entry.cursor_line = 0u;
+        if (!nc_insert_preset_id(&entry, 34) || entry.line_count != 1u ||
+            strcmp(entry.lines[0].text, "G1 X30 Z-15 U7") != 0) {
+            printf("demotest: FAIL U INC wrote \"%s\"\n",
+                   entry.line_count ? entry.lines[0].text : "");
+            failures++;
+        } else {
+            puts("demotest: U INC writes the card's own entry file");
+        }
+    }
+
     nc_document_init(&doc);
     nc_document_init(&tool_doc);
     {
@@ -3353,6 +3388,12 @@ static int host_demotest(void)
     if (copied != 0) {
         printf("demotest: FAIL the station overwrote a card in use (%d files)\n",
                copied);
+        failures++;
+    } else if (host_seed_presets(g_files_root, examples) != 0) {
+        /* The entries follow the same rule the programs do: a folder with an
+           entry file of its own - here, the one written above - is the
+           operator's, and an upgrade never rewrites it. */
+        puts("demotest: FAIL the station overwrote the card's own entries");
         failures++;
     } else {
         fs_file_t *fp = fs_open(program, "r");
@@ -3581,7 +3622,55 @@ static int host_fstest(void)
     return 0;
 }
 
-/* The flags this file answers, in the order they are tried: the two dumps
+/* Write the compiled entries out as the card's own files: one per address,
+   named after it, in the format `/D/presets` reads. This is where
+   `tools/nc_ui_win/examples/presets` - what a fresh station's card is seeded
+   from - comes from, so the words a key writes are visible and editable as
+   files, and because they are generated from the compiled table and
+   `tools/test_nc_ui.py` regenerates and compares them, the two cannot drift. */
+static int host_dump_presets(const char *dir)
+{
+    char path[260];
+    char text[1024];
+    int id;
+    int written = 0;
+
+    if (!dir || !*dir) {
+        fprintf(stderr, "nc_ui: --dump-presets needs a folder\n");
+        return 1;
+    }
+    if (!CreateDirectoryA(dir, NULL) &&
+        GetLastError() != ERROR_ALREADY_EXISTS) {
+        fprintf(stderr, "nc_ui: cannot make %s\n", dir);
+        return 1;
+    }
+    for (id = NC_PRESET_ADDR_FIRST; id <= NC_PRESET_ADDR_LAST; id++) {
+        FILE *fp;
+        size_t len;
+
+        if (!nc_preset_file_for_id(id, text, sizeof(text))) {
+            continue;               /* no compiled entry at this address */
+        }
+        len = strlen(text);
+        snprintf(path, sizeof(path), "%s\\%d.txt", dir, id);
+        fp = fopen(path, "wb");
+        if (!fp) {
+            fprintf(stderr, "nc_ui: cannot write %s\n", path);
+            return 1;
+        }
+        if (fwrite(text, 1u, len, fp) != len) {
+            fclose(fp);
+            fprintf(stderr, "nc_ui: short write on %s\n", path);
+            return 1;
+        }
+        fclose(fp);
+        written++;
+    }
+    printf("nc_ui: wrote %d preset files to %s\n", written, dir);
+    return 0;
+}
+
+/* The flags this file answers, in the order they are tried: the dumps
    first (they take a path), then one check per flag. -1 means no flag named a
    check, so main() opens the window. */
 int host_tests_run(int argc, char **argv)
@@ -3593,6 +3682,8 @@ int host_tests_run(int argc, char **argv)
             return host_dump(argv[i + 1]);
         if (strcmp(argv[i], "--dump-bench") == 0)
             return host_dump_bench(argv[i + 1]);
+        if (strcmp(argv[i], "--dump-presets") == 0)
+            return host_dump_presets(argv[i + 1]);
     }
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--fstest") == 0)

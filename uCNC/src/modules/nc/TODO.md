@@ -1140,6 +1140,22 @@ possible today and only needs saying out loud.
   shape had a fixed table of 24 records and ran out. Open: which entries the
   panel should ship as compiled defaults (coolant `M8`/`M9`, work offsets
   `G54`-`G59`, program end `M0`/`M30`, ...).
+- [x] **The entries ship as files, not only as a table.** Done 2026-09-25, the
+  bench the same day: *"i still do not [see] new u/w in presets file or presets
+  itself as bunch of files in presets folder"*. The compiled table was the only
+  copy of the words, so nothing on the card showed them and the `presets` folder
+  the panel creates was empty. Now the station writes its own table out as the
+  card's files - `nc_preset_file_for_id()` and `--dump-presets` - one file per
+  address into `tools/nc_ui_win/examples/presets`, the release carries them, and
+  `host_seed_presets()` seeds them into a card whose `presets` folder holds no
+  entry file of its own (a rule of its own, because the operator who has been
+  using the station is the one whose folder is empty). Nothing is overwritten and
+  deleting a file falls back to the compiled entry. `tools/test_nc_ui.py`
+  regenerates the folder and compares it byte for byte, so the shipped copy and
+  the fallback cannot drift; `--demotest` proves the read path by giving `U INC`
+  a value of its own and watching the key write the card's file. Still open: the
+  machine's own SD card gets these files only by hand until something writes them
+  there.
 - [x] **A `presets/` folder - the entry as an address, and the file as the
   format.** Done 2026-09-25, after the bench called the old shape what it was
   (*"it all now is good and smelly scaffolding, while this all overall is just

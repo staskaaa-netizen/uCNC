@@ -40,6 +40,9 @@
    nc_ui --version        print which build this exe is
    nc_ui --fstest         list /D through the firmware fs_* API
    nc_ui --presettest     check the /D/presets entries contract
+   nc_ui --dump-presets DIR
+                          write every entry the panel ships into DIR, one file
+                          per address (this is how examples\presets is made)
    nc_ui --streamtest     check the panel's one-shot blocks reach the reader
    nc_ui --dirtytest      a key that changes the screen asks for a repaint
    nc_ui --runtest        RUN's FROM and FULL send the program
@@ -896,6 +899,66 @@ int host_seed_card(const char *root, const char *examples)
     return copied;
 }
 
+/* The preset entries the release ships: `examples\presets\*.txt` (one file per
+   address, written by `--dump-presets`) go into `<root>\presets` while that
+   folder holds no entry of its own.
+
+   This is the other half of the demo card, and it is deliberately independent
+   of `host_seed_card()`'s "the card has a program of its own" rule: an operator
+   who has been using the station already has programs, and that is exactly the
+   card whose `presets` folder is empty. Nothing is overwritten, so a file the
+   operator wrote - or deleted - stays that way, and a card that already has one
+   entry file is left completely alone. */
+int host_seed_presets(const char *root, const char *examples)
+{
+    char src_dir[260];
+    char dst_dir[260];
+    char path[260];
+    WIN32_FIND_DATAA find;
+    HANDLE scan;
+    int copied = 0;
+
+    if (!root || !*root || !examples || !*examples) {
+        return 0;
+    }
+    snprintf(src_dir, sizeof(src_dir), "%s\\presets", examples);
+    snprintf(dst_dir, sizeof(dst_dir), "%s\\presets", root);
+    /* An entry file already there means the folder is the operator's. */
+    snprintf(path, sizeof(path), "%s\\*.txt", dst_dir);
+    scan = FindFirstFileA(path, &find);
+    if (scan != INVALID_HANDLE_VALUE) {
+        FindClose(scan);
+        return 0;
+    }
+    snprintf(path, sizeof(path), "%s\\*", src_dir);
+    scan = FindFirstFileA(path, &find);
+    if (scan == INVALID_HANDLE_VALUE) {
+        return 0;                   /* this build ships no entries */
+    }
+    (void)CreateDirectoryA(root, NULL);
+    (void)CreateDirectoryA(dst_dir, NULL);
+    do {
+        char src[260];
+        char dst[260];
+        const char *dot;
+
+        if (find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            continue;
+        }
+        dot = strrchr(find.cFileName, '.');
+        if (!dot || _stricmp(dot, ".txt") != 0) {
+            continue;
+        }
+        snprintf(src, sizeof(src), "%s\\%s", src_dir, find.cFileName);
+        snprintf(dst, sizeof(dst), "%s\\%s", dst_dir, find.cFileName);
+        if (CopyFileA(src, dst, TRUE)) {
+            copied++;
+        }
+    } while (FindNextFileA(scan, &find));
+    FindClose(scan);
+    return copied;
+}
+
 /* Which build this exe is - see host_shell.h. The station has no version
    resource, so its own file is the answer: the timestamp and size Explorer
    shows in Properties, which is what tells a fresh build from one that was
@@ -1218,6 +1281,8 @@ int main(int argc, char **argv)
         host_examples_beside_exe(examples, sizeof(examples));
         (void)host_seed_card(g_files_root[0] ? g_files_root : "nc-files",
                              examples);
+        (void)host_seed_presets(g_files_root[0] ? g_files_root : "nc-files",
+                                examples);
     }
 
     memset(&wc, 0, sizeof(wc));

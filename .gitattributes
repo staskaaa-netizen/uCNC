@@ -1,2 +1,6 @@
 *.h linguist-language=C
 *.nc linguist-language=G-code
+# The station's preset entries are written by the panel and read back by it (and
+# by the machine) one row at a time; keep them exactly as the module writes them
+# so the shipped copy and a fresh `--dump-presets` stay byte for byte equal.
+tools/nc_ui_win/examples/presets/*.txt text eol=lf

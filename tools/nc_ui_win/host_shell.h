@@ -75,6 +75,15 @@ void host_files_root_beside_exe(const char *argv0);
    and nothing is overwritten. Returns how many files were placed. */
 int host_seed_card(const char *root, const char *examples);
 
+/* The preset entries the release ships: `examples\presets\*.txt` - one file per
+   address, generated from the compiled table by `--dump-presets` - are copied
+   into `<root>\presets` while that folder holds no entry file of its own, so a
+   station opens with the words its keys write as files the operator can read and
+   edit. Independent of `host_seed_card()`: a card that already has programs is
+   exactly the card whose `presets` folder is empty. Nothing is overwritten.
+   Returns how many files were placed. */
+int host_seed_presets(const char *root, const char *examples);
+
 /* Replays the machine's own key path - the keypad's characters through
    nc_visual_key_for_char(), the mode keys, `HOLD`/`RELEASE` and `WAIT<n>` - so
    what a dump shows is what the panel shows after the same presses. */

@@ -18,6 +18,10 @@ extern "C" {
    An address is not a section and nothing more than a place: at each one there
    is a name that may be empty - the first row of the file - and the rows the key
    writes, which may not. `docs/nc-preset-file.md` is the contract. */
+/* The addresses a key can carry an entry at at all: one digit for the pad, one
+   for the slot. Everything the panel ships lives inside them. */
+#define NC_PRESET_ADDR_FIRST   10
+#define NC_PRESET_ADDR_LAST    69
 #define NC_PRESET_ID_SETUP     16
 #define NC_PRESET_ID_END       46
 #define NC_PRESET_ID_INS       11
@@ -48,6 +52,15 @@ bool nc_insert_preset_id(nc_document_t *doc, int id);
 /* The name the card gives the entry at `id` (`name=`), which is what a key is
    labelled with. False when no entry has that id. */
 bool nc_preset_name_for_id(int id, char *out, size_t out_sz);
+
+/* One compiled entry written out as the file `/D/presets/<id>.txt` reads: the
+   name on the first row, then every row the key writes (`docs/nc-preset-file.md`
+   is the format). It is the same table the panel falls back on, so a card can be
+   given a visible, editable copy of what a key does and the two cannot drift -
+   the station writes `examples/presets` with this, and a check regenerates and
+   compares it. False when no compiled entry has that address, or when it does
+   not fit in `out`. */
+bool nc_preset_file_for_id(int id, char *out, size_t out_sz);
 
 #ifdef __cplusplus
 }

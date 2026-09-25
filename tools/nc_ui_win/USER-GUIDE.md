@@ -281,6 +281,9 @@ name it shipped with.
   row shows as two with a tab between them.
 - A card with no `presets` folder, or no file for an address, uses the entries
   the panel ships with - the folder only ever *replaces* what it names.
+- Every entry the panel ships is already in that folder when the station seeds
+  your card (see *The card* below), so the table above is also a list of files
+  you can open: `presets\34.txt` and `presets\35.txt` are the two increments.
 
 **A word the pads do not offer** is added the same way, and there is no limit to
 how many: drop a file at an address whose slot is free on the pad you want it on
@@ -333,6 +336,12 @@ nc-files\
 Copy the folder to back it up or move it to another PC; `--files DIR` points the
 station at another one. The demo is only ever copied in once, into a card that
 has no program of its own - your file is never overwritten by an upgrade.
+
+The `presets` folder arrives **filled**: one file per entry, named after the key
+path that inserts it (`34.txt` is WORD `4` = `U INC`, `41.txt` is G7X `1` = the
+OD cycle), and they are seeded when the folder has no entry of its own - so a
+card you already program also gets them, and nothing you wrote is overwritten.
+Delete a file and that key goes back to the entry the panel ships with.
 
 ## Running the checks yourself
 

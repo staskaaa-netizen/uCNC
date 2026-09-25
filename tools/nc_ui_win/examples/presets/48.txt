@@ -1,0 +1,2 @@
+FINISH
+G70 P0 Q0

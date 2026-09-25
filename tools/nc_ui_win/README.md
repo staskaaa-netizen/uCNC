@@ -98,6 +98,7 @@ README.md                      this file, the tool's own reference
 desktop-sender.md              how the station fits the desktop tools
 examples\lathe-demo.nc         the program below
 examples\tool.t                the table it calls T2 from
+examples\presets\*.txt         the words the keys write, one file per address
 ```
 
 `examples\` is also the station's first-run demo: a card with no program of its
@@ -105,6 +106,15 @@ own is seeded from the folder beside the exe (`host_seed_card()`, once, without
 overwriting anything), so an unpacked zip opens with something to look at.
 `--files DIR` names another card; a card that already has a program is never
 touched.
+
+`examples\presets` is the second half of that: the entries the panel ships,
+written out as the card's own files (`--dump-presets`, generated from the
+compiled table so the two cannot drift - `tools/test_nc_ui.py` regenerates the
+folder and compares it). `host_seed_presets()` copies them into a card whose
+`presets` folder holds no entry file yet, which is a rule of its own: an
+operator who has been using the station already has programs, and that is
+exactly the card whose `presets` folder is empty. Nothing is overwritten, and
+deleting a file puts that address back on the compiled entry.
 
 `lathe-demo.nc` is one of the machine's own runs, written down as a file: the
 preview setup rows, a tool and a spindle, one rapid, and two numbered `G71`
@@ -279,6 +289,13 @@ MODE key still cycles for the machine.
   entry (how a word the pads do not offer is added), that a file with no rows is
   not an entry, and that an address outside the pads' space is ignored.
   `docs/nc-preset-file.md` is the contract.
+- `--dump-presets DIR` writes every entry the panel ships into `DIR`, one file
+  per address, in the format `/D/presets` reads: this is where
+  `examples\presets` comes from, and `tools/test_nc_ui.py` regenerates it and
+  compares it byte for byte, so the shipped files and the firmware's fallback
+  cannot drift. `--demotest` then checks the seeding and the read path - it
+  gives `U INC` a value of its own on the card and the key writes it, not the
+  table.
 - `--streamtest` checks the two blocks a jog queues both reach the reader.
 - `--padtest` checks the pad is the machine's 4x4 matrix and that every footer
   key of every mode is on it. A screen that offers a key the keypad has not is

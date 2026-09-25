@@ -224,6 +224,36 @@ if __name__ == "__main__":
         if not (root / "nc" / "files" / name).exists():
             fail(f"FAIL the demo card has no {name}")
 
+    # The entries ship as files too, one per address, and the card is seeded
+    # with them. They are generated from the compiled table by
+    # `--dump-presets`, so the shipped folder and the fallback the panel uses
+    # when a card has no file cannot drift: this regenerates the folder and
+    # compares it, byte for byte.
+    shipped = TOOL / "examples" / "presets"
+    regenerated = OUT / "presets-dump"
+    shutil.rmtree(regenerated, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(OUT / "presets-dump-root"),
+                          "--dump-presets", str(regenerated)],
+                         capture_output=True, text=True)
+    if run.returncode:
+        fail("FAIL the preset entries do not write out as files",
+             run.stdout[-800:] or run.stderr[-800:])
+    wanted = {p.name for p in shipped.glob("*.txt")} if shipped.is_dir() else set()
+    have = {p.name for p in regenerated.glob("*.txt")}
+    if not wanted or wanted != have:
+        fail(f"FAIL the shipped preset files are {sorted(wanted)} and the "
+             f"panel writes {sorted(have)}: rebuild them with "
+             f"`nc_ui.exe --dump-presets tools/nc_ui_win/examples/presets`")
+    for name in sorted(wanted):
+        # Line endings are the checkout's business - the reader skips `\r` on
+        # either - so the rows are what is compared.
+        got = (shipped / name).read_bytes().replace(b"\r\n", b"\n")
+        want = (regenerated / name).read_bytes().replace(b"\r\n", b"\n")
+        if got != want:
+            fail(f"FAIL the shipped {name} is not what the panel writes: "
+                 f"regenerate tools/nc_ui_win/examples/presets")
+    print(f"nc_ui: {len(wanted)} preset files are the entries the panel writes")
+
     # Fanuc's increments, `U` and `W`. `--uwtest` proves the collapse in the
     # sender: the same profile written absolutely and written with increments
     # leaves the stream as the same lines, inside a cycle as well as outside it.

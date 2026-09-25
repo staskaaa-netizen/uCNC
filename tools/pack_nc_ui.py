@@ -9,6 +9,8 @@ CI runs), and what comes out is one zip:
     desktop-sender.md              how the station fits the desktop tools
     examples/lathe-demo.nc         a program to open, preview and run
     examples/tool.t                the table that program calls T2 from
+    examples/presets/*.txt         the words the keys write, one file per
+                                   address - seeded onto a card with no entries
 
 The `.exe` needs no DLL beside it (MinGW -static), and the `examples` folder is
 read where the station runs from: a card with no program of its own is seeded
@@ -81,7 +83,12 @@ def main(argv):
         print("pack: tools/nc_ui_win/examples is empty")
         return 1
     for example in examples:
-        shutil.copy2(example, staging / "examples" / example.name)
+        # The entries are a folder of their own inside `examples`; everything
+        # else a release ships there is a file.
+        if example.is_dir():
+            shutil.copytree(example, staging / "examples" / example.name)
+        else:
+            shutil.copy2(example, staging / "examples" / example.name)
 
     with zipfile.ZipFile(ZIP, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(staging.rglob("*")):

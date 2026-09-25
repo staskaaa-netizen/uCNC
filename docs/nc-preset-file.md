@@ -48,21 +48,42 @@ D:\presets\            one file per entry, named after its address
 - New entries are added the same way: a file at an address no compiled entry
   uses. `presets\12.txt` with `COOLANT` and `M8` puts a coolant word on OPS `2`.
 
+## The entries the release ships
+
+The station does not leave this folder for the operator to invent: the entries
+the panel ships are **files too**, one per address, and they travel in the
+release (`examples\presets\*.txt`) and are seeded onto a card that has no entry
+file of its own. So the words a key writes can be read and edited from the start
+- `34.txt` is `U INC`, `41.txt` is the OD cycle - and deleting a file puts that
+address back on the compiled entry it fell back to.
+
+Those files are **written out of the compiled table** by the station itself:
+
+```powershell
+build\nc_ui.exe --dump-presets tools\nc_ui_win\examples\presets
+```
+
+`nc_preset_file_for_id()` is the only thing that produces them, and
+`tools/test_nc_ui.py` regenerates the folder and compares it byte for byte, so
+the shipped copy and the firmware's fallback cannot drift apart - one table, one
+spelling of it.
+
 ## The compiled entries
 
 A card with no folder, or no file for an address, answers with the compiled
-table in `nc_presets.c` - the nineteen entries the panel ships with (the new
+table in `nc_presets.c` - the twenty-one entries the panel ships with (the new
 line, the setup block, the tool and spindle words, the corner words, the cycle
-templates, the thread and peck entries, the end mark). They are the only part of
-this that lives in flash, and they are a *fallback*, not a copy the card has to
-match:
+templates, the two increments, the thread and peck entries, the end mark). They
+are the only part of this that lives in flash, and they are a *fallback*, not a
+copy the card has to match:
 
 - a file at an address **replaces** that entry (name and rows);
 - an empty first row keeps the compiled *name* while the file owns the rows;
 - an address with no file behaves exactly as if the folder did not exist.
 
 The address list is in `nc_presets.h`; the compiled names and rows are next to
-it in `nc_presets.c`.
+it in `nc_presets.c`, and the files in `tools/nc_ui_win/examples/presets` are
+that same table written out (see above).
 
 ## When it is read
 
@@ -101,5 +122,9 @@ file replaces its address, both halves; an empty first row keeps the compiled
 name; an address no compiled entry uses becomes an entry; every row is written
 in order; a row that starts with a space continues the row above; a file with no
 rows is not an entry; an address outside `10`-`69` is not one either; and the old
-file this replaced is not read. Booting with a card, without a card and with a
-card inserted later remain bench items.
+file this replaced is not read. `--demotest` seeds a fresh card, checks every
+entry arrives as a file and proves the read path end to end - it gives `U INC` a
+value of its own and the key writes the card's file, not the table. The same
+script regenerates `examples\presets` with `--dump-presets` and fails if the
+shipped files are not what the panel writes. Booting with a card, without a card
+and with a card inserted later remain bench items.

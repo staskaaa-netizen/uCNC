@@ -33,8 +33,6 @@
 #define NC_PRESET_DIR "/D/presets/"
 #define NC_PRESET_SUFFIX ".txt"
 /* The addresses the pads can reach: one digit for the pad, one for the slot. */
-#define NC_PRESET_ADDR_FIRST 10
-#define NC_PRESET_ADDR_LAST 69
 #define NC_PRESET_ADDR_COUNT (NC_PRESET_ADDR_LAST - NC_PRESET_ADDR_FIRST + 1)
 #define NC_PRESET_NAME_LEN 16
 
@@ -430,4 +428,59 @@ bool nc_preset_name_for_id(int id, char *out, size_t out_sz)
     strncpy(out, builtin->name, out_sz - 1u);
     out[out_sz - 1u] = '\0';
     return true;
+}
+
+/* Append one row and its newline, or report that it does not fit. */
+static bool nc_preset_add_line(char *out, size_t out_sz, size_t *used,
+                               const char *row, size_t len)
+{
+    if (*used + len + 2u > out_sz) {
+        return false;
+    }
+    memcpy(out + *used, row, len);
+    *used += len;
+    out[(*used)++] = '\n';
+    out[*used] = '\0';
+    return true;
+}
+
+bool nc_preset_file_for_id(int id, char *out, size_t out_sz)
+{
+    const nc_preset_builtin_t *builtin = nc_preset_builtin(id);
+    const char *rows;
+    const char *row;
+    size_t used = 0u;
+
+    if (!out || out_sz == 0u) {
+        return false;
+    }
+    out[0] = '\0';
+    if (!builtin) {
+        return false;
+    }
+    rows = nc_preset_builtin_rows(id);
+    if (!rows) {
+        return false;
+    }
+    if (!nc_preset_add_line(out, out_sz, &used, builtin->name,
+                            strlen(builtin->name))) {
+        return false;
+    }
+    /* The rows are `\n` separated, and empty rows are rows: an entry with no
+       rows at all - the new line - is one empty row in the file, which is what
+       the reader counts as "this address has an entry". */
+    row = rows;
+    for (;;) {
+        const char *end = strchr(row, '\n');
+        size_t len = end ? (size_t)(end - row) : strlen(row);
+        bool more = end != 0;
+
+        if (!nc_preset_add_line(out, out_sz, &used, row, len)) {
+            return false;
+        }
+        if (!more) {
+            return true;
+        }
+        row = end + 1;
+    }
 }

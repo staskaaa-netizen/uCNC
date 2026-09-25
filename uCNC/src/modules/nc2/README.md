@@ -187,9 +187,9 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 
 | | |
 | --- | --- |
-| built | `nc2_presets.c` (address -> file, read, write), `nc2_boot.c` (the shipped entries, the one-time seed, the logo), `--seedtest` |
-| next | `nc2.c`: the document and the dumb value editor - a line cut into fields at its letters, `D` walking the numerics, digits typing, nothing checked while editing |
-| then | the 3x3 pad and the tree, the code pane and the floating DRO, files/state/run/emit/preview, the g7x block scan moving to `g7x_blocks.c`, the panel switch |
+| built | `nc2_presets.c` (address -> file, read, write), `nc2_boot.c` (the shipped entries, the one-time seed, the logo), `nc2.c` (the document, the fields, the value editor's keys, the pad's helper and its label line), `--seedtest` and `--edit2test` |
+| next | the 3x3 pad and its tree over the files, the code pane and the floating DRO (`nc2_visual.c`), the card's file list (`nc2_files.c`), then state/run/emit/preview |
+| then | the g7x block scan moving to `g7x_blocks.c`, the tool table's screen, and the panel switch: `nc` out, `nc2` in, one commit |
 
 One upstream landmine was found on the way, in `file_system.c`: `fs_opendir()`
 writes into the string it is handed to drop a trailing `/` (`char *newpath =

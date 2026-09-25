@@ -50,6 +50,7 @@ build\nc_ui.exe --padtest                        # the keypad is the machine's
 build\nc_ui.exe --uwtest                         # increments collapse to moves
 build\nc_ui.exe --contourtest                    # the pad walks the profile
 build\nc_ui.exe --seedtest                       # nc2's first start seeds a card
+build\nc_ui.exe --edit2test                      # nc2's fields and value editor
 build\nc_ui.exe --dirtytest                      # a key repaints what it changed
 build\nc_ui.exe --runtest                        # FROM/FULL send the program
 build\nc_ui.exe --blocktest                      # RUN marks the block it runs
@@ -345,6 +346,14 @@ python tools\test_nc_ui.py
   folder that already holds an entry is never touched, a file that is there is
   never replaced, and deleting a file is how an address stops being an entry -
   there is no compiled table behind the files to fall back on.
+- `--edit2test` checks nc2's value editor: a line cuts into one field per letter
+  (comments are not fields, a lone letter is a field waiting for a number), `D`
+  walks them, the first digit typed replaces the value and the rest of the line
+  stands still, `B`/`C` are the sign and the point while a value is picked (the
+  keypad has no `-` and no `.`), the cursor and the line keys work with nothing
+  picked - and the pad's helper writes its name as a line under the cursor, lands
+  the entry's rows where that name stood, and takes the name back when the pad is
+  left without a pick.
 - `--dirtytest` checks the repaint contract: a key that changes the screen has
   to ask for the draw itself. RUN's line keys (`B`/`C`) did not - they moved the
   run line and returned without the dirty flag, so the highlight sat on the old

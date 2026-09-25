@@ -336,6 +336,14 @@ if __name__ == "__main__":
         fail("FAIL nc2's first start does not seed the card",
              run.stdout[-1500:] or run.stderr[-1500:])
 
+    # nc2's value editor: the fields a line cuts into, what a keystroke does to
+    # the picked one, and the line the pad's name stands on.
+    run = subprocess.run([str(exe), "--edit2test"], capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "edit2test: PASS" not in run.stdout:
+        fail("FAIL nc2's value editor does not walk the fields",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
     # The operator's own program and tool table, kept with the NC module
     # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
     # the firmware writes its state next to them, then checked through the

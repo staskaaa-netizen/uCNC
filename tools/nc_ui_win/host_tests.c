@@ -39,6 +39,7 @@
 #include "nc_vocab.h"
 #include "nc_visual.h"
 #include "nc2_boot.h"
+#include "nc2.h"
 #include "nc2_presets.h"
 #include "g7x.h"
 #include "host_fs.h"
@@ -1663,6 +1664,187 @@ static void host_editor_flush(void)
 {
     mcu_unit_test_advance_time(2000000u);
     host_pump(40u);
+}
+
+/* nc2's value editor: a line is cut into fields at its letters, the keys walk
+   them, and what is typed replaces the value that was there. The dumb editor the
+   bench asked for, so the checks are about its two rules - where a field begins
+   and ends, and what a keystroke does to it:
+
+     1. a line cuts into one field per letter, comments are not fields, and a
+        letter with no number is a field with an empty value (that is how a file
+        writes `T` and ` Q` for the operator to complete);
+     2. `D` walks the fields; the first digit typed *replaces* the value, later
+        digits extend it, and the rest of the line is carried over untouched;
+     3. `B` is the sign and `C` the point while a value is picked - the keypad has
+        neither key, and this is how it types `-45.2`;
+     4. with nothing picked the keys are the screen's: `B`/`C` move the cursor,
+        `D`/`#` pick the line's first field, `*` deletes the line;
+     5. the pad's helper writes its name as a line under the cursor, the entry's
+        rows land where that name stood (a row starting with a space continues the
+        row above), the first field of the first row is picked, and leaving the
+        pad without a pick takes the name back and returns the cursor. */
+static int host_edit2test(void)
+{
+    nc2_document_t doc;
+    nc2_field_t fields[NC2_MAX_FIELDS];
+    int count;
+    int failures = 0;
+
+    nc2_document_init(&doc);
+
+    /* 1. the fields. */
+    count = nc2_fields("N10 G0 X52.5 Z-2", fields, NC2_MAX_FIELDS);
+    if (count != 4 || fields[0].letter != 'N' || fields[1].letter != 'G' ||
+        fields[2].letter != 'X' || fields[3].letter != 'Z' ||
+        fields[2].end - fields[2].value != 4u /* 52.5 */ ||
+        fields[3].end - fields[3].value != 2u /* -2 */) {
+        printf("edit2test: FAIL the fields of a row are wrong (%d)\n", count);
+        failures++;
+    }
+    count = nc2_fields("(rough) G1 X30 Z-15", fields, NC2_MAX_FIELDS);
+    if (count != 3 || fields[0].letter != 'G' || fields[2].letter != 'Z') {
+        printf("edit2test: FAIL a comment became a field (%d)\n", count);
+        failures++;
+    }
+    count = nc2_fields("T", fields, NC2_MAX_FIELDS);
+    if (count != 1 || fields[0].letter != 'T' ||
+        fields[0].value != fields[0].end) {
+        puts("edit2test: FAIL a lone letter is not a field waiting for a number");
+        failures++;
+    }
+    count = nc2_fields("G1X30", fields, NC2_MAX_FIELDS);
+    if (count != 2 || fields[1].letter != 'X' ||
+        fields[1].end - fields[1].value != 2u) {
+        puts("edit2test: FAIL letters without spaces do not cut the line");
+        failures++;
+    }
+
+    /* 2. picking, typing, and the rest of the line standing still. */
+    (void)nc2_insert_line(&doc, 0u, "G1 X30 Z-15");
+    if (!nc2_key(&doc, NC2_KEY_NEXT, 0) ||
+        doc.field != 0 || doc.line_count != 1u) {
+        puts("edit2test: FAIL `D` did not pick the line's first field");
+        failures++;
+    }
+    (void)nc2_key(&doc, NC2_KEY_NEXT, 0);               /* to X */
+    if (doc.field != 1) {
+        puts("edit2test: FAIL `D` did not walk to the next field");
+        failures++;
+    }
+    (void)nc2_key(&doc, NC2_KEY_DIGIT, '4');
+    (void)nc2_key(&doc, NC2_KEY_DIGIT, '5');
+    if (strcmp(doc.lines[0], "G1 X45 Z-15") != 0) {
+        printf("edit2test: FAIL typing gave \"%s\"\n", doc.lines[0]);
+        failures++;
+    }
+    (void)nc2_key(&doc, NC2_KEY_UP, 0);                 /* B: the sign */
+    if (strcmp(doc.lines[0], "G1 X-45 Z-15") != 0) {
+        printf("edit2test: FAIL the sign gave \"%s\"\n", doc.lines[0]);
+        failures++;
+    }
+    (void)nc2_key(&doc, NC2_KEY_DOWN, 0);               /* C: the point */
+    (void)nc2_key(&doc, NC2_KEY_DIGIT, '2');
+    if (strcmp(doc.lines[0], "G1 X-45.2 Z-15") != 0) {
+        printf("edit2test: FAIL the point gave \"%s\"\n", doc.lines[0]);
+        failures++;
+    }
+    (void)nc2_key(&doc, NC2_KEY_DELETE, 0);             /* backspace a digit */
+    if (strcmp(doc.lines[0], "G1 X-45. Z-15") != 0) {
+        printf("edit2test: FAIL the backspace gave \"%s\"\n", doc.lines[0]);
+        failures++;
+    }
+    (void)nc2_key(&doc, NC2_KEY_ACCEPT, 0);
+    if (doc.field != -1) {
+        puts("edit2test: FAIL `#` did not accept the value");
+        failures++;
+    }
+
+    /* 3. and the fields either side of it were never touched. */
+    count = nc2_fields(doc.lines[0], fields, NC2_MAX_FIELDS);
+    if (count != 3 || fields[0].end - fields[0].value != 1u ||
+        fields[2].end - fields[2].value != 3u /* -15 */) {
+        printf("edit2test: FAIL the neighbours changed: \"%s\"\n",
+               doc.lines[0]);
+        failures++;
+    }
+
+    /* 4. nothing picked: the cursor, the line, the way in. */
+    (void)nc2_insert_line(&doc, 1u, "G0 X52 Z2");
+    {
+        (void)nc2_key(&doc, NC2_KEY_DOWN, 0);
+        if (doc.cursor != 1u) {
+            printf("edit2test: FAIL `C` left the cursor on %u\n",
+                   (unsigned)doc.cursor);
+            failures++;
+        }
+        (void)nc2_key(&doc, NC2_KEY_UP, 0);
+        if (doc.cursor != 0u) {
+            printf("edit2test: FAIL `B` left the cursor on %u\n",
+                   (unsigned)doc.cursor);
+            failures++;
+        }
+        if (nc2_key(&doc, NC2_KEY_DIGIT, '4')) {
+            puts("edit2test: FAIL a digit was taken with nothing picked "
+                 "(it is the pad's)");
+            failures++;
+        }
+    }
+
+    /* 5. the pad's helper. */
+    nc2_document_init(&doc);
+    (void)nc2_insert_line(&doc, 0u, "G0 X52 Z2");
+    doc.cursor = 0u;
+    if (!nc2_helper_open(&doc, "G7X") || !nc2_helper_active(&doc) ||
+        doc.line_count != 2u || doc.cursor != 1u ||
+        strcmp(doc.lines[1], "G7X") != 0) {
+        printf("edit2test: FAIL the helper's name is \"%s\"\n",
+               doc.line_count > 1u ? doc.lines[1] : "");
+        failures++;
+    }
+    if (!nc2_helper_write(&doc, "G71 U1 R0.5 X0.5 Z0.5 F450 P10 Q20\n"
+                                "N10 G1 X30 Z0\n"
+                                " C2\n"
+                                "N20 G1 X50 Z-15")) {
+        puts("edit2test: FAIL the entry was not written");
+        failures++;
+    }
+    if (nc2_helper_active(&doc) || doc.line_count != 4u ||
+        strcmp(doc.lines[0], "G0 X52 Z2") != 0 ||
+        strcmp(doc.lines[1], "G71 U1 R0.5 X0.5 Z0.5 F450 P10 Q20") != 0 ||
+        strcmp(doc.lines[2], "N10 G1 X30 Z0 C2") != 0 ||
+        strcmp(doc.lines[3], "N20 G1 X50 Z-15") != 0) {
+        printf("edit2test: FAIL the entry's rows are: \"%s\" \"%s\" \"%s\"\n",
+               doc.line_count > 1u ? doc.lines[1] : "",
+               doc.line_count > 2u ? doc.lines[2] : "",
+               doc.line_count > 3u ? doc.lines[3] : "");
+        failures++;
+    }
+    if (doc.cursor != 1u || doc.field != 0) {
+        printf("edit2test: FAIL the cursor is on %u with field %d\n",
+               (unsigned)doc.cursor, doc.field);
+        failures++;
+    }
+
+    /* 6. and leaving the pad without a pick takes the name back. */
+    nc2_document_init(&doc);
+    (void)nc2_insert_line(&doc, 0u, "G0 X52 Z2");
+    doc.cursor = 0u;
+    (void)nc2_helper_open(&doc, "WORD");
+    nc2_helper_cancel(&doc);
+    if (nc2_helper_active(&doc) || doc.line_count != 1u || doc.cursor != 0u ||
+        strcmp(doc.lines[0], "G0 X52 Z2") != 0) {
+        puts("edit2test: FAIL the cancelled helper left something behind");
+        failures++;
+    }
+
+    if (failures) {
+        printf("edit2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("edit2test: PASS the fields walk, the value is typed over, and the "
+         "pad's name is the line the entry lands on");
+    return 0;
 }
 
 /* nc2's first start: a card that has never seen an entry gets the ones the panel
@@ -4123,6 +4305,8 @@ int host_tests_run(int argc, char **argv)
             return host_contourtest();
         if (strcmp(argv[i], "--seedtest") == 0)
             return host_seedtest();
+        if (strcmp(argv[i], "--edit2test") == 0)
+            return host_edit2test();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

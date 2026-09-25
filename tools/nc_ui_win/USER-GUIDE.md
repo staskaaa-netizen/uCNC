@@ -115,8 +115,7 @@ whole-screen view of what you have written, and `0` opens the file list.
 `B`/`C` step between equal words - field by field, the way the on-screen 3x3
 helper works. The digit keys open the helper: `1 OPS` (the stock and setup
 rows), `2 TOOL`, `3 WORD` (one line by its name or number), `4 G7X` (the lathe
-cycles - inside that pad, `7` is `DRAW`, the 3x3 profile builder), `5 THREAD`,
-`6 PECK`.
+cycles), `5 THREAD`, `6 PECK`.
 
 What those entries insert is not burned in: it is the card's own files, which
 you can open and edit like any text file. The section below is what they are.
@@ -188,15 +187,52 @@ Worth knowing before you write your own:
   between the `N` numbers as the contour; the numbers must exist, rise, and stay
   inside the range. A range that is missing or ambiguous is refused loudly, never
   guessed.
-- **`U`/`W`/`X`/`Z` allowances** are the finish allowance for the cycle; the
-  roughing stops on the boundary so the finish cut takes exactly what was left.
+- **A cycle header carries its own values**: `U` (or `W`, for a facing cycle) is
+  the depth of cut, `R` the retract, and `X`/`Z` the finish allowance the
+  roughing leaves. The roughing stops on the boundary, so the finish cut takes
+  exactly what was left.
 - **Rounds and chamfers** (`R`, `C`) are cut to the number written or refused -
   a radius too big for the moves beside it is an error, not a smaller corner.
 - **`G70 P Q`** re-runs the range the run already collected - the run has to have
   seen it, so starting mid-program at a `G70` is refused instead of guessed.
+- **A move can be written as a distance** instead of a position: on a contour
+  row `U` is X and `W` is Z, counted from where the tool is. See below.
 - **Threading** (`G33`/`G76`) needs spindle synchronisation. The station can
   write and expand it, but the spindle phase and pitch can only be proven on the
   machine.
+
+### Moves written as distances: `U` and `W`
+
+`U` and `W` are Fanuc's incremental X and Z. On a row that moves - `G0`, `G1`,
+`G2`, `G3` - they are the distance from where the tool is, whichever distance
+mode is active:
+
+```text
+G0 X50 Z0      (absolute: where the tool is)
+G1 W-10 F0.2   (Z 10 mm towards the chuck)
+G1 U-5         (X 5 mm smaller)
+```
+
+That is the same part as writing the two positions out (`G1 Z-10` then
+`G1 X45`), and the panel treats it that way everywhere: the drawing, the
+dimension callouts, the cycle expansion and what is sent to the machine all read
+the one rule, and the controller is handed the ordinary absolute line - it never
+sees a `U` or a `W` from a move. The program keeps the spelling you typed.
+
+- **`3 WORD` then `4` or `5`** appends the word to the row under the cursor with
+  the value left picked, so the distance is typed straight in.
+- **An axis has to be given absolutely before it can be incremented.** A program
+  that moves by `U` or `W` before it has said where the tool is is refused by
+  name - the panel will not invent a starting point - and so is a cycle whose
+  range is not there.
+- **On any other line the same letters mean what that line means**: in
+  `G71 U3 R1 X1 Z1` the `U` is the depth of cut (`U` for the X side, `W` for the
+  face), and in the demo's `G970 X-5 U60 Z-60 W5` they are the preview's X
+  bounds, the smallest and largest diameter it draws. A row that moves is
+  resolved; a line that carries parameters is not.
+- Both spellings are one profile: `G1 X30 Z0` / `G1 Z-15` / `G1 X50 Z-15` and
+  `G1 X30 Z0` / `G1 W-15` / `G1 U20` draw the same part and expand to the same
+  motion.
 
 ## The preset entries - the words the screens insert
 
@@ -248,7 +284,7 @@ name it shipped with.
 
 **A word the pads do not offer** is added the same way, and there is no limit to
 how many: drop a file at an address whose slot is free on the pad you want it on
-- OPS `12`-`15` and `17`-`19`, TOOL `27`-`29`, WORD `34`-`39`, G7X `49`,
+- OPS `12`-`15` and `17`-`19`, TOOL `27`-`29`, WORD `36`-`39`, G7X `47` and `49`,
 THREAD `54`-`59`, PECK `64`-`69`. So `presets\12.txt` reading
 
 ```text
@@ -267,6 +303,7 @@ The entries you are most likely to edit:
 | `16` | setup - the stock and preview rows (`G970`-`G973`) | `1 OPS` then `6 SETUP` |
 | `23`-`26` | tool change (`M6`), spindle on (`M3`), stop (`M5`), reverse (`M4`) | `2 TOOL` then `3`-`6` |
 | `32` `33` | chamfer (` C0`) and round (` R0`) on the cursor's row, inline | `3 WORD` then `2` / `3` |
+| `34` `35` | `U` and `W`, the X and Z increments, on the cursor's row | `3 WORD` then `4` / `5` |
 | `41` `42` `43` | OD, ID and face cycle templates | `4 G7X` then `1`, `2`, `3` |
 | `46` | the end mark (`G80`) | `4 G7X` then `6` |
 | `48` | the finish cut (`G70 P Q`) | `4 G7X` then `8 FINISH` |
@@ -275,10 +312,10 @@ The entries you are most likely to edit:
 
 Not every key is an entry, and that line is deliberate: **what a key means is the
 panel's; what an entry writes into the program is the card's.** The keys that
-*edit the line* rather than insert text (`4 G7X`'s `4 Q` and `5 N`, and `7 DRAW`
-the builder), the ones that take a typed value (`1 SELECT` opens the `T` field),
-and the ones that run an action (the file list, delete, the tool table, saving)
-are not entries and cannot be redefined from the card.
+*edit the line* rather than insert text (`4 G7X`'s `4 Q` and `5 N`), the ones
+that take a typed value (`1 SELECT` opens the `T` field), and the ones that run
+an action (the file list, delete, the tool table, saving) are not entries and
+cannot be redefined from the card.
 
 ## The card
 

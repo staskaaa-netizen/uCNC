@@ -66,6 +66,14 @@ static const nc_preset_builtin_t g_nc_preset_builtins[] = {
     { NC_PRESET_ID_THREAD_OD, "THREAD OD", "G76 X0 Z0 P0 Q0 F0 I0 L0 R0" },
     { NC_PRESET_ID_THREAD_ID, "THREAD ID", "G76 X0 Z0 P0 Q0 F0 I-0.2 L0 R0" },
     { NC_PRESET_ID_TAP, "TAP", "G33 X0 Z0 K0 F0" },
+    /* Fanuc's increments, appended to the line under the cursor: the row starts
+       with a space, so the word is added to that line and left picked - the
+       distance is typed straight in. On a move `U` and `W` have always meant the
+       distance from where the tool is, so a profile can be a list of points with
+       the steps between them written as increments - and there is no contour for
+       the panel to walk out direction by direction. */
+    { NC_PRESET_ID_U_INC, "U INC", " U" },
+    { NC_PRESET_ID_W_INC, "W INC", " W" },
     { NC_PRESET_ID_DRILL, "DRILL", "G1 X0 Z0 F0" },
     { NC_PRESET_ID_PECK, "PECK", "G1 X0 Z0 F0" },
     { NC_PRESET_ID_DWELL, "DWELL", "G4 P0" }
@@ -137,9 +145,11 @@ static bool nc_preset_path(int id, char *out, size_t out_sz)
    continuing row joins, and whether anything has been written yet. */
 typedef struct {
     nc_document_t *doc;
-    size_t at;
-    size_t last;
+    size_t at;          /* where the next new row goes */
+    size_t last;        /* the line a continuing row joins, or (size_t)-1 */
+    size_t first;       /* the first line this entry wrote, or (size_t)-1 */
     bool wrote;
+    bool appended;      /* a row was joined onto a line already there */
 } nc_preset_out_t;
 
 /* Put one row of an entry into the program.
@@ -160,6 +170,8 @@ static nc_result_t nc_preset_put_row(nc_preset_out_t *out, const char *row)
     }
     if (row[0] == ' ' && out->last != (size_t)-1) {
         char joined[NC_MAX_LINE_LEN];
+        nc_word_t words[24];
+        int count;
         int n = snprintf(joined, sizeof(joined), "%s%s",
                          out->doc->lines[out->last].text, row);
 
@@ -167,10 +179,21 @@ static nc_result_t nc_preset_put_row(nc_preset_out_t *out, const char *row)
             return NC_ERR_LINE_TOO_LONG;
         }
         r = nc_set_line(out->doc, out->last, joined);
+        if (r == NC_OK) {
+            /* The word just written is left picked, so the number is typed
+               straight into it - which is the whole reason a row can start with
+               a space. The cursor stays on the line the operator was on. */
+            count = nc_parse_words(joined, words, 24);
+            out->doc->selected_word = count > 0 ? count - 1 : -1;
+            out->appended = true;
+        }
     } else {
         r = nc_insert_line(out->doc, out->at, row);
         if (r == NC_OK) {
             out->last = out->at;
+            if (out->first == (size_t)-1) {
+                out->first = out->at;
+            }
             out->at++;
         }
     }
@@ -352,23 +375,34 @@ bool nc_insert_preset_id(nc_document_t *doc, int id)
         out.at = 0u;
     }
     out.last = out.at > 0u ? out.at - 1u : (size_t)-1;
+    out.first = (size_t)-1;
     out.wrote = false;
+    out.appended = false;
     slot = nc_preset_slot(id);
     if (slot >= 0 && g_nc_preset_there[slot]) {
         /* The operator's own file for this address: read it and write it. */
         if (!nc_preset_read_file(id, 0, 0u, &out, 0)) {
             return false;
         }
-        return out.wrote;
-    }
-    {
+    } else {
         const char *rows = nc_preset_builtin_rows(id);
 
         if (!rows) {
             return false;
         }
-        return nc_preset_put_text(&out, rows) == NC_OK && out.wrote;
+        if (nc_preset_put_text(&out, rows) != NC_OK) {
+            return false;
+        }
     }
+    /* The cursor lands on the first line the entry wrote, and a word left
+       picked by a continuing row stays picked (`--presettest` checks both). */
+    if (out.first != (size_t)-1) {
+        doc->cursor_line = out.first;
+        if (!out.appended) {
+            doc->selected_word = -1;
+        }
+    }
+    return out.wrote;
 }
 
 bool nc_preset_name_for_id(int id, char *out, size_t out_sz)

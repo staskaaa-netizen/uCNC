@@ -42,9 +42,7 @@ bool nc_g7x_block_end(const nc_document_t *doc,
 
 /* The block that owns `line`: the first header line and the end mark of the
    cycle block whose header sits at or above it. False when the line is outside
-   every block - which is how the path builder tells "nothing to continue here"
-   from "a block whose header never closes", the two cases it answers
-   differently. */
+   every block. */
 bool nc_g7x_block_containing(const nc_document_t *doc,
                              size_t line,
                              size_t *start_line,

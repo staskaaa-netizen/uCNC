@@ -73,8 +73,7 @@ const char *nc_visual_key_hint(char key);
 
 /* What the screen is showing right now, for a shell that names it beside the
    machine: the operation mode, or the view that has taken the screen over -
-   `FILES` for the file list, `PREVIEW` for the whole-body preview, `DRAW` for
-   the 3x3 path builder. */
+   `FILES` for the file list, `PREVIEW` for the whole-body preview. */
 const char *nc_visual_screen_name(void);
 
 /* What the active screen is and how its keys drive it, in the screen's own
@@ -89,8 +88,8 @@ size_t nc_visual_usage(const char *const **lines);
    machine's keypad itself:
 
      - `label`  - the footer entry that carries the key, or the screen's own
-                  word for a key the footer does not name (MANUAL's jog digits,
-                  the builder's pad). NULL when the screen has no word for it;
+                  word for a key the footer does not name (MANUAL's jog
+                  digits). NULL when the screen has no word for it;
      - `on_menu`- the footer strip carries the key, so a key that is not on the
                   menu reads as the screen's own (off-menu) key;
      - `step`   - the key steps a field or the axis (`B`/`C`, and the keyboard's

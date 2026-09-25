@@ -33,7 +33,6 @@
 #include "nc_layout.h"
 #include "nc_manual.h"
 #include "nc_palette.h"
-#include "nc_path_builder.h"
 #include "nc_preview.h"
 #include "nc_tools.h"
 #include "nc_vocab.h"
@@ -342,6 +341,7 @@ static int host_ink_in(const uint32_t *px, int x, int y, int w, int h)
 static int host_labeltest(void)
 {
     static const char *const program = "/D/nc/files/labels.nc";
+
     /* Long enough that the machine is still in the run when the frame is drawn:
        the running colour is what this checks first. */
     static const char *const slow_program =
@@ -1037,7 +1037,8 @@ static int host_presettest(void)
         ok = nc_insert_preset_id(&doc, 13) && doc.line_count == 3u &&
              strcmp(doc.lines[0].text, "G71 U1 R0.2 X0.5 Z0.5 F450") == 0 &&
              strcmp(doc.lines[1].text, "G1 X30 Z0") == 0 &&
-             strcmp(doc.lines[2].text, "G80") == 0;
+             strcmp(doc.lines[2].text, "G80") == 0 &&
+             doc.cursor_line == 0u && doc.selected_word == -1;
         if (!ok) {
             printf("presettest: FAIL the multi-row entry wrote %u lines: \"%s\" "
                    "\"%s\" \"%s\"\n", (unsigned)doc.line_count,
@@ -1052,8 +1053,11 @@ static int host_presettest(void)
 
     /* 6. a row that starts with a space continues the row above: the only way a
           value that belongs on a line already written gets in without the
-          controller seeing a line break inside the block. */
-    if (!host_fs_write_text("/D/presets/34.txt",
+          controller seeing a line break inside the block - and the word it wrote
+          is left picked, so the number is typed straight into it. The cursor
+          stays on the line the operator was on, because the entry wrote no line
+          of its own. */
+    if (!host_fs_write_text("/D/presets/36.txt",
                             "ROW\nG1 X0 Z0\n C0\n R0\n")) {
         puts("presettest: FAIL could not write the inline-row entry");
         failures++;
@@ -1064,27 +1068,30 @@ static int host_presettest(void)
         (void)nc_presets_init();
         nc_document_init(&doc);
         (void)nc_insert_line(&doc, 0, "G71 U1 R1 X0.5 Z0.5 F450");
-        ok = nc_insert_preset_id(&doc, 34) && doc.line_count == 2u &&
-             strcmp(doc.lines[1].text, "G1 X0 Z0 C0 R0") == 0;
+        ok = nc_insert_preset_id(&doc, 36) && doc.line_count == 2u &&
+             strcmp(doc.lines[1].text, "G1 X0 Z0 C0 R0") == 0 &&
+             doc.cursor_line == 1u && doc.selected_word == 4;
         if (!ok) {
-            printf("presettest: FAIL the inline rows read \"%s\"\n",
-                   doc.line_count > 1u ? doc.lines[1].text : "");
+            printf("presettest: FAIL the inline rows read \"%s\", cursor %u, "
+                   "word %d\n",
+                   doc.line_count > 1u ? doc.lines[1].text : "",
+                   (unsigned)doc.cursor_line, doc.selected_word);
             failures++;
         } else {
             puts("presettest: PASS a row that starts with a space continues the "
-                 "row above");
+                 "row above and leaves its word picked");
         }
     }
 
     /* 7. the rows are the mandatory half: a file with a name and nothing else is
           not an entry, and the address stays empty. */
-    if (!host_fs_write_text("/D/presets/35.txt", "NOTHING\n")) {
+    if (!host_fs_write_text("/D/presets/37.txt", "NOTHING\n")) {
         puts("presettest: FAIL could not write the empty entry");
         failures++;
     } else {
         (void)nc_presets_init();
-        if (nc_preset_name_for_id(35, name, sizeof(name)) ||
-            host_preset_line_is(35, "NOTHING")) {
+        if (nc_preset_name_for_id(37, name, sizeof(name)) ||
+            host_preset_line_is(37, "NOTHING")) {
             puts("presettest: FAIL an entry with no rows is offered");
             failures++;
         } else {
@@ -1405,10 +1412,6 @@ static int host_padtest(void)
             const nc_footer_item_t *preview_items = nc_menu_preview_footer(&pcount);
             size_t k;
             bool trace_label = false;
-            size_t submenu_count = 0u;
-            const nc_footer_item_t *g7x_items =
-                nc_menu_submenu(NC_FOOTER_ACTION_G7X_MENU, &submenu_count);
-            bool draw_label = false;
 
             if (pcount > HOST_FOOTER_SLOTS) {
                 printf("padtest: FAIL full-screen footer has %u slots (max %u)\n",
@@ -1426,14 +1429,8 @@ static int host_padtest(void)
                     failures++;
                 }
             }
-            for (k = 0u; k < submenu_count; k++) {
-                if (g7x_items[k].action == NC_FOOTER_ACTION_BUILD &&
-                    strcmp(g7x_items[k].label, "DRAW") == 0) {
-                    draw_label = true;
-                }
-            }
-            if (!trace_label || !draw_label) {
-                puts("padtest: FAIL preview TRACE and G7X DRAW labels are ambiguous");
+            if (!trace_label) {
+                puts("padtest: FAIL the preview's TRACE key has no label");
                 failures++;
             }
         }
@@ -1945,36 +1942,6 @@ static int host_editortest(void)
     return 0;
 }
 
-/* The cursor has to sit inside the block the builder continues. To the top of
-   the program and down onto the G71's first contour row: the fixture's header
-   is line 5, so the block starts at the sixth press. */
-static void host_builder_into_block(void)
-{
-    unsigned i;
-
-    for (i = 0u; i < 12u; i++) {
-        nc_visual_handle_key(NC_VISUAL_KEY_PREV);
-    }
-    for (i = 0u; i < 6u; i++) {
-        nc_visual_handle_key(NC_VISUAL_KEY_NEXT);
-    }
-}
-
-/* `4 G7X`, then `7 DRAW`: the pad opens on the block the cursor is in. */
-static bool host_builder_open(void)
-{
-    host_press('4');
-    host_press('7');
-    return nc_path_builder_active();
-}
-
-/* A profile the pad wrote has to be a cycle, not merely rows that look right:
-   `g7x_stream_prepare()` refuses a contour that is not monotonic in X and Z,
-   which is what a rapid row in the profile (the `G0` the builder used to write
-   on `5`) made of the whole block. The header the builder inserts is the OD
-   preset - all zeros - so the fixture's own cycle values are put on it first,
-   the way the operator types them. */
-
 #define HOST_EMIT_MAX 400
 
 /* Expand a whole document and keep the lines, so two documents can be compared
@@ -2007,504 +1974,179 @@ static bool host_emit_lines(const nc_document_t *doc,
     return true;
 }
 
-/* A profile the pad wrote is a contour only if the generator takes it. The
-   check is the expansion itself - the same `nc_emit_stream_*` RUN and the
-   preview share - so a row the builder should not have written (the rapid the
-   old `5` put inside the profile) turns the whole block down here exactly as it
-   does on the machine, instead of leaving rows that merely look right. */
-static bool host_builder_emits_as_cycle(const nc_document_t *doc)
+/* Build a document out of a fixture. */
+static void host_fill_lines(nc_document_t *doc,
+                            const char *const *lines,
+                            size_t count)
 {
-    static char lines[HOST_EMIT_MAX][NC_MAX_LINE_LEN];
-    g7x_result_t err;
-    size_t count = 0u;
+    size_t i;
 
-    return host_emit_lines(doc, lines, HOST_EMIT_MAX, &count, &err) && count != 0u;
-}
-
-/* The top of the program, where no cycle block is: the name row is dropped
-   again with the one press that takes the cursor back off it. */
-static void host_builder_to_top(void)
-{
-    unsigned i;
-
-    for (i = 0u; i < 12u; i++) {
-        nc_visual_handle_key(NC_VISUAL_KEY_PREV);
-    }
-    nc_visual_handle_key(NC_VISUAL_KEY_NEXT);
-}
-
-/* Leaving the screen is what writes the open document out - EDIT's own
-   autosave, the same call a screen change always made - so every check can read
-   the program back off the card instead of trusting the panel's memory. */
-static bool host_builder_flush(const char *program, nc_document_t *doc)
-{
-    nc_visual_select_mode(NC_MODE_RUN);
-    nc_visual_select_mode(NC_MODE_PROGRAM);
     nc_document_init(doc);
-    return nc_load_file(doc, program) == NC_OK;
-}
-
-/* Put the fixture back, on the card and on the screen: the screen is taken off
-   EDIT before the file is written and brought back after it, so the editor
-   loads what is on the card rather than holding the last check's document. */
-static bool host_builder_restore(const char *program, nc_document_t *fixture)
-{
-    nc_visual_select_mode(NC_MODE_RUN);
-    if (nc_save_file(fixture, program) != NC_OK) {
-        return false;
+    for (i = 0u; i < count; i++) {
+        (void)nc_insert_line(doc, doc->line_count, lines[i]);
     }
-    nc_visual_select_mode(NC_MODE_PROGRAM);
-    return true;
 }
 
-/* Headless check of the path builder (docs/nc-path-builder.md). The pad has to
-   write the contour a lathe program is made of: the axis it does not move
-   copied from the current point, the word it does move marked and typed into,
-   the block it belongs to continued rather than restarted - and the result has
-   to be a block the shared scan (and so RUN, the emitter and the preview) still
-   reads.
+/* Fanuc's increments: `U` and `W` are X and Z as distances from where the tool
+   is, and this panel resolves them into the absolute line the controller reads
+   (`nc_emit_line_point()` is the one place that rule lives). The check is an
+   *equality* - the same geometry written absolutely and written in increments
+   has to leave the sender as the same lines, inside a cycle as well as outside
+   one - because that is what "collapse to normal G1 lines" means:
 
-     1. opened on the fixture's G71 block, the points land before its G80, the
-        copied axis is the block's own last point, the diagonal takes both of
-        its words one after the other, and `5` writes nothing: the profile is
-        the part's geometry and the block's own `G80` ends it;
-     2. `*` drops exactly one point (one point is left behind);
-     3. `0` cancels the session: the program on the card is the fixture again;
-     4. opened where no block is, it makes one - the OD header and the end mark
-        the helper's own entries insert, with the cycle-start `G0` in front of
-        the header and the contour rows between the header and the end mark;
-     5. and cancel there takes the header and the end mark back with the points.
-     6. the operator's own profile (the fixture's five contour rows) is rebuilt
-        from the pad: `8`, `4`, `2`, `4`, `2` with the values typed at the
-        marked word, then `5`. The profile starts at the stock corner, so the
-        first press is the X-one (down to the finished diameter at the face) and
-        the X moves are `2`, the key that points down; the Z-only moves are `4`.
-        The result is expanded as a cycle, so the profile is not merely rows
-        that look right: a rapid row inside it (the old `5`) reverses the
-        profile's direction and the generator refuses the whole block.
-     7. `*` is the delete: while a word is open it takes that one row back, and
-        the completed rows stand; `A` is the screen's mode key, so it leaves the
-        builder with the written lines kept instead of throwing the path away.
-     8. the cycle-start `G0` before the header is inert for the cycle: the same
-        program with and without it expands to the same lines plus that one.
-
-   A wrong copy, a word marked on the wrong axis, an undo that takes the whole
-   session or a cancel that leaves a line behind are all invisible to a frame
-   dump - which is why every step ends on the card. */
-static int host_buildertest(void)
+     1. a plain contour, both spellings: the emitted lines are equal;
+     2. the same contour inside a `G71` block: the generated motion is equal,
+        which also says the rows reached the generator as the points they mean;
+     3. an increment whose axis was never given absolutely is left as written,
+        so the controller refuses it by name instead of the sender inventing a
+        position from nothing;
+     4. and the document keeps what the operator wrote: the spelling is the
+        program's, and only the wire is absolute. */
+static int host_uwtest(void)
 {
-    static const char *const program = "/D/nc/files/facing.nc";
-    nc_document_t base;
-    nc_document_t after;
-    nc_preview_info_t preview;
-    size_t base_lines;
-    size_t first;              /* where the first built line lands: over the old G80 */
-    size_t end_line = 0u;
-    size_t block_start = 0u;
-    size_t block_end = 0u;
+    static const char *const plain_absolute[] = {
+        "G0 X50 Z2",
+        "G1 Z-8.000 F0.2",
+        "G1 X45.000"
+    };
+    static const char *const plain_increments[] = {
+        "G0 X50 Z2",
+        "G1 W-10 F0.2",
+        "G1 U-5"
+    };
+    static const char *const cycle_absolute[] = {
+        "G0 X52 Z2",
+        "G71 U1 R0.5 X0.5 Z0.5 F450 P10 Q20",
+        "N10 G0 X30 Z0",
+        "G1 Z-15",
+        "N20 G1 X50 Z-15",
+        "G80"
+    };
+    static const char *const cycle_increments[] = {
+        "G0 X52 Z2",
+        "G71 U1 R0.5 X0.5 Z0.5 F450 P10 Q20",
+        "N10 G0 U-22 W-2",
+        "G1 W-15",
+        "N20 G1 U20",
+        "G80"
+    };
+    static const char *const orphan[] = {
+        "G1 W-10 F0.2",
+        "G1 X50"
+    };
+    static char lines_a[HOST_EMIT_MAX][NC_MAX_LINE_LEN];
+    static char lines_b[HOST_EMIT_MAX][NC_MAX_LINE_LEN];
+    nc_document_t doc;
+    g7x_result_t err;
+    size_t count_a = 0u;
+    size_t count_b = 0u;
+    size_t i;
     int failures = 0;
-    int i;
 
     host_init_core();
-    nc_visual_select_mode(NC_MODE_PROGRAM);
-    host_pump_idle(64u);
 
-    nc_document_init(&base);
-    if (nc_load_file(&base, program) != NC_OK) {
-        printf("buildertest: FAIL cannot load %s\n", program);
+    /* 1. a plain contour, written both ways. */
+    host_fill_lines(&doc, plain_absolute,
+                    sizeof(plain_absolute) / sizeof(plain_absolute[0]));
+    if (!host_emit_lines(&doc, lines_a, HOST_EMIT_MAX, &count_a, &err)) {
+        printf("uwtest: FAIL the absolute contour does not expand (%d)\n",
+               (int)err);
         return 1;
     }
-    base_lines = base.line_count;
-    first = base_lines - 1u;
-
-    /* 1. continue the fixture's block: a Z move with its value typed at the
-       marked word, an X move that copies the Z the first point left behind, a
-       diagonal whose two words are entered one after the other, then `5`. */
-    host_builder_into_block();
-    if (!host_builder_open()) {
-        puts("buildertest: FAIL the G7X submenu's DRAW did not open the builder");
+    host_fill_lines(&doc, plain_increments,
+                    sizeof(plain_increments) / sizeof(plain_increments[0]));
+    if (!host_emit_lines(&doc, lines_b, HOST_EMIT_MAX, &count_b, &err)) {
+        printf("uwtest: FAIL the incremental contour does not expand (%d)\n",
+               (int)err);
         return 1;
     }
-    host_press('6');                              /* Z+: X copied, Z marked */
-    host_press('2');
-    nc_visual_handle_key(NC_VISUAL_KEY_MINUS);    /* the prefill is negative */
-    host_press('2');                              /* 22 */
-    nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);   /* D: the word is taken */
-    host_press('8');                              /* X+: Z copied, X marked */
-    host_press('5');
-    host_press('5');                              /* 55 */
-    nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
-    host_press('7');                              /* the diagonal: both marked */
-    nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);   /* X kept as prefilled */
-    host_press('9');                              /* Z entered after it */
-    nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
-    host_press('5');                              /* close the drawing */
-    if (nc_path_builder_active()) {
-        puts("buildertest: FAIL `5` did not leave the builder");
-        failures++;
-    }
-
-    if (!host_builder_flush(program, &after)) {
-        puts("buildertest: FAIL the built program did not reach the card");
+    if (count_a != count_b) {
+        printf("uwtest: FAIL %u lines against %u\n",
+               (unsigned)count_a, (unsigned)count_b);
         failures++;
     } else {
-        static const char *const wanted[] = {
-            "G1 X50 Z22", "G1 X55 Z22", "G1 X45 Z9"
-        };
-
-        if (after.line_count != base_lines + 3u) {
-            printf("buildertest: FAIL the built program has %u lines, wanted %u\n",
-                   (unsigned)after.line_count, (unsigned)(base_lines + 3u));
-            failures++;
-        }
-        for (i = 0; i < 3; i++) {
-            const char *got = (first + (size_t)i) < after.line_count
-                                  ? after.lines[first + (size_t)i].text
-                                  : "";
-
-            if (strcmp(got, wanted[i]) != 0) {
-                printf("buildertest: FAIL line %u is \"%s\", wanted \"%s\"\n",
-                       (unsigned)(first + (size_t)i + 1u), got, wanted[i]);
+        for (i = 0u; i < count_a; i++) {
+            if (strcmp(lines_a[i], lines_b[i]) != 0) {
+                printf("uwtest: FAIL line %u is \"%s\", the absolute spelling "
+                       "gives \"%s\"\n", (unsigned)(i + 1u), lines_b[i],
+                       lines_a[i]);
                 failures++;
+                break;
             }
         }
-        if (first + 3u < after.line_count &&
-            strcmp(after.lines[first + 3u].text, "G80") != 0) {
-            printf("buildertest: FAIL the end mark is not after the last line: \"%s\"\n",
-                   after.lines[first + 3u].text);
-            failures++;
-        }
-        /* The built block is a G71 block like any other: the scan finds it and
-           the preview reads its points. */
-        if (!nc_g7x_block_containing(&after, first, &block_start, &block_end) ||
-            block_start != 4u ||
-            block_end != first + 3u) {
-            printf("buildertest: FAIL the block is %u..%u, wanted 5..%u\n",
-                   (unsigned)(block_start + 1u), (unsigned)(block_end + 1u),
-                   (unsigned)(first + 4u));
-            failures++;
-        }
-        if (!nc_g7x_block_end(&after, 4u, &end_line) || end_line != first + 3u) {
-            puts("buildertest: FAIL the G80 does not close the built block");
-            failures++;
-        }
-        nc_preview_collect(&after, &preview);
-        if (preview.max_x < 55.0f || preview.max_z < 20.0f) {
-            printf("buildertest: FAIL the preview reads X%.0f Z%.0f\n",
-                   (double)preview.max_x, (double)preview.max_z);
-            failures++;
-        } else {
-            printf("buildertest: three points built, "
-                   "preview reads X%.0f Z%.0f\n",
-                   (double)preview.max_x, (double)preview.max_z);
+        if (i == count_a) {
+            printf("uwtest: %u lines, the increments and the absolutes agree\n",
+                   (unsigned)count_a);
         }
     }
 
-    /* 2. `*` drops exactly one point: two points in, one undone, one left. */
-    if (!host_builder_restore(program, &base)) {
-        puts("buildertest: FAIL cannot put the fixture back");
-        failures++;
+    /* 2. and inside a cycle, where the rows are the generator's input. */
+    host_fill_lines(&doc, cycle_absolute,
+                    sizeof(cycle_absolute) / sizeof(cycle_absolute[0]));
+    if (!host_emit_lines(&doc, lines_a, HOST_EMIT_MAX, &count_a, &err)) {
+        printf("uwtest: FAIL the absolute cycle does not expand (%d)\n",
+               (int)err);
+        return 1;
     }
-    host_builder_into_block();
-    if (!host_builder_open()) {
-        puts("buildertest: FAIL the builder did not open for the undo check");
+    host_fill_lines(&doc, cycle_increments,
+                    sizeof(cycle_increments) / sizeof(cycle_increments[0]));
+    if (!host_emit_lines(&doc, lines_b, HOST_EMIT_MAX, &count_b, &err)) {
+        printf("uwtest: FAIL the incremental cycle does not expand (%d)\n",
+               (int)err);
+        return 1;
+    }
+    if (count_a < 20u || count_a != count_b) {
+        printf("uwtest: FAIL the cycle expanded to %u lines against %u\n",
+               (unsigned)count_a, (unsigned)count_b);
         failures++;
     } else {
-        host_press('2');
-        nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
-        host_press('2');
-        nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
-        nc_visual_handle_key(NC_VISUAL_KEY_BACKSPACE);   /* `*`: undo */
-        host_press('5');
-        if (!host_builder_flush(program, &after)) {
-            puts("buildertest: FAIL the undone program did not reach the card");
-            failures++;
-        } else if (after.line_count != base_lines + 1u ||
-                   strcmp(after.lines[first].text, "G1 X60 Z-25") != 0) {
-            printf("buildertest: FAIL undo left %u lines, first \"%s\"\n",
-                   (unsigned)after.line_count,
-                   first < after.line_count ? after.lines[first].text : "");
-            failures++;
-        } else {
-            puts("buildertest: undo dropped one point and left the rest");
-        }
-    }
-
-    /* 3. `0` cancels: every line the session inserted goes with it. */
-    if (!host_builder_restore(program, &base)) {
-        puts("buildertest: FAIL cannot put the fixture back");
-        failures++;
-    }
-    host_builder_into_block();
-    if (!host_builder_open()) {
-        puts("buildertest: FAIL the builder did not open for the cancel check");
-        failures++;
-    } else {
-        host_press('2');
-        nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
-        host_press('0');                                  /* cancel */
-        if (nc_path_builder_active()) {
-            puts("buildertest: FAIL `0` did not leave the builder");
-            failures++;
-        }
-        if (!host_builder_flush(program, &after)) {
-            puts("buildertest: FAIL the cancelled program did not reach the card");
-            failures++;
-        } else if (after.line_count != base_lines) {
-            printf("buildertest: FAIL cancel left %u lines, the fixture has %u\n",
-                   (unsigned)after.line_count, (unsigned)base_lines);
-            failures++;
-        } else {
-            unsigned j;
-
-            for (j = 0u; j < base_lines; j++) {
-                if (strcmp(after.lines[j].text, base.lines[j].text) != 0) {
-                    printf("buildertest: FAIL cancel changed line %u: \"%s\"\n",
-                           j + 1u, after.lines[j].text);
-                    failures++;
-                    break;
-                }
-            }
-            if (j == base_lines) {
-                puts("buildertest: cancel took every line the session inserted");
-            }
-        }
-    }
-
-    /* 4. outside a closed cycle the builder refuses to start and leaves the
-       document unchanged; cycle templates belong to the G7X vocabulary. */
-    if (!host_builder_restore(program, &base)) {
-        puts("buildertest: FAIL cannot put the fixture back");
-        failures++;
-    }
-    host_builder_to_top();
-    if (!host_builder_open()) {
-        if (!host_builder_flush(program, &after)) {
-            puts("buildertest: FAIL the unchanged program did not reach the card");
-            failures++;
-        } else if (after.line_count != base.line_count) {
-            puts("buildertest: FAIL refusal changed the document");
-            failures++;
-        } else {
-            unsigned j;
-
-            for (j = 0u; j < base.line_count; j++) {
-                if (strcmp(after.lines[j].text, base.lines[j].text) != 0) {
-                    printf("buildertest: FAIL refusal changed line %u\n", j + 1u);
-                    failures++;
-                    break;
-                }
-            }
-            if (j == base.line_count) {
-                puts("buildertest: no cycle block, no builder session");
-            }
-        }
-    } else {
-        puts("buildertest: FAIL PATH opened outside a cycle block");
-        failures++;
-    }
-
-    /* The keypad's configured step is metric. Refuse an inch-mode block instead
-       of writing a 10-inch prefill while telling the operator it is 10 mm. */
-    {
-        nc_document_t inch;
-
-        memcpy(&inch, &base, sizeof(inch));
-        (void)nc_set_line(&inch, 0u, "N10 G20");
-        if (!host_builder_restore(program, &inch)) {
-            puts("buildertest: FAIL cannot load the inch-mode fixture");
-            failures++;
-        }
-        host_builder_into_block();
-        if (host_builder_open()) {
-            puts("buildertest: FAIL PATH accepted an inch-mode block");
-            failures++;
-        }
-        if (!host_builder_restore(program, &base)) {
-            puts("buildertest: FAIL cannot restore the metric fixture");
-            failures++;
-        }
-    }
-
-    /* 5. rebuild the operator's profile in a vocabulary-created empty block.
-
-       The fixture's contour is (30,0) (30,-15) (35,-15) (35,-25) (50,-25); the
-       builder starts at the stock face (50,0), and one press moves one axis by
-       one step (10 mm by default) and copies the other from the current point.
-       So the presses are the *directions* and the numbers
-       are typed at the marked word:
-
-         8  X-          (50,0) -> type X30
-         4  Z-          type 15   -> (30,-15)
-         2  X+          type 35   -> (35,-15)
-         4  Z-          the prefill is already 25 -> (35,-25)
-         2  X+          type 50   -> (50,-25)
-         5  close       writes no extra row
-
-       The comparison is on the points: the fixture's corner words (`C0 R0`,
-       `C0 R2`, `C0 R5`) are not written by the pad yet, so they are not in the
-       built rows. */
-    {
-        nc_document_t empty;
-        size_t i;
-        size_t empty_first;
-
-        nc_document_init(&empty);
-        for (i = 0u; i < 5u; i++) {
-            if (nc_insert_line(&empty, i, base.lines[i].text) != NC_OK) {
+        for (i = 0u; i < count_a; i++) {
+            if (strcmp(lines_a[i], lines_b[i]) != 0) {
+                printf("uwtest: FAIL cycle line %u is \"%s\", the absolute "
+                       "spelling gives \"%s\"\n", (unsigned)(i + 1u),
+                       lines_b[i], lines_a[i]);
                 failures++;
+                break;
             }
         }
-        (void)nc_insert_line(&empty, 5u, "G80");
-        empty_first = empty.line_count - 1u;
-        strncpy(empty.path, program, sizeof(empty.path) - 1u);
-        empty.path[sizeof(empty.path) - 1u] = '\0';
-        if (!host_builder_restore(program, &empty)) {
-            puts("buildertest: FAIL cannot load the empty cycle block");
-            failures++;
-        }
-        host_builder_into_block();
-        if (!host_builder_open()) {
-            puts("buildertest: FAIL the builder did not open for the profile check");
-            failures++;
-        } else {
-            unsigned row;
-            int bad = 0;
-
-            host_press('8');
-            host_press('3');
-            host_press('0');
-            nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
-            host_press('4');
-            host_press('1');
-            host_press('5');
-            nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
-            host_press('2');
-            host_press('3');
-            host_press('5');
-            nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
-            host_press('4');
-            nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
-            host_press('2');
-            host_press('5');
-            host_press('0');
-            nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
-            host_press('5');
-
-            if (!host_builder_flush(program, &after)) {
-                puts("buildertest: FAIL the rebuilt profile did not reach the card");
-                failures++;
-            } else if (after.line_count != empty.line_count + 5u) {
-                printf("buildertest: FAIL the rebuilt profile has %u lines\n",
-                       (unsigned)after.line_count);
-                failures++;
-            } else {
-                for (row = 0u; row < 5u; row++) {
-                    float bx = 0.0f;
-                    float bz = 0.0f;
-                    float gx = 0.0f;
-                    float gz = 0.0f;
-                    const char *built = after.lines[empty_first + row].text;
-                    const char *wanted_row = base.lines[5u + row].text;
-
-                    (void)nc_line_word_float(built, 'X', &bx);
-                    (void)nc_line_word_float(built, 'Z', &bz);
-                    (void)nc_line_word_float(wanted_row, 'X', &gx);
-                    (void)nc_line_word_float(wanted_row, 'Z', &gz);
-                    if (fabs((double)bx - (double)gx) > 0.0005 ||
-                        fabs((double)bz - (double)gz) > 0.0005) {
-                        printf("buildertest: FAIL profile row %u is \"%s\", "
-                               "the fixture has \"%s\"\n",
-                               row + 1u, built, wanted_row);
-                        bad = 1;
-                    }
-                }
-                if (bad) {
-                    failures++;
-                } else if (strcmp(after.lines[empty_first].text, "G1 X30 Z0") != 0) {
-                    printf("buildertest: FAIL the first row is \"%s\", "
-                           "wanted \"G1 X30 Z0\"\n", after.lines[empty_first].text);
-                    failures++;
-                } else if (!host_builder_emits_as_cycle(&after)) {
-                    puts("buildertest: FAIL the rebuilt profile does not expand as a cycle");
-                    failures++;
-                } else {
-                    printf("buildertest: the fixture's profile rebuilt from "
-                           "\"%s\" to \"%s\"\n",
-                           after.lines[empty_first].text,
-                           after.lines[empty_first + 4u].text);
-                }
-            }
+        if (i == count_a) {
+            printf("uwtest: the cycle expands to the same %u moves either way\n",
+                   (unsigned)count_a);
         }
     }
 
-    if (!host_builder_restore(program, &base)) {
-        puts("buildertest: FAIL cannot restore the fixture");
+    /* 3. an increment with nothing to count from is left as written. */
+    host_fill_lines(&doc, orphan, sizeof(orphan) / sizeof(orphan[0]));
+    if (!host_emit_lines(&doc, lines_a, HOST_EMIT_MAX, &count_a, &err) ||
+        count_a == 0u) {
+        puts("uwtest: FAIL the orphan-increment program does not expand");
         failures++;
-    }
-    /* 6a. `*` while a word is open takes just that row back. */
-    host_builder_into_block();
-    if (!host_builder_open()) {
-        puts("buildertest: FAIL the builder did not open for the delete check");
+    } else if (strcmp(lines_a[0], "G1 W-10 F0.2") != 0) {
+        printf("uwtest: FAIL an unresolved increment was sent as \"%s\"\n",
+               lines_a[0]);
         failures++;
     } else {
-        host_press('2');                                  /* row + X marked */
-        host_press('7');                                  /* a value typed */
-        nc_visual_handle_key(NC_VISUAL_KEY_BACKSPACE);    /* `*`: delete it */
-        if (!nc_path_builder_active()) {
-            puts("buildertest: FAIL `*` closed the builder instead of deleting the row");
-            failures++;
-        }
-        host_press('5');
-        if (!host_builder_flush(program, &after)) {
-            puts("buildertest: FAIL the deleted row did not reach the card");
-            failures++;
-        } else if (after.line_count != base_lines ||
-                   strcmp(after.lines[base_lines - 1u].text, "G80") != 0) {
-            puts("buildertest: FAIL deleting the pending point changed the block");
-            failures++;
-        } else {
-            puts("buildertest: `*` took the open row back and left the rest");
-        }
+        puts("uwtest: an increment with nothing to count from is left as "
+             "written, for the controller to refuse");
     }
 
-    /* 7b. `A` is not the builder's key: it changes screen and the path stays. */
-    if (!host_builder_restore(program, &base)) {
-        puts("buildertest: FAIL cannot put the fixture back");
-        failures++;
-    }
-    host_builder_into_block();
-    if (!host_builder_open()) {
-        puts("buildertest: FAIL the builder did not open for the mode-key check");
+    /* 4. the program keeps the spelling the operator wrote. */
+    host_fill_lines(&doc, plain_increments,
+                    sizeof(plain_increments) / sizeof(plain_increments[0]));
+    if (strcmp(doc.lines[1].text, "G1 W-10 F0.2") != 0 ||
+        strcmp(doc.lines[2].text, "G1 U-5") != 0) {
+        printf("uwtest: FAIL the document was rewritten to \"%s\" / \"%s\"\n",
+               doc.lines[1].text, doc.lines[2].text);
         failures++;
     } else {
-        host_press('2');
-        host_press('4');
-        host_press('0');                                  /* X40 */
-        nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
-        nc_visual_handle_key(NC_VISUAL_KEY_MODE);         /* `A`: leave */
-        if (nc_path_builder_active()) {
-            puts("buildertest: FAIL `A` left the builder up");
-            failures++;
-        }
-        if (!host_builder_flush(program, &after)) {
-            puts("buildertest: FAIL the kept path did not reach the card");
-            failures++;
-        } else if (after.line_count != base_lines + 1u ||
-                   strcmp(after.lines[base_lines - 1u].text, "G1 X40 Z-25") != 0 ||
-                   strcmp(after.lines[base_lines].text, "G80") != 0) {
-            puts("buildertest: FAIL `A` did not keep the contour row");
-            failures++;
-        } else {
-            puts("buildertest: `A` changed screen and kept the path");
-        }
+        puts("uwtest: the program keeps the increments it was written with");
     }
 
     if (failures) {
-        printf("buildertest: FAILED (%d)\n", failures);
+        printf("uwtest: FAILED (%d)\n", failures);
         return 1;
     }
-    puts("buildertest: PASS the pad walks the contour, and cancel takes it back");
+    puts("uwtest: PASS the increments collapse to the lines they mean");
     return 0;
 }
 
@@ -3971,6 +3613,8 @@ int host_tests_run(int argc, char **argv)
             return host_spindletest();
         if (strcmp(argv[i], "--demotest") == 0)
             return host_demotest();
+        if (strcmp(argv[i], "--uwtest") == 0)
+            return host_uwtest();
         if (strcmp(argv[i], "--painttest") == 0)
             return host_painttest();
         if (strcmp(argv[i], "--state") == 0)
@@ -3985,8 +3629,6 @@ int host_tests_run(int argc, char **argv)
             return host_newfiletest();
         if (strcmp(argv[i], "--editortest") == 0)
             return host_editortest();
-        if (strcmp(argv[i], "--buildertest") == 0)
-            return host_buildertest();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

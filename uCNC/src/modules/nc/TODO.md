@@ -6,7 +6,7 @@ Read this first; the sections below are the history behind it.
 
 Software status: `python tools/test_g7x.py all` (ALL PASS, 0 failures),
 `python tools/test_nc_sender.py`, `python tools/test_nc_ui.py` (panel frame,
-3x3 helper, the 3x3 path builder's `--buildertest`, preset contract, and
+3x3 helper, the preset contract, `--uwtest` for Fanuc's `U`/`W` increments, and
 `--streamtest` for the panel's one-shot blocks, `--runtest`, `--dirtytest` and
 `--blocktest` for what RUN marks and sends) all pass, `pio run -e
 RP2350-LEANCAM-LVDS` builds and was uploaded to the board (the single later
@@ -14,22 +14,8 @@ change was a comment, so the running image matches this source),
 `-e RP2350-G7X-MODULE` builds. Only what says "bench" below is verified on the
 machine; everything else is software-verified only.
 
-The 3x3 path builder (`nc_path_builder.c`, `docs/nc-path-builder.md`) is the
-session after that handoff: every suite above passes with it, both firmware
-targets build, and the image carrying it has **not** been flashed yet. Those
-results predate the 2026-09-24 scope reduction and need to be rerun against the
-current source.
-
-### Path builder scope (2026-09-24)
-
-The original prototype also created a G71 block, inserted its header/end mark
-and clearance move, and rolled those rows back on cancel. That mixed template
-ownership into point entry. Current behavior is narrower: insert a cycle from
-the NC G7X vocabulary first; PATH then appends rows only inside a closed block
-found by `nc_g7x_block_containing()`. It refuses outside one without changing
-the program, and refuses G20 because its step table is in millimetres. The pad
-retains point undo and cancel for rows it inserted during that session. The
-older design notes below record the superseded prototype.
+The path builder is gone: `U` and `W` do its job in the program itself, and the
+prose below records what it was.
 
 ## The programming station's side panel (2026-09-24)
 
@@ -38,11 +24,11 @@ parts a PC operator needs, and none of them is a second copy of a screen's
 rules - each comes from the screen that acts on the key:
 
 - `nc_visual_screen_name()` names what the screen is showing (`MANUAL`, `EDIT`,
-  `TOOLS`, `RUN`, and `FILES` / `PREVIEW` / `DRAW` while a view has taken the
-  screen over);
+  `TOOLS`, `RUN`, and `FILES` / `PREVIEW` while a view has taken the screen
+  over);
 - `nc_visual_usage()` hands out the screen's own lines saying what it is for and
-  how its keys drive it. The off-menu keys (`B`/`C`, `#`, the builder's pad) are
-  named there, because the footer never will name them;
+  how its keys drive it. The off-menu keys (`B`/`C`, `#`) are named there,
+  because the footer never will name them;
 - `nc_visual_key_meaning()` is the one answer per pad key: the footer entry that
   carries it (drawn green on the strip), the screen's own word for a key the
   footer does not name (drawn grey), and whether the key steps a field or the
@@ -1014,15 +1000,11 @@ Bench items, not software:
 ## Next UI priorities (proposed; not implemented)
 
 - [ ] **Large follow-up: build out the NC/CAM workflow.**
-  - [x] **3x3 path entry: the pad walks a cycle contour.** The NC editor must
-    first insert a G71/G72 header and G80 from its existing vocabulary. `PATH`
-    then operates only inside a closed block found by `nc_g7x_block_containing()`;
-    it appends G1 rows before that block's end mark and uses the editor's normal
-    word entry. It does not create cycle templates or an approach move. Outside
-    a closed block it refuses without changing the document. The operator picks
-    OD/ID/facing/boring explicitly before PATH. Software checks live in
-    `tools/test_nc_ui.py --buildertest`; remaining bench checks are listed in
-    `TESTING.md` and `docs/nc-path-builder.md`.
+  - [x] **3x3 path entry: the pad walks a cycle contour.** Built, and then
+    removed again the same week: the bench found Fanuc's `U`/`W` do the whole
+    job in the program text, and the pad went with the builder (see "The path
+    builder is gone" below). A contour now comes from the `4 G7X` templates, the
+    rows, and `3 WORD`'s `4`/`5`.
 
   - [ ] **A line that calls another file, and the 3x3 as its file search.** Two
     steps, in this order, because the second is useless without the first:
@@ -1043,7 +1025,7 @@ Bench items, not software:
 
        The lookup belongs to `nc_files`, beside the list: one function that
        turns a typed sequence into a path, asked by the pad, by a "type to jump"
-       in the file list, and later by `3x3_path_builder.c` when it wants the
+       in the file list, and by the pad that wants the
        next file. The pad only chooses the file - what lands in the program is
        the call from step 1.
 
@@ -1114,59 +1096,50 @@ Written down from an operator's afternoon of real programs on the station. Each
 one is an option to weigh, not a decision - except the first, which is already
 possible today and only needs saying out loud.
 
-- [ ] **The path builder is 728 lines, and Fanuc needs two words.** The bench,
-  after the preset collapse: *"is path builder. its needs nothing except ix and
-  iz keys. or just new special g code which acts from previous line -
-  incremental filling values but latter collapse to normal g1 lines."* What the
-  builder owns today is a *point*: which axis moved, what the other one was, a
-  step table, diagonals, the mm check, a session's rows with undo and cancel, a
-  pad and a footer (`nc_path_builder.c` 728 lines, `+57` header,
-  `docs/nc-path-builder.md`, `--buildertest`). Fanuc does the same job with two
-  words: `G1 W-10.0 F0.2` is Z-10 from where the tool is, `G1 U-5.0` is X-5, both
-  always incremental whichever distance mode is active, in the same units and
-  diameter/radius mode as X and Z - so the *program text itself* carries the
-  increment and the reader resolves it. There is nothing left for a builder to
-  own; the profile a cycle validates is the resolved points, which G7x already
-  computes.
+- [x] **The path builder is gone, and Fanuc's two words do its job.** Done
+  2026-09-25, after the bench pressed twice on the same point: *"is path builder.
+  its needs nothing except ix and iz keys. or just new special g code which acts
+  from previous line - incremental filling values but latter collapse to normal
+  g1 lines"*, and then *"this extra will be cheaper than holding path builder
+  library around + it will make 3x3 area free of hardcoded things"*. What went:
+  `nc_path_builder.c` (728 lines) and its 57-line header, its pad and footer
+  tables, the G7X submenu's `7 DRAW`, the session bookkeeping with point undo and
+  cancel, `docs/nc-path-builder.md`, and `--buildertest` (both in
+  `tools/test_nc_ui.py` and in `host_tests.c`). The G7X pad's `7` is a free
+  address again and the WORD pad's `4`/`5` are the two increments.
 
-  The fact to weigh first: **this dialect has no U or W at all.** The parser's
-  word table is X Y Z A B C D/Q F I J K L P R S T H, and any other letter is
-  refused (`STATUS_GCODE_UNUSED_WORDS`), so `G1 W-10` is an error on the machine
-  today. In this fork U/W exist only as the G71/G72 header words, parsed by the
-  G7x module's own hook - a different thing.
+  Where the rule lives: **in the NC layer, not the parser core.**
+  `nc_emit_line_point()` is the one place that reads `U`/`W`, and the sender
+  hands the controller the ordinary absolute line - the increment is the
+  *program's* spelling, so nothing downstream has to learn a word. Two reasons
+  it is here: the core's word table is full (X..T is 16 bits) and G7x owns the
+  diameter rule, which is what makes a `U` a diameter increment in G7 and a
+  radius one in G8. The preview draws through the same two questions the sender
+  asks (`nc_emit_line_is_direct()` and `nc_emit_line_point()`), which is what
+  keeps a profile written in increments identical, point for point, to the same
+  profile written absolutely - `--uwtest` pins the collapse and
+  `tools/test_nc_ui.py` compares the two drawings.
 
-  So the collapse is: the dialect takes U/W as first-class words (the
-  incremental twins of X/Z), the parser core applies them against the current
-  position, the NC emitter resolves the same way while it walks a block (it
-  already carries the last point for the preview), the vocabulary gains the two
-  words so the editor's `3 WORD` field can write them and the legend names them,
-  and then `nc_path_builder.c`, its header, its pad and footer tables, its
-  session bookkeeping, `docs/nc-path-builder.md` and `--buildertest` all go.
-  What stays: G7x owns the contour and the cycles (it resolves the increments
-  into points to check the monotonic rule and generate passes), the P/Q range and
-  the end mark, and the preview that draws the result.
+  What that leaves open, deliberately: a `U`/`W` program handed *straight* to
+  the controller - by another sender, not through this panel - is still refused
+  by the core, because the core never sees the words. Proposing them upstream as
+  real dialect words is a separate piece of work and worth doing on its own
+  merits (every Fanuc-flavoured lathe sender emits them).
 
-  The decision this needs, because it is not a local one: **U/W means editing
-  the upstream parser** (`src/core/parser.c`: two word flags, two cases, the
-  application in the motion path). A parser *module* cannot do it - a module sees
-  words the core accepted, and the core refuses the letter before any module is
-  asked - so the choice is a small upstream-shaped dialect addition, or nothing.
-  Worth proposing upstream on its own merits: every Fanuc/lathe-flavoured sender
-  emits U/W, and rejecting them is why a hand-written Fanuc program has to be
-  rewritten before this machine will read it.
-
+  Bench still to do: the increments move the machine (a `G1 W-10` that travels
+  10 mm, and a `U` that halves/doubles per G7/G8), and the two callouts on the
+  glass. The suites prove resolution, ordering and equality - not motion.
 - [ ] **A word the pads do not offer is addable from the card today.** Every
   helper entry is a section, and a section whose id is a free key path appears on
   that pad, so the missing words do not have to wait for code: OPS `12`-`15` and
-  `17`-`19`, TOOL `27`-`29`, WORD `34`-`39`, G7X `49`, THREAD `54`-`59`, PECK
+  `17`-`19`, TOOL `27`-`29`, WORD `36`-`39`, G7X `47` and `49`, THREAD `54`-`59`, PECK
   `64`-`69` (`10`, `44` and `80` are the older spellings of the setup, finish and
-  end mark - leave those alone). Two limits bite before the slots run out, and
-  `docs/nc-preset-file.md` now says why: 24 records of 8 rows of 96 bytes, of
-  which nineteen are the compiled defaults, so **five** new names fit (editing an
-  existing id costs none). Open: which entries the panel should ship as defaults
-  (coolant `M8`/`M9`, work offsets `G54`-`G59`, program end `M0`/`M30`, ...), and
-  whether a section dropped for want of a record should report itself instead of
-  vanishing quietly.
+  end mark - leave those alone). Adding one costs nothing but the slot: since the
+  preset collapse only the *names* are held in RAM (about a kilobyte) and the
+  rows are read when a key writes them (`docs/nc-preset-file.md`), where the old
+  shape had a fixed table of 24 records and ran out. Open: which entries the
+  panel should ship as compiled defaults (coolant `M8`/`M9`, work offsets
+  `G54`-`G59`, program end `M0`/`M30`, ...).
 - [x] **A `presets/` folder - the entry as an address, and the file as the
   format.** Done 2026-09-25, after the bench called the old shape what it was
   (*"it all now is good and smelly scaffolding, while this all overall is just
@@ -1419,7 +1392,7 @@ NC supplies document access and UI, not a second cycle generator.
 Preview-specific coordinate mapping, stock/chuck and dimension geometry,
 tool-panel rendering, and emitted-motion/arc drawing now live in `nc_preview.c`.
 `nc_draw.c` retains shared panel primitives and tool glyphs; its geometry-only
-tool orientation helpers are private. MANUAL and the path builder use the
+tool orientation helpers are private. MANUAL and the preview use the
 preview-owned coordinate mapping. This is an ownership/API cleanup, not a claim
 that the NC module's total source size decreased.
 
@@ -1591,8 +1564,8 @@ that the NC module's total source size decreased.
   (`nc_footer_item_t` with the lit mask); what each screen keeps is its own nine
   entries and what they mean, which is the screen's business - a jog key and an
   insert key have different actions, and pretending otherwise would mean a
-  callback table per screen for no gain. The planned `3x3_path_builder.c` is a
-  third user of the same drawing, not a third drawing.
+  callback table per screen for no gain. A third user of the same drawing is not
+  a third drawing (the path builder, which was one for a week, proved it).
 
   Verified like the others: `tools/test_nc_ui.py` (including the feed and pad
   checks, which press MANUAL keys), the five bench dumps and the twelve
@@ -1716,10 +1689,9 @@ that the NC module's total source size decreased.
   same input contract as the footer: the UI reports the **code** it pressed and
   reads back the selected value - never the panel's internals. Its users:
   MANUAL (the jog pad, labels from the manual table), EDIT (the floating helper,
-  labels from the inserted line's menu), and the planned `3x3_path_builder.c`
-  once that work starts (see the 3x3 path builder item above). This is a
-  consolidation of something already half-shared, not a new layer: if it cannot
-  be the two existing callers plus one struct, it is not done yet.
+  labels from the inserted line's menu). This is a consolidation of something
+  already half-shared, not a new layer: if it cannot be the two existing callers
+  plus one struct, it is not done yet.
 - [ ] **Global editor note - steal the editor flow from Heidenhain TNC 415.**
   Field-by-field entry instead of prefilled lines: start a function, the control
   prompts the first required field (letter + description, no need to type the
@@ -1765,9 +1737,8 @@ that the NC module's total source size decreased.
 - [ ] Implement the depth knob EDIT/RUN interaction described above; G7x owns
   pass-phase enforcement and generated motion changes.
 - [x] Keep numeric NC word lookup with the NC parser in `nc.c`, not preview:
-  preview and the path builder share `nc_line_word_float()`. The compiled
-  G71/G72 preset rows also come from the vocabulary templates, while
-  the card's `/D/presets` entries remain the operator-editable override.
-  Preview's layer key reads `TRACE`; G7X's contour-entry action reads `DRAW`.
+  the preview uses `nc_line_word_float()`. The compiled G71/G72 preset rows also
+  come from the vocabulary templates, while the card's `/D/presets` entries
+  remain the operator-editable override. Preview's layer key reads `TRACE`.
 - [ ] Persist cursor position across reboot; current preservation is in-session.
 - [x] Hardware checklist exists in TESTING.md; executing it remains open.

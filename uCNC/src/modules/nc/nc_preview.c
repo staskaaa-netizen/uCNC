@@ -34,6 +34,21 @@ typedef struct {
     float z;
 } nc_preview_v2_t;
 
+/* Where a row leaves the tool, or false when the row says nothing about it.
+
+   Two questions, and both are the sender's: whether the controller is given
+   the row at all (`nc_emit_line_is_direct()` - a cycle header's `U` is a depth
+   of cut, not an increment, and a `G970`'s `U` is the preview's maximum X), and
+   where the words it carries put the tool (`nc_emit_line_point()` - `U`/`W` are
+   Fanuc's increments, so the drawing has to count from the point before). */
+static bool nc_preview_row_point(const char *line, float *x, float *z)
+{
+    if (!line || !nc_emit_line_is_direct(line)) {
+        return false;
+    }
+    return nc_emit_line_point(line, x, z, 0, 0u, 0);
+}
+
 static float nc_preview_absf(float v)
 {
     return v < 0.0f ? -v : v;
@@ -589,8 +604,11 @@ static bool nc_preview_emitted_motion_line(const nc_preview_info_t *preview,
 
     x = *last_x;
     z = *last_z;
-    has_x = nc_line_word_float(line, 'X', &x);
-    has_z = nc_line_word_float(line, 'Z', &z);
+    /* `U`/`W` are Fanuc's increments of X and Z, and a contour written with them
+       draws exactly as the same contour written absolutely - the rule is the
+       sender's (`nc_preview_row_point()`), the same question the emitter asks
+       before the controller sees the line. */
+    has_x = has_z = nc_preview_row_point(line, &x, &z);
     if (!*have_last) {
         *last_x = has_x ? x : preview->stock_x;
         *last_z = has_z ? z : 0.0f;
@@ -736,9 +754,11 @@ void nc_preview_invalidate(void)
    collected from the document before anything is painted. */
 void nc_preview_collect(const nc_document_t *doc, nc_preview_info_t *p)
 {
-    float last_x = 0.0f;
+    /* The point the tool is at while the rows are read: a row that gives one
+       axis and not the other keeps the one it had, and the first row of a
+       program counts from the stock's own corner. */
+    float last_x;
     float last_z = 0.0f;
-    bool have_last = false;
     size_t i;
 
     if (!p) {
@@ -757,6 +777,7 @@ void nc_preview_collect(const nc_document_t *doc, nc_preview_info_t *p)
     if (!doc) {
         return;
     }
+    last_x = p->stock_x;
 
     for (i = 0; i < doc->line_count; i++) {
         const char *line = doc->lines[i].text;
@@ -764,8 +785,6 @@ void nc_preview_collect(const nc_document_t *doc, nc_preview_info_t *p)
         g7x_contour_cmd_t cmd;
         float px = last_x;
         float pz = last_z;
-        bool has_x;
-        bool has_z;
 
         if (!line) {
             continue;
@@ -787,22 +806,21 @@ void nc_preview_collect(const nc_document_t *doc, nc_preview_info_t *p)
             p->last_cycle = cycle;
         }
 
+        /* The point follows every line the controller is given, not only the
+           rows of a contour: the `G0 X52 Z2` written before a cycle is what
+           that cycle's first row measures from. */
+        if (nc_preview_row_point(line, &px, &pz)) {
+            last_x = px;
+            last_z = pz;
+        }
+
         cmd = g7x_contour_cmd_from_line(line);
         if (cmd == G7X_CONTOUR_NONE || cmd == G7X_CONTOUR_END) {
             continue;
         }
 
-        has_x = nc_line_word_float(line, 'X', &px);
-        has_z = nc_line_word_float(line, 'Z', &pz);
-        if (!have_last) {
-            last_x = has_x ? px : p->stock_x;
-            last_z = has_z ? pz : 0.0f;
-            have_last = true;
-        }
-        if (!has_x && !has_z) {
-            continue;
-        }
-
+        /* The extents follow the points the contour reaches, increments
+           included - the point above is where this row left the tool. */
         if (px < p->min_x) p->min_x = px;
         if (px > p->max_x) p->max_x = px;
         if (pz < p->min_z) p->min_z = pz;
@@ -815,8 +833,6 @@ void nc_preview_collect(const nc_document_t *doc, nc_preview_info_t *p)
         } else {
             p->path_segments++;
         }
-        last_x = px;
-        last_z = pz;
     }
 
     if (p->stock_x <= 0.0f) p->stock_x = 50.0f;
@@ -920,6 +936,10 @@ static void nc_preview_contour_points(const nc_preview_ctx_t *ctx,
 {
 #if NC_PREVIEW_DIN_POINT_MARKERS
     size_t i;
+    /* The number a callout quotes is where the row puts the tool, so the point
+       is tracked from every line the controller is given - an increment after
+       a rapid counts from where that rapid left the tool, even when the rapid
+       is not a row of a contour. */
     float x = preview ? preview->stock_x : 0.0f;
     float z = 0.0f;
     int prev_z_px = z0_x;
@@ -938,9 +958,14 @@ static void nc_preview_contour_points(const nc_preview_ctx_t *ctx,
     for (i = 0; i < doc->line_count; i++) {
         const char *line = doc->lines[i].text;
         g7x_contour_cmd_t cmd;
-        bool has_x;
-        bool has_z;
+        float px_f = x;
+        float pz_f = z;
+        bool moved = nc_preview_row_point(line, &px_f, &pz_f);
 
+        if (moved) {
+            x = px_f;
+            z = pz_f;
+        }
         if (!nc_g7x_line_is_any_contour(doc, i)) {
             continue;
         }
@@ -949,9 +974,7 @@ static void nc_preview_contour_points(const nc_preview_ctx_t *ctx,
             continue;
         }
 
-        has_x = nc_line_word_float(line, 'X', &x);
-        has_z = nc_line_word_float(line, 'Z', &z);
-        if (has_x || has_z) {
+        if (moved) {
             int px = nc_preview_map_z(preview, z0_x, stock_w, z);
             int py = nc_preview_map_x(preview, stock_top, stock_h, x);
             float feature = 0.0f;

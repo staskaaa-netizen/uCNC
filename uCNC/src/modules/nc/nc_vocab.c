@@ -13,6 +13,12 @@ typedef struct {
 static const nc_vocab_entry_t g_nc_vocab[] = {
     { 1,  'C', "Chamfer" },
     { 1,  'R', "Corner radius" },
+    /* Fanuc's incremental words: a line may name its axis as a distance from
+       where the tool is instead of an absolute position. */
+    { 0,  'U', "X increment" },
+    { 0,  'W', "Z increment" },
+    { 1,  'U', "X increment" },
+    { 1,  'W', "Z increment" },
     { 4,  'P', "Dwell time" },
     { 33, 'K', "Thread pitch" },
     /* The P/Q range of a cycle: P names the block the profile starts at, Q the
@@ -211,6 +217,8 @@ const char *nc_vocab_label_for_word(const char *line, const nc_word_t *word)
     switch (letter) {
     case 'X': return "X position";
     case 'Z': return "Z position";
+    case 'U': return "X increment";
+    case 'W': return "Z increment";
     case 'F': return "Feed";
     case 'S': return "Spindle speed";
     case 'T': return "Tool";

@@ -7,8 +7,8 @@
    These are source files inside NC, not separate firmware modules.
 
    The 3x3 grid drawn by nc_draw_modal_items() is deliberately
-   here: MANUAL's jog pad, EDIT's floating helper and the planned path
-   builder are three users of one visual, not three drawings. */
+   here: MANUAL's jog pad and EDIT's floating helper are two users of one
+   visual, not two drawings. */
 
 #include <stdbool.h>
 #include <stddef.h>

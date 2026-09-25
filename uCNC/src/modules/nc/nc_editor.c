@@ -280,10 +280,10 @@ static void nc_editor_select_first_value(nc_editor_ctx_t *ctx)
 }
 
 /* A pad is the panel's own entries - the ones that *do* something rather than
-   write text: `Q`/`N`, the builder, the `G` field, the `T` field, the tool
-   table - plus the card's sections for every other slot. A slot's id is its key
-   path, `<footer key><pad key>`, so a section lands where its id says and a card
-   can add an entry of its own by writing that id: it is offered as soon as a
+   write text: `Q`/`N`, the `G` field, the `T` field, the tool table - plus the
+   card's sections for every other slot. A slot's id is its key path,
+   `<footer key><pad key>`, so a section lands where its id says and a card can
+   add an entry of its own by writing that id: it is offered as soon as a
    section has it. The label is the section's `name=`, which is the one place the
    file already names the entry - so the panel keeps no second copy of it. */
 static void nc_editor_modal_build(nc_footer_action_t parent)

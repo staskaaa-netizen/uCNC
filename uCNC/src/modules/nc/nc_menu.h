@@ -67,10 +67,7 @@ typedef enum {
     NC_FOOTER_ACTION_TOOL_SELECT,
     NC_FOOTER_ACTION_TOOL_EDIT,
     NC_FOOTER_ACTION_G7X_Q,
-    NC_FOOTER_ACTION_G7X_N,
-    /* The G7X submenu's PATH entry: open the 3x3 path builder on the block the
-       cursor is in (nc_path_builder.c). */
-    NC_FOOTER_ACTION_BUILD
+    NC_FOOTER_ACTION_G7X_N
 } nc_footer_action_t;
 
 typedef struct {

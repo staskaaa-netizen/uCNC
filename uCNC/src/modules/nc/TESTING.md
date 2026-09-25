@@ -96,9 +96,8 @@ Use this as a short hardware pass list while NC is still pre-alpha.
   `DIM`): the cut must be square (a straight edge, not rounded), the same size on
   every key of one strip, and a three-line label must stop before it instead of
   running over the cut.
-- The preview layer toggle is labeled `TRACE`, and the G7X contour-entry action
-  is labeled `DRAW`; `--padtest` checks that these two different actions do not
-  collapse back to the same `PATH` label.
+- The preview layer toggle is labeled `TRACE`, and no other screen's key reads
+  `PATH`; `--padtest` checks the label the strip draws.
 - EDIT full screen (`# FULL`): the preview is the screen - it takes the whole
   body, with no code lines at all - and the strip shows the preview's own keys:
   `4 STOCK`, `5 TRACE`, `6 ROUGH`, `7 DIM`, `# FULL`, and **no delete** (the
@@ -363,16 +362,16 @@ Use this as a short hardware pass list while NC is still pre-alpha.
   in `docs/nc-preset-file.md` against `nc_menu.c`'s submenus, and the one thing
   they were not before is why a card could not decide its own spindle speed.
   - What is still the panel's, and is not "hardcoded text": the entries that edit
-    a word on the line (G7X `4 Q`, `5 N`), the contour builder (`7 DRAW`), the
-    `T` field (`1 SELECT`), and the actions - the file list, delete, opening the
-    tool table. None of them writes a line of program text of its own.
+    a word on the line (G7X `4 Q`, `5 N`), the `T` field (`1 SELECT`), and the
+    actions - the file list, delete, opening the tool table. None of them writes
+    a line of program text of its own.
 - 3x3 helper: **a pad is the file**. Every key that *writes* something is the
   section whose id is that key path, and the section's `name=` is what the key
   reads as - the panel keeps no second list, so a key cannot say one thing and
   write another, and a card that adds a section with a free id (`[12]`, `[49]`)
   gets an entry of its own on that pad. What is left in `nc_menu.c` are the
-  entries a key *does* rather than writes: `Q`, `N`, `PATH`, the `G` field, the
-  `T` field, the tool table.
+  entries a key *does* rather than writes: `Q`, `N`, the `G` field, the `T`
+  field, the tool table.
 - 3x3 helper: `3 WORD` is the pad of single lines. `1 G` is the field that writes
   one line by name or number (a G-code from the dialects's vocabulary), and
   beside it the card's own entries - `2 CHMF` and `3 RND` are shipped as `[32]`
@@ -388,19 +387,17 @@ Use this as a short hardware pass list while NC is still pre-alpha.
   delete (`*`), the end mark besides the G7X menu's `6 G80`, the save (the panel
   writes by itself when the screen goes quiet), and the line/arc rows - the `3
   WORD` field's own templates for `G1`/`G2` already write them, word for word.
-- Path builder (`4 G7X`, then `7 DRAW` - `docs/nc-path-builder.md`): first insert
-  a G71/G72 cycle and G80 through the G7X vocabulary, then open DRAW inside that
-  closed block. It appends contour rows before the block's G80; outside a closed
-  block it refuses without changing the document. The copied axis carries the
-  block's last point, and the moving word is selected for the editor's field
-  entry. `4`/`6` are Z-/Z+, `8`/`2` X-/X+ (up is the smaller diameter), corners
-  select both words in sequence, `#` steps the prefill (0.5 to 50 mm), `*`
-  deletes a pending or last completed point, `0` cancels rows added by this PATH
-  session, and `5` finishes without writing a return move. The cycle template,
-  end mark, and approach are not builder responsibilities. Software check:
-  `tools/test_nc_ui.py --buildertest` covers point entry, undo, cancel,
-  continuation, refusal outside a closed block, and rejection of G20 blocks.
-  Cycle motion and safe approach remain machine checks.
+- Fanuc's increments, `U` and `W` (`3 WORD` then `4`/`5`, appended to the row
+  under the cursor): on a row that moves they are X and Z as distances from where
+  the tool is, and the panel resolves them into the ordinary absolute line the
+  controller reads - the program keeps the spelling. Software check:
+  `tools/test_nc_ui.py --uwtest` proves the same profile written both ways
+  leaves the sender as the same lines, plain *and* inside a `G71` block, leaves
+  an increment with no absolute base as written for the controller to refuse, and
+  does not rewrite the document; the same script renders the two spellings and
+  compares the drawings, so the preview's contour and its callouts read the rule
+  too. Machine checks: a `G1 W-10` travels 10 mm, and a `U` is a diameter
+  increment in G7 and a radius one in G8.
 - Footer: **eight slots on every screen** - the same key size in the same places
   from screen to screen, with the entries a screen does not use left empty (the
   strip used to grow to nine and shrink its keys on RUN and the file list).
@@ -543,11 +540,11 @@ The following machine checks remain open:
   mid-cut. The machine checks for the `P` block as an approach, a rapid written
   inside the profile, the compensation refusal and `G73` are listed in
   `../g7x/TESTING.md`.
-- A contour built with the 3x3 path builder (`4 G7X`, then `7 DRAW`, see
-  `docs/nc-path-builder.md`) runs as the selected cycle: `test_nc_ui.py
-  --buildertest` proves the rows the pad writes, the copied axes, the block scan,
-  and refusal outside a closed block. Machine testing must confirm the rough
-  pass follows the drawn path and the program's approach clears the work.
+- A contour written with increments runs as the selected cycle: `test_nc_ui.py
+  --uwtest` proves the rows reach the generator as the points they mean, so the
+  generated motion is the same as the absolute spelling's, row for row. Machine
+  testing must confirm the rough pass follows the drawn path and the program's
+  approach clears the work.
 - Generated rough and finish blocks execute through parser helper.
 - The cycle ends back at the clear point - `G0 X<clearance>`, then the Z return -
   which is the corner a `G0` before the cycle established (Fanuc's start point
@@ -657,9 +654,9 @@ The following machine checks remain open:
 - Machine checks (the host bench proves the blocks and the jog state only -
   `test_nc_ui.py --streamtest` asserts a step jog delivers both `G91 G1 ...`
   and `G90`, and `--feedtest` runs the held feed and the value keys on the real
-  parser, planner and virtual MCU; `--buildertest` is the same kind of proof for
-  the path builder - it walks the fixture's block with the pad and reads the
-  program back off the card): a step jog actually moves the axis and
+  parser, planner and virtual MCU; `--uwtest` is the same kind of proof for
+  Fanuc's increments - it expands the same profile both ways and compares the
+  lines): a step jog actually moves the axis and
   leaves the machine back
   in G90, a held key keeps the axis feeding at the jog feed, release and `*`
   stop it where it stands, the axis never passes the stop, the USB console still

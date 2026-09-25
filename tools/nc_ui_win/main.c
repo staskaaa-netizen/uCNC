@@ -41,7 +41,6 @@
    nc_ui --fstest         list /D through the firmware fs_* API
    nc_ui --presettest     check the /D/presets entries contract
    nc_ui --streamtest     check the panel's one-shot blocks reach the reader
-   nc_ui --buildertest    walk a contour with the 3x3 path builder
    nc_ui --dirtytest      a key that changes the screen asks for a repaint
    nc_ui --runtest        RUN's FROM and FULL send the program
    nc_ui --stoptest       the MANUAL stops are typed, taken and respected
@@ -78,7 +77,6 @@
 #include "nc_layout.h"
 #include "nc_manual.h"
 #include "nc_palette.h"
-#include "nc_path_builder.h"
 #include "nc_preview.h"
 #include "nc_tools.h"
 #include "nc_vocab.h"
@@ -208,8 +206,8 @@ static void host_pad_click(int row, int col)
 
 /* What the key means right now. The screen answers - the footer entry that
    carries it, the screen's own word for a key the footer does not name
-   (MANUAL's jog digits, the builder's pad), and whether the key steps a field
-   or the axis. The meanings live with the screen, never in this shell. */
+   (MANUAL's jog digits), and whether the key steps a field or the axis. The
+   meanings live with the screen, never in this shell. */
 bool host_key_meaning(char key, nc_visual_key_meaning_t *meaning)
 {
     memset(meaning, 0, sizeof(*meaning));

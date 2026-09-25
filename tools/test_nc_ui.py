@@ -57,6 +57,24 @@ def check(run, wanted, message):
              run.stdout[-1500:] or run.stderr[-1500:] or f"exit {run.returncode}")
 
 
+def bmp_region(path, x0, y0, x1, y1):
+    """One region of a 32bpp top-down .bmp, as raw bytes (the dumps write that
+    shape). Used where two frames are the same picture except for the text: a
+    program written in increments *is* different text, but the part it draws is
+    the same part."""
+    data = path.read_bytes()
+    offset = int.from_bytes(data[10:14], "little")
+    width = int.from_bytes(data[18:22], "little")
+    height = int.from_bytes(data[22:26], "little")
+    if height < 0:
+        fail(f"FAIL {path} is not a top-down dump")
+    out = bytearray()
+    for y in range(y0, y1):
+        row = offset + (y * width + x0) * 4
+        out += data[row:row + (x1 - x0) * 4]
+    return bytes(out)
+
+
 def core_sources():
     files = []
     for directory in ("", "core", "interface", "hal/kinematics", "hal/tools",
@@ -74,7 +92,7 @@ def module_sources():
     lvds = SRC / "modules" / "lvds_renderer"
     names = ["nc.c", "nc_emit.c", "nc_g7x.c", "nc_files.c", "nc_feedback.c",
              "nc_draw.c", "nc_editor.c", "nc_manual.c", "nc_menu.c", "nc_palette.c",
-             "nc_path_builder.c", "nc_presets.c", "nc_run.c", "nc_preview.c",
+             "nc_presets.c", "nc_run.c", "nc_preview.c",
              "nc_state.c", "nc_text.c", "nc_tools.c", "nc_vocab.c", "nc_visual.c"]
     files = [nc / name for name in names]
     files += [g7x / "g7x.c", g7x / "g7x_contour.c", g7x / "g7x_source.c",
@@ -206,6 +224,44 @@ if __name__ == "__main__":
         if not (root / "nc" / "files" / name).exists():
             fail(f"FAIL the demo card has no {name}")
 
+    # Fanuc's increments, `U` and `W`. `--uwtest` proves the collapse in the
+    # sender: the same profile written absolutely and written with increments
+    # leaves the stream as the same lines, inside a cycle as well as outside it.
+    run = subprocess.run([str(exe), "--files", str(OUT / "uw-root"),
+                          "--uwtest"], capture_output=True, text=True)
+    check(run, "uwtest: PASS", "the increments do not collapse to the lines they mean")
+
+    # And the preview draws them: the same profile written both ways has to be
+    # the same picture, because the drawing reads the increments through the one
+    # rule the sender uses (nc_emit_line_point()).
+    uw_root = OUT / "uw-root"
+    (uw_root / "nc" / "files").mkdir(parents=True, exist_ok=True)
+    (uw_root / "nc" / "files" / "absolute.nc").write_text(
+        "G970 X-5 U60 Z-60 W5\nG971 X50 Z50 I0 E0\nG0 X52 Z2\n"
+        "G71 U1 R0.5 X0.5 Z0.5 F450 P10 Q20\nN10 G0 X30 Z0\nG1 Z-15\n"
+        "N20 G1 X50 Z-15\nG80\n", encoding="utf-8")
+    (uw_root / "nc" / "files" / "increments.nc").write_text(
+        "G970 X-5 U60 Z-60 W5\nG971 X50 Z50 I0 E0\nG0 X52 Z2\n"
+        "G71 U1 R0.5 X0.5 Z0.5 F450 P10 Q20\nN10 G0 U-22 W-2\nG1 W-15\n"
+        "N20 G1 U20\nG80\n", encoding="utf-8")
+    dumps = {}
+    for name in ("absolute", "increments"):
+        (uw_root / "nc_state.txt").write_text(
+            f"MODE=EDIT\nEDIT=/D/nc/files/{name}.nc\n", encoding="utf-8")
+        dump = OUT / f"uw-{name}.bmp"
+        run = subprocess.run([str(exe), "--files", str(uw_root),
+                              "--dump-bench", str(dump)],
+                             capture_output=True, text=True)
+        if run.returncode or not dump.exists() or dump.stat().st_size < 54:
+            fail(f"FAIL the {name} spelling did not render",
+                 run.stdout[-800:] or run.stderr[-800:])
+        # The drawing only: the code beside it is the operator's text, and the
+        # two spellings are different text by design.
+        dumps[name] = bmp_region(dump, 0, 80, 400, 542)
+    if dumps["absolute"] != dumps["increments"]:
+        fail("FAIL the increments and the absolutes draw different parts")
+    print("nc_ui: the increments and the absolutes draw the same frame")
+
     # The window composes the bench in one bitmap and blits it whole, and keeps
     # the strip in it until the strip changes: that is what stopped it blinking
     # while a feed or a run repainted. Both halves of the cache are checked.
@@ -264,19 +320,6 @@ if __name__ == "__main__":
     print(run.stdout.strip())
     if run.returncode or "editortest: PASS" not in run.stdout:
         fail("FAIL typed keys do not reach the word, the helper and the field",
-             run.stdout[-1500:] or run.stderr[-1500:])
-    (root / "nc" / "files" / "facing.nc").write_bytes(
-        (fixtures / "facing.nc").read_bytes())
-
-    # The 3x3 path builder: the pad walks the fixture's G71 block, and every
-    # check is read back off the card after the screen change that writes it.
-    (root / "nc_state.txt").write_text(
-        "MODE=EDIT\nEDIT=/D/nc/files/facing.nc\n", encoding="utf-8")
-    run = subprocess.run([str(exe), "--files", str(root), "--buildertest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "buildertest: PASS" not in run.stdout:
-        fail("FAIL the path builder does not write the contour it walks",
              run.stdout[-1500:] or run.stderr[-1500:])
     (root / "nc" / "files" / "facing.nc").write_bytes(
         (fixtures / "facing.nc").read_bytes())

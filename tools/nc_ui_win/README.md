@@ -47,7 +47,7 @@ build\nc_ui.exe --files tmp\ncroot --fstest      # list /D through fs_*
 build\nc_ui.exe --files tmp\ncroot --presettest # check the /D/presets entries
 build\nc_ui.exe --streamtest                     # a jog delivers both blocks
 build\nc_ui.exe --padtest                        # the keypad is the machine's
-build\nc_ui.exe --buildertest                    # walk a contour with the pad
+build\nc_ui.exe --uwtest                         # increments collapse to moves
 build\nc_ui.exe --dirtytest                      # a key repaints what it changed
 build\nc_ui.exe --runtest                        # FROM/FULL send the program
 build\nc_ui.exe --blocktest                      # RUN marks the block it runs
@@ -197,7 +197,7 @@ the menu does not name:
   drive it - `nc_visual_screen_name()` and `nc_visual_usage()`, the screen's own
   words, so a screen that renames a key or gains one renames it here too. The
   usage lines are what an operator reads instead of a manual: the off-menu keys
-  (`B`/`C`, `#`, the builder's pad) are named there;
+  (`B`/`C`, `#`) are named there;
 * a key the footer carries is labelled in green and a key the footer does not
   name - the screen's own key - is labelled in grey, so "the menu does not list
   this" is visible at a glance. A key that means nothing here stays unlabelled;
@@ -259,9 +259,9 @@ keypad and the screen's own 3x3.
 
 `W` is not a second key: it is the machine's `#`, so every screen's meaning for
 that key applies - on EDIT it is the footer's `VIEW` (the whole-body preview), in
-a value field it is `OK`, on MANUAL it is step/feed, with the builder up it is
-the step size. `tools/test_nc_ui.py` presses both and compares the frames: the
-picture `W` draws on EDIT is byte-identical to the one `#` draws.
+a value field it is `OK`, on MANUAL it is step/feed. `tools/test_nc_ui.py` presses
+both and compares the frames: the picture `W` draws on EDIT is byte-identical to
+the one `#` draws.
 
 `nc_visual_select_mode()` was added to the NC module for this shell so the
 F1-F4 keys jump straight to a mode instead of cycling with the MODE key; the
@@ -290,20 +290,17 @@ MODE key still cycles for the machine.
 - `--keytest` decodes every keypad event byte on both edges (press and release)
   and fails if a release decodes as "no key" - the fault that made every key act
   once and only once on the machine.
-- `--buildertest` walks a contour with the 3x3 path builder
-  (`docs/nc-path-builder.md`). Opened on the fixture's G71 block it appends the
-  points before that block's `G80`, the copied axis carries the block's own last
-  point, a diagonal takes both of its words with `D` between them, and `5`
-  ends the drawing by writing nothing (the contour is the part's geometry; the
-  block's own `G80` ends it, and a rapid row inside the profile is what the
-  generator refuses); opened where no block is, it writes the OD header and the
-  end mark first. `*` has to drop
-  exactly one point, and `0` the whole session - header and end mark included.
-  It also rebuilds the fixture's own five-row profile from the pad (`7 4 2 4 2`
-  with the values typed) and **expands the result as a cycle**, so the profile
-  has to be one the generator accepts, not just rows that look right. Every step
-  reads the program back off the card after the screen change that writes it, so
-  the check is on the file, not on what the panel remembers.
+- `--uwtest` checks Fanuc's increments, `U` and `W`: the same contour written
+  with positions and written with distances has to leave the sender as the same
+  lines, plain and inside a `G71` block (so the rows reached the generator as the
+  points they mean and the generated motion is identical), an increment whose
+  axis was never given absolutely is left as written for the controller to
+  refuse, and the document keeps the spelling the operator typed - only the wire
+  is absolute. `nc_emit_line_point()` is the one place the rule lives; the
+  preview's drawing and its dimension callouts read it through the same
+  question the sender asks (`nc_emit_line_is_direct()`), which
+  `tools/test_nc_ui.py` checks by rendering the two spellings and comparing the
+  drawings.
 - `--dirtytest` checks the repaint contract: a key that changes the screen has
   to ask for the draw itself. RUN's line keys (`B`/`C`) did not - they moved the
   run line and returned without the dirty flag, so the highlight sat on the old
@@ -423,8 +420,8 @@ job the tests check.
   `tools/nc_sender/grbl_stream.c`) instead of the parser stream.
 - `host_tests.c` is the station's whole headless harness. It is a flat list of
   independent checks, so it can be split by theme (files and presets, the panel
-  frame, RUN and the sender, the editor and the builder) when it next grows
-  past the size trigger in `AGENTS.md`.
+  frame, RUN and the sender, the editor) when it next grows past the size
+  trigger in `AGENTS.md`.
 
 ## Where the code lives
 

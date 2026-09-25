@@ -10,10 +10,10 @@ extern "C" {
 /* The addresses the compiled entries live at: the key path that inserts the
    entry, one digit per level, and the name of the file the operator edits in
    `/D/presets` (`41.txt` is G7X `4` then `2`). They are written down once, here,
-   because a renumbering has to reach every caller - the path builder inserting
-   an end mark, the editor's menus, and the compiled table - and a literal that
-   missed the note is a feature that quietly stops working (which is how the
-   setup block went unreachable in the first place).
+   because a renumbering has to reach every caller - the editor's menus and the
+   compiled table - and a literal that missed the note is a feature that quietly
+   stops working (which is how the setup block went unreachable in the first
+   place).
 
    An address is not a section and nothing more than a place: at each one there
    is a name that may be empty - the first row of the file - and the rows the key
@@ -27,6 +27,8 @@ extern "C" {
 #define NC_PRESET_ID_M4        26
 #define NC_PRESET_ID_CHMF      32
 #define NC_PRESET_ID_RND       33
+#define NC_PRESET_ID_U_INC     34
+#define NC_PRESET_ID_W_INC     35
 #define NC_PRESET_ID_OD        41
 #define NC_PRESET_ID_BORE      42
 #define NC_PRESET_ID_FACE      43

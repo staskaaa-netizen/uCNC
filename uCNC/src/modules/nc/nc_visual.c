@@ -11,7 +11,6 @@
 #include "nc_manual.h"
 #include "nc_menu.h"
 #include "nc_palette.h"
-#include "nc_path_builder.h"
 #include "nc_presets.h"
 #include "nc_run.h"
 #include "nc_preview.h"
@@ -262,10 +261,6 @@ static const char *nc_visual_tool_path(void)
    strip have to agree, or a key would be labelled one thing and do another. */
 static const nc_footer_item_t *nc_visual_footer_items(size_t *count)
 {
-    if (nc_path_builder_active()) {
-        /* The pad owns the digits: the strip carries the keys it does not. */
-        return nc_path_builder_footer(count);
-    }
     if (nc_visual_full_preview()) {
         return nc_menu_preview_footer(count);
     }
@@ -292,10 +287,6 @@ static void nc_visual_set_mode(nc_mode_t mode)
     /* Leaving MANUAL must not leave a jog running behind the next screen. */
     nc_visual_manual_screen(&manual);
     nc_manual_feed_cancel(&manual);
-    /* Leaving EDIT ends the path builder session: the lines already written are
-       ordinary program text and stay in the document (the screen change saved
-       them); only the builder's own state goes. */
-    nc_path_builder_leave();
     g_nc_visual_mode = mode;
     nc_state_set_mode(mode);
     nc_state_save();
@@ -688,9 +679,6 @@ static void nc_visual_dispatch_footer_action(uint8_t action)
        what is its own below: the mode changes, the RUN keys, the view toggle
        and the entries that are still stubs. */
     if (nc_editor_action(&editor, action)) {
-        return;
-    }
-    if (nc_path_builder_action(&editor, action)) {
         return;
     }
     message = nc_preview_action(action);
@@ -1441,9 +1429,6 @@ static void nc_visual_draw_snapshot(const nc_snapshot_t *s)
        "no controls on this screen" placeholder must not be painted over it. */
 
     nc_editor_draw_aids(&editor);
-    /* The builder's pad sits where the floating helper sits: it is the same
-       grid, drawn for the same line. */
-    nc_path_builder_draw(&editor);
     t3 = mcu_micros();
 
     nc_visual_footer_text(footer_text, sizeof(footer_text));
@@ -1543,14 +1528,6 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
         if (editor.follow != NC_FOOTER_ACTION_NONE) {
             nc_visual_dispatch_footer_action(editor.follow);
         }
-        return;
-    }
-    /* The path builder is the second modal on this screen: while it is up its
-       pad owns the digits, and a key that types into a marked word is handed
-       back to the editor's own field flow. */
-    if (nc_path_builder_key(&editor, key, key_ch)) {
-        g_nc_visual_status[sizeof(g_nc_visual_status) - 1] = '\0';
-        g_nc_visual_dirty = true;
         return;
     }
     if (!nc_files_active() && g_nc_visual_mode == NC_MODE_MANUAL) {
@@ -1736,11 +1713,6 @@ const char *nc_visual_key_hint(char key)
     if (nc_files_active()) {
         return 0;
     }
-    /* The builder's pad is the screen's while it is up: a shell labels its own
-       keypad from the same table the pad is drawn with. */
-    if (nc_path_builder_active()) {
-        return nc_path_builder_key_hint(key);
-    }
     if (g_nc_visual_mode != NC_MODE_MANUAL) {
         return 0;
     }
@@ -1763,8 +1735,7 @@ bool nc_visual_key_meaning(char key, nc_visual_key_meaning_t *meaning)
     meaning->on_menu = false;
     meaning->step = false;
     /* The footer the strip draws is the one that says a key is on the menu -
-       EDIT's own, the preview's while it has the whole body, or the builder's
-       while its pad owns the digits. */
+       EDIT's own, or the preview's while it has the whole body. */
     footer = nc_visual_footer_items(&count);
     for (i = 0u; i < count; i++) {
         if (footer[i].key == key && footer[i].label[0] != '\0') {
@@ -1782,10 +1753,8 @@ bool nc_visual_key_meaning(char key, nc_visual_key_meaning_t *meaning)
     /* `B`/`C` are the keypad's step keys: the footer names them AXIS-/AXIS+ on
        MANUAL, the editor walks equal fields and the file list steps a row with
        them everywhere else - so a shell draws the arrow the key acts as, not
-       the letter. The builder's pad owns its own digits and the full-screen
-       preview has nothing to step. */
-    if ((key == 'B' || key == 'C') &&
-        !nc_path_builder_active() && !nc_visual_full_preview()) {
+       the letter. The full-screen preview has nothing to step. */
+    if ((key == 'B' || key == 'C') && !nc_visual_full_preview()) {
         meaning->step = true;
     }
     return meaning->label != 0 || meaning->step;
@@ -1793,9 +1762,6 @@ bool nc_visual_key_meaning(char key, nc_visual_key_meaning_t *meaning)
 
 const char *nc_visual_screen_name(void)
 {
-    if (nc_path_builder_active()) {
-        return "DRAW";
-    }
     if (nc_files_active()) {
         return "FILES";
     }
@@ -1824,8 +1790,8 @@ size_t nc_visual_usage(const char *const **lines)
         "Arrows move, the digits type.",
         "B/C step between equal words.",
         "1 OPS  2 TOOL  3 WORD  4 G7X.",
-        "5 THREAD  6 PECK open their",
-        "own pads (G7X's 7 is DRAW).",
+        "5 THREAD, 6 PECK open a pad each.",
+        "U/W are increments of X and Z.",
         "# VIEW  * DEL  0 files."
     };
     static const char *const tools[] = {
@@ -1853,23 +1819,13 @@ size_t nc_visual_usage(const char *const **lines)
         "4 STOCK  5 TRACE  6 ROUGH.",
         "7 DIM  # back to the code."
     };
-    static const char *const builder[] = {
-        "DRAW: the 3x3 builds the profile.",
-        "3x3 moves one step: 2/8 X,",
-        "4/6 Z, the corners both.",
-        "* takes one point back.",
-        "# step size, 5 ends, 0 cancels."
-    };
     const char *const *table;
     size_t count;
 
     if (!lines) {
         return 0u;
     }
-    if (nc_path_builder_active()) {
-        table = builder;
-        count = sizeof(builder) / sizeof(builder[0]);
-    } else if (nc_files_active()) {
+    if (nc_files_active()) {
         table = files;
         count = sizeof(files) / sizeof(files[0]);
     } else if (nc_visual_full_preview()) {

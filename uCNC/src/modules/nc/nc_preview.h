@@ -85,7 +85,7 @@ typedef struct {
 
 void nc_preview_collect(const nc_document_t *doc, nc_preview_info_t *preview);
 
-/* Coordinate mapping shared with MANUAL jog direction and the path builder. */
+/* Coordinate mapping shared with MANUAL's jog direction. */
 int nc_preview_map_x(const nc_preview_info_t *preview, int stock_top, int stock_h, float x);
 int nc_preview_map_z(const nc_preview_info_t *preview, int z0_x, int stock_w, float z);
 

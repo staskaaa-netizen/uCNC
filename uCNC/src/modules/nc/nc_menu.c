@@ -73,10 +73,7 @@ static const nc_footer_item_t g_nc_submenu_g7x[] = {
     /* The pad's text entries are the card's sections (`[41]`..`[43]`, `[46]`,
        `[48]`); what is left here is what a key *does* rather than writes. */
     { '4', "Q", NC_FOOTER_ACTION_G7X_Q },
-    { '5', "N", NC_FOOTER_ACTION_G7X_N },
-    /* Cycle templates come from the entries above. DRAW only appends contour
-       rows to a closed block. See docs/nc-path-builder.md. */
-    { '7', "DRAW", NC_FOOTER_ACTION_BUILD }
+    { '5', "N", NC_FOOTER_ACTION_G7X_N }
 };
 
 static const nc_footer_item_t g_nc_submenu_sync[] = {

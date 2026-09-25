@@ -149,6 +149,43 @@ the programs (`0` opens the list on EDIT, TOOLS and RUN), so `/D/presets.txt`
 can be opened and saved as text. It is not a program: `nc_path_supported()` is
 what decides that, so the preview does not parse it and RUN refuses it.
 
+## The shape this is, and the shape it could collapse to
+
+Strip the syntax and what an entry is: **an address, and at that address two
+things - a name that may be empty and the rows it writes, which may not.** The
+address is the key path that inserts it (`42` is G7X `4` then `2`), because that
+is the one thing the pads need to find it. Everything else in this file is how
+that map is *spelled* today, and a fair amount of it is scaffolding:
+
+- `[id]` / `name=` / `line=` is a text format the panel exists to parse;
+- the alias table (`10`, `44`, `80` -> the entry they always named) is there
+  because the pad numbering moved once;
+- the 24-record table with 8 rows of 96 bytes, and the rule that a section
+  arriving when it is full disappears, are the storage of that format;
+- the compiled defaults, the lazy file resolution and the "left alone for
+  repair" rule exist because the card may be absent and must never be able to
+  grow the panel's memory.
+
+What is load-bearing in all of that, and would survive any simplification: the
+address *is* the key path; a name may be empty; the rows are mandatory; the
+panel needs a default set for a card that has none; and a row is drawn at the
+panel's own width. Those are properties, not syntax.
+
+**The collapse worth considering.** If an entry is an address, it can be a *file*
+whose name is the address - `presets\42` - and then the panel needs no format at
+all: the first row is the name (empty first row = no name), the rest are the rows
+to write, and the file is read and edited by the editor and the file list that
+already exist. That deletes the parser, the alias table and the caps, and the
+"preset editing" story becomes "edit this file". What it costs: one small file
+per entry (the list is longer, and there is no single page that shows them all),
+a boot that opens as many files as there are entries, and a default set that has
+to keep living in flash for a card with no folder. The address space is the key
+paths themselves - three levels at nine keys is 729 addresses, nearly all of them
+empty, so a full static list is possible but is not the reason to do this; the
+reason is that the map stops needing a language.
+
+Not decided, not implemented: recorded for the next round in `nc/TODO.md`.
+
 ## Checks
 
 `python tools\test_nc_ui.py` builds the NC screen for the desktop and then runs

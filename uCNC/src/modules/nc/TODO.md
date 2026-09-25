@@ -1126,15 +1126,24 @@ possible today and only needs saying out loud.
   (coolant `M8`/`M9`, work offsets `G54`-`G59`, program end `M0`/`M30`, ...), and
   whether a section dropped for want of a record should report itself instead of
   vanishing quietly.
-- [ ] **A `presets/` folder beside the file.** Idea from the bench: one file per
-  entry, the *name* being the key path (`41`, `16`, `11`) and the *content* the
-  rows to insert - no `[id]`/`name=`/`line=` parsing, no 24/8 ceiling, and the
-  file list already walks folders. It would fill the same record table
-  (`nc_preset_apply_section()`), so the pads, the editor, RUN and the checks stay
-  exactly as they are; what has to be settled first is the name an entry reads as
-  (the file name is the path, not the label), the ordering, and whether the
-  folder *replaces* the single file or lives beside it. Not implemented - the
-  single file stays the owner until that is decided.
+- [ ] **A `presets/` folder - the entry as an address, and the file as the
+  format.** The bench put it plainly: an entry is *an address, a name that may be
+  empty and the rows it writes, which may not* - everything else in the current
+  file is how that map is spelled. So name the file after the address
+  (`presets\42` is G7X `4` then `2`), make the first row the name (an empty first
+  row, no name) and the rest the rows to write, and the panel needs no parser at
+  all: the editor and the file list that already exist *are* the preset editor,
+  and the alias table, the 24/8 caps and the `[id]`/`name=`/`line=` language go
+  away with it. It *deletes* code rather than adding any, which is the test the
+  current shape fails: as it stands it is scaffolding around a one-to-one map.
+  What has to be kept whatever is decided: the address is the key path, the rows
+  are mandatory, a default set has to live in flash for a card with no folder,
+  and a row is drawn at the panel's own width. What it costs: one small file per
+  entry (a longer list, no page that shows them all), a settle that opens as
+  many files as there are entries, and the folder-versus-single-file question -
+  decided by whether the card's entries are read through `nc_files` at all.
+  `docs/nc-preset-file.md` has the longer note. Not implemented; the single file
+  stays the owner until this is decided.
 - [ ] **Nothing can type a character the keypad does not have.** The editor takes
   digits into the selected word and inserts whole entries from the 3x3 and the
   card; letters and symbols are unreachable (`%`, `(`, `)`, `;`, `[`, `]`, a

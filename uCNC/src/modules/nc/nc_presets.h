@@ -13,6 +13,12 @@ extern "C" {
    path builder inserting an end mark, the editor's menus, and the compiled
    table - and a literal that missed the note is a feature that quietly stops
    working (which is how the setup block went unreachable in the first place). */
+/* An id is an address and nothing more: at each one there is a name that may be
+   empty and the rows the key writes, which may not. The file format, the alias
+   table below the ids and the fixed-size record table are how that map is
+   *spelled* today; `docs/nc-preset-file.md` ("The shape this is, and the shape it
+   could collapse to") keeps the design honest about which parts are load-bearing
+   and which are scaffolding around a one-to-one map. */
 #define NC_PRESET_ID_SETUP     16
 #define NC_PRESET_ID_END       46
 #define NC_PRESET_ID_INS       11

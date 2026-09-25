@@ -20,9 +20,11 @@ screen is left where it is for now.
 ## What the operator sees
 
 - The program, one word picked at a time.
-- **One 3x3 pad, pinned in the bottom right.** It is the only menu there is:
-  no footer strip, no submenu tables, no floating helper, and no helper line
-  written into the document.
+- **One 3x3 pad, pinned in the bottom right.** It is the only menu there is: no
+  footer strip and no submenu tables. The pad keeps the helper's own trick -
+  opening it writes its name as a line at the cursor, which is both the title
+  and the place the entry lands (the bench kept this one: *"this one is not big
+  and we may preserve it"*).
 - A DRO that is **not on screen unless the machine is doing something**: in RUN
   it floats over the preview; idle, the pane has the whole body.
 
@@ -63,23 +65,29 @@ things without a second mechanism.
 | dropped | lines today |
 | --- | --- |
 | the footer strips, the submenu tables, every per-screen key table (`nc_menu.c`) | 195 |
-| the modal helper, its label line written into the document, the accept/cancel bookkeeping (part of `nc_editor.c`) | ~450 |
 | the per-screen usage/label tables, the strip's toggle logic (part of `nc_visual.c`) | ~700 |
 | the preview's second dialect (the `#if NC_PREVIEW_DIN_*` variants) | ~600 |
 | `nc_feedback.c`, and the stub keys (`2 TOOL` -> `2 EDIT` sets a status line and returns - `nc_visual.c:697`) | 35 + 20 |
+
+**Kept, against that list:** the pad's helper and the label line it writes into
+the document. It is small, and it is two things at once - the pad's name where
+the operator is looking, and the line the entry lands on - so it is not counted
+as a saving (the bench: *"this one is not big and we may preserve it, does not
+count its lines up here"*). Its own ~450 lines are why `nc2.c`'s target below is
+larger than a bare editor would need.
 
 The six keys `nc` hardcodes inside pads are not lost by dropping them:
 `21` SELECT, `31` the `G` field, `44` Q and `45` N are each *a lone letter* -
 `T`, `G`, ` Q`, ` N` - which a file can write exactly like any other entry, and
 the editor's "a letter with no number is a field waiting for a number" rule does
 the rest. That leaves the contour pad (`47`) as the only key that computes
-rather than writes; see the open questions.
+rather than writes - and it is files too (see *Settled from the bench*, 4).
 
 ## Files and budget
 
 | file | target | what it owns |
 | --- | --- | --- |
-| `nc2.c` | 700 | the document: words, fields, the value editor's keys |
+| `nc2.c` | 950 | the document: words, fields, the value editor's keys, the pad's helper and its label line |
 | `nc2_presets.c` | 450 | addresses -> files: names, rows, the pad's tree |
 | `nc2_files.c` | 350 | the card: listing, load, save, new, delete |
 | `nc2_emit.c` | 700 | the sender: stream, G7x feeding, `U`/`W` |
@@ -92,7 +100,7 @@ rather than writes; see the open questions.
 | `nc2_preview.c` | 1 100 | stock, contour, dimensions, the live tool |
 | `nc2_draw.c` | 450 | primitives, glyphs, the 3x3 grid |
 | headers, `nc2_layout.h` | 350 | the boundary and the shared numbers |
-| **total** | **6 700** | (the block scan is g7x's now; 300 of slack) |
+| **total** | **6 950** | (the block scan is g7x's now; the helper is kept) |
 
 Its own test target, `tools/test_nc2.py`, builds and runs the module against the
 same virtual machine the station uses (AGENTS.md 7), and `nc2/TESTING.md` keeps

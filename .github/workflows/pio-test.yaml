@@ -38,7 +38,17 @@ jobs:
           pip install "platformio==6.1.18"
 
       - name: Run Linux unit tests
-        run: pio test -e EMULATOR_LINUX_TEST
+        shell: bash
+        run: |
+          # The reason goes into an annotation as well as the log: the log needs
+          # rights a reader may not have, and this job builds the whole tree.
+          if ! pio test -e EMULATOR_LINUX_TEST > pio-test.log 2>&1; then
+            cat pio-test.log
+            reason=$(tail -40 pio-test.log | tr '\n' ' ' | tr -d '\r' | sed 's/%/%25/g' | cut -c1-1200)
+            echo "::error title=EMULATOR_LINUX_TEST::${reason}"
+            exit 1
+          fi
+          tail -20 pio-test.log
 
   build:
     name: Build & Test Firmware
@@ -95,4 +105,12 @@ jobs:
           pip install "platformio==6.1.18"
 
       - name: Run PlatformIO Build
-        run: pio run -e ${{ matrix.boards }}
+        shell: bash
+        run: |
+          if ! pio run -e ${{ matrix.boards }} > pio-build.log 2>&1; then
+            cat pio-build.log
+            reason=$(tail -40 pio-build.log | tr '\n' ' ' | tr -d '\r' | sed 's/%/%25/g' | cut -c1-1200)
+            echo "::error title=${{ matrix.boards }}::${reason}"
+            exit 1
+          fi
+          tail -10 pio-build.log

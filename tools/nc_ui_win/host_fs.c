@@ -39,9 +39,9 @@ static fs_t g_drive;
 
    uCNC's fs layer splits the drive letter off before it calls the driver, so
    the paths that arrive here are already drive relative - "/nc/files",
-   "/presets.txt", and "/" for the drive root - exactly the shape FatFs sees on
-   the machine. A leading "/D" is tolerated too, so the driver can also be fed
-   a full uCNC path from a test. */
+   "/presets/41.txt", and "/" for the drive root - exactly the shape FatFs sees
+   on the machine. A leading "/D" is tolerated too, so the driver can also be
+   fed a full uCNC path from a test. */
 static bool host_path(const char *path, char *out, size_t out_sz)
 {
     size_t i = 0u;

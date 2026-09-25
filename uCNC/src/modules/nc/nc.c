@@ -163,8 +163,9 @@ bool nc_path_text(const char *path)
         return false;
     }
     /* Everything the panel can hold as text: a program, the tool table, and the
-       plain text the operator keeps beside them (`presets.txt`). Anything else
-       on the card stays out of the list rather than opening as garbage. */
+       plain text the operator keeps beside them - the entries in `/D/presets`
+       included. Anything else on the card stays out of the list rather than
+       opening as garbage. */
     return nc_path_supported(path) || nc_has_suffix_ci(path, ".txt");
 }
 
@@ -186,7 +187,8 @@ nc_result_t nc_load_file(nc_document_t *doc, const char *path)
         return NC_ERR_BAD_ARG;
     }
     /* A program or the text beside one: the editor shows either, and the file
-       list carries both on purpose (the preset file is the text this is for).
+       list carries both on purpose (the card preset entries are the text this is
+       for).
        The preview parses only programs, and RUN refuses text, so widening this
        does not make a `.txt` runnable. */
     if (!nc_path_text(path)) {
@@ -281,7 +283,7 @@ nc_result_t nc_save_file(nc_document_t *doc, const char *path)
         return NC_ERR_BAD_ARG;
     }
     /* Anything the panel could open, it can save: the operator edits the text
-       it showed them (`presets.txt` included), not only programs. */
+       it showed them - the preset entries included - not only programs. */
     if (!nc_path_text(save_path)) {
         return NC_ERR_UNSUPPORTED_FILE;
     }

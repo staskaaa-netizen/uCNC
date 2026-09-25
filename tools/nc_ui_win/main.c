@@ -39,7 +39,7 @@
    nc_ui --state          print what the machine is doing now
    nc_ui --version        print which build this exe is
    nc_ui --fstest         list /D through the firmware fs_* API
-   nc_ui --presettest     check the /D/presets.txt contract
+   nc_ui --presettest     check the /D/presets entries contract
    nc_ui --streamtest     check the panel's one-shot blocks reach the reader
    nc_ui --buildertest    walk a contour with the 3x3 path builder
    nc_ui --dirtytest      a key that changes the screen asks for a repaint

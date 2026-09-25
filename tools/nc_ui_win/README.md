@@ -222,9 +222,9 @@ held key visible at all.
 Keys that mean the same thing on every document screen are keys, not slots: `0`
 opens the file list on EDIT, TOOLS and RUN, and `B`/`C` step the list, so the
 strip keeps only what the screen itself has to say. The list carries text files
-beside the programs (`presets.txt` included) - they open in the editor, but only
-the program extensions are read as G-code, so a text file gets no preview and no
-RUN.
+beside the programs (the preset entries in `presets\` are text files) - they
+open in the editor, but only the program extensions are read as G-code, so a
+text file gets no preview and no RUN.
 
 The pad also reports the key the way the keypad driver does: down while it is
 held and up when it comes up (a pad click holds the key until the mouse button
@@ -277,7 +277,7 @@ MODE key still cycles for the machine.
   and gets the folder created, that a file replaces its address - name and rows -
   that an empty first row keeps the compiled name, that a free address becomes an
   entry (how a word the pads do not offer is added), that a file with no rows is
-  not an entry, and that the `presets.txt` this replaced is not read any more.
+  not an entry, and that an address outside the pads' space is ignored.
   `docs/nc-preset-file.md` is the contract.
 - `--streamtest` checks the two blocks a jog queues both reach the reader.
 - `--padtest` checks the pad is the machine's 4x4 matrix and that every footer

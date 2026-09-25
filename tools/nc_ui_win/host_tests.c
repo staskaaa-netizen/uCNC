@@ -575,10 +575,10 @@ static int host_filetest(void)
     }
 
     /* Text files are text: the list carries them (the frame in
-       tmp\nc-ui-show\ROOT-list shows `presets.txt` at /D) and the editor can
-       open and save them, but only the program extensions are read as G-code -
-       no preview parse, no RUN. */
-    if (!nc_path_text("presets.txt") || nc_path_supported("presets.txt") ||
+       tmp\nc-ui-show\ROOT-list shows the card's text files at /D) and the
+       editor can open and save them, but only the program extensions are read
+       as G-code - no preview parse, no RUN. */
+    if (!nc_path_text("notes.txt") || nc_path_supported("notes.txt") ||
         !nc_path_text("facing.nc") || !nc_path_supported("facing.nc")) {
         puts("filetest: FAIL the text/program split is wrong for .txt or .nc");
         failures++;
@@ -587,7 +587,7 @@ static int host_filetest(void)
     }
 
     /* And the open itself: the list's OPEN used to refuse a `.txt` outright
-       ("unsupported NC file"), which left the preset file listed but not
+       ("unsupported NC file"), which left a text file listed but not
        reachable. The editor opens it, saves it, and the preview draws its text
        rather than one "no preview" caption - one ink row would be that caption. */
     {
@@ -880,14 +880,7 @@ static int host_state(void)
     return 0;
 }
 
-/* Headless check of the NC preset-file contract, driven through the same
-   fs_* API the firmware uses:
-
-     1. no /D/presets.txt          -> the compiled presets are written out
-     2. an edited file             -> the file wins over the compiled default
-     3. an unparsable file         -> compiled default stays in use and the
-                                      user's text is left alone to be fixed
-*/
+/* Write a file on the card through the same fs_* API the firmware uses. */
 static bool host_fs_write_text(const char *path, const char *text)
 {
     size_t len = strlen(text);
@@ -930,11 +923,7 @@ static bool host_preset_line_is(int id, const char *expected)
      6. a row that starts with a space continues the row above instead of
         starting one;
      7. a file with a name and no rows is not an entry;
-     8. an address outside the pads' space is not an entry either;
-     9. and the `presets.txt` this replaced is not read any more.
-
-   The old format's rules - the aliases, "an id the file omits keeps its compiled
-   text", "a section without a name is skipped" - are gone with the parser. */
+     8. an address outside the pads' space is not an entry either. */
 static int host_presettest(void)
 {
     static const char *const default_od = "G71 U0 R0 X0 Z0 F0 P0 Q0";
@@ -1120,25 +1109,7 @@ static int host_presettest(void)
         }
     }
 
-    /* 9. the file this replaced is not read any more: its sections are ordinary
-          text on the card now, and the addresses answer as if it were not
-          there. */
-    if (!host_fs_write_text("/D/presets.txt",
-                            "[41]\nname=OLD\nline=G71 U9 R9 X9 Z9 F9 P9 Q9\n")) {
-        puts("presettest: FAIL could not write the old presets.txt");
-        failures++;
-    } else {
-        (void)fs_remove("/D/presets/41.txt");
-        (void)nc_presets_init();
-        if (!host_preset_line_is(41, default_od)) {
-            puts("presettest: FAIL the old presets.txt is still read");
-            failures++;
-        } else {
-            puts("presettest: PASS presets.txt is not read any more");
-        }
-    }
-
-    /* And the one entry that writes nothing at all: `1 OPS` then `1` is a blank
+    /* The one entry that writes nothing at all: `1 OPS` then `1` is a blank
        line, which is an entry like any other. */
     if (!host_preset_line_is(11, "")) {
         puts("presettest: FAIL the new-line entry is not a blank line");

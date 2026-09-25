@@ -40,7 +40,7 @@ extern "C" {
 
 /* Boot call: compiled presets, then whatever the SD card can answer with. */
 bool nc_presets_init(void);
-/* Retried from the NC input path until the preset file is settled. */
+/* Retried from the NC input path until the folder is settled. */
 bool nc_presets_sync(void);
 bool nc_insert_preset_id(nc_document_t *doc, int id);
 /* The name the card gives the entry at `id` (`name=`), which is what a key is

@@ -547,7 +547,7 @@ static uint8_t g_nc_editor_unsaved_arm;
 bool nc_editor_save_current(nc_editor_ctx_t *ctx)
 {
     /* Anything the panel can open, it can save and come back to: the operator
-       edits the text it showed them (`presets.txt` included), not only
+       edits the text it showed them - the preset entries included - not only
        programs. `nc_save_file()` has drawn the same line. */
     if (ctx->doc->dirty && nc_path_text(ctx->doc->path) &&
         nc_save_file(ctx->doc, ctx->doc->path) != NC_OK) {

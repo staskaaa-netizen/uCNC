@@ -1530,7 +1530,7 @@ static void nc_visual_handle_key_impl(nc_visual_key_t key)
     /* A message is transient: the next key press hands the line back to the
        normal status text, so nothing has to be dismissed. */
     nc_message_clear();
-    /* The SD card is mounted from the main loop, so the preset file can only
+    /* The SD card is mounted from the main loop, so the preset entries can only
        be read or seeded once the machine has been running. This is the first
        point where the drive is expected to answer. */
     (void)nc_presets_sync();

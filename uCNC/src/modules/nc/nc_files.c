@@ -149,7 +149,7 @@ bool nc_files_refresh(const char *dir)
         if (!nc_files_valid_entry_name(name)) {
             continue;
         }
-        /* Text files show up and open (the preset file, notes), but only the
+        /* Text files show up and open (a preset entry, notes), but only the
            program extensions are read as G-code - see nc_path_supported(). */
         if (!info.is_dir && !nc_path_text(name)) {
             continue;

@@ -80,30 +80,17 @@ knows about still writes what the file says, because the rows are read then).
 
 ## What this replaced
 
-Until 2026-09-25 the entries lived in one file, `/D/presets.txt`, in a format
-this module parsed:
+Until 2026-09-25 the entries lived in one file at the card root, in a format this
+module parsed. That format, its parser, an alias table for addresses whose paths
+had moved, a fixed table of 24 records with a cap, and a step that wrote the
+compiled defaults out when the file was missing are all gone: the map above never
+needed any of it. The bench said it in one line - *"it all now is good and smelly
+scaffolding, while this all overall is just basically addresses."*
 
-```text
-[41]
-name=OD ROUGH
-line=G71 U0 R0 X0 Z0 F0 P0 Q0
-```
-
-Every part of that was scaffolding around the map above: a text format to parse,
-an alias table (`10`, `44`, `80` named their entry after the pads were
-renumbered), a fixed table of 24 records of 8 rows of 96 bytes, a rule that a
-section arriving with the table full disappeared, and a
-write-the-defaults-when-missing step. The map itself never needed any of it -
-and the bench was blunt about it: *"it all now is good and smelly scaffolding,
-while this all overall is just basically addresses."*
-
-The limits went with the format. What is left of the fixed cost is a name per
-address in RAM, and what is left of the writes is one folder creation.
-
-**A card that still has the old `presets.txt`**: it is not read any more. Its
-sections are ordinary text on the card now - the entries are moved by copying
-their rows into `presets\<address>.txt`, and the old file can be deleted. There
-is no automatic migration, deliberately: it would keep the parser alive.
+Nothing reads that old file now, and nothing writes a defaults file at boot: the
+only write left is the folder creation. A card that still carries the old file
+keeps it as ordinary text; its entries are moved by hand, because a migration
+would be the parser again.
 
 ## Checks
 
@@ -114,5 +101,5 @@ file replaces its address, both halves; an empty first row keeps the compiled
 name; an address no compiled entry uses becomes an entry; every row is written
 in order; a row that starts with a space continues the row above; a file with no
 rows is not an entry; an address outside `10`-`69` is not one either; and the old
-`presets.txt` is ignored. Booting with a card, without a card and with a card
-inserted later remain bench items.
+file this replaced is not read. Booting with a card, without a card and with a
+card inserted later remain bench items.

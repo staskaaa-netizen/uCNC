@@ -1,12 +1,10 @@
-"""Build the Win32 NC panel shell, render one frame and check the preset file.
+"""Build the Win32 NC panel shell, render one frame and run its checks.
 
 The shell runs the real NC screen code (modules/nc/nc_visual.c) against the host
 LVDS backend, so the dumped BMP is the firmware layout. It also dumps the
 floating 3x3 helper (EDIT, then footer slot 4) by replaying the machine's own
-key path. The same binary then checks the /D/presets.txt contract (write the
-compiled default when missing, use an edited file, fall back on an unparsable
-one) through the firmware fs_* API, in a scratch root so the repository tree
-stays clean.
+key path. The same binary then runs every headless check through the firmware
+fs_* API in a scratch root, so the repository tree stays clean.
 """
 from pathlib import Path
 import os
@@ -140,8 +138,8 @@ if __name__ == "__main__":
     if run.returncode or "presettest: PASS" not in run.stdout:
         fail("FAIL preset file contract",
              run.stdout[-1500:] or run.stderr[-1500:])
-    if not (root / "presets.txt").exists():
-        fail(f"FAIL {root / 'presets.txt'} was not created")
+    if not (root / "presets").is_dir():
+        fail(f"FAIL {root / 'presets'} was not created")
 
     run = subprocess.run([str(exe), "--files", str(OUT / "stream-root"),
                           "--streamtest"], capture_output=True, text=True)

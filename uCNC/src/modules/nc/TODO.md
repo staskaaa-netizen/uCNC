@@ -279,8 +279,8 @@ The rest of the panel pass that followed:
   `3 G`, and the four-line setup (the way every sample file and the fixture
   start) could not be written from the panel at all.
   - OPS now has `6 SETUP` (`g_nc_submenu_ops`), which inserts the block at the
-    cursor through the same preset path the file uses, so an edited `[10]` in
-    `/D/presets.txt` is what the operator gets.
+    cursor through the same preset path the card uses, so the operator's own
+    `presets\16.txt` is what they get.
   - It is named `SETUP`, not `STOCK`: `STOCK` is the preview footer's display
     toggle, and one word meaning two things on two screens is how a panel gets
     misread.
@@ -643,10 +643,9 @@ The rest of the panel pass that followed:
   the cycle reads its range from `P` and `Q`, so the word on the header line was
   one this dialect ignores - the bench asked why it was there. Removed from
   `nc_vocab_gcode_template()` (71/72), the parameter legend ("U R X Z F P Q")
-  and the compiled `[41]`/`[42]`/`[43]` presets. **A card whose `presets.txt`
-  already defines those sections keeps its own text** - the file owns the
-  entries it names - so the old `N0` stays until that section is edited on the
-  panel or the file is deleted and rewritten from the compiled defaults.
+  and the compiled `41`/`42`/`43` entries. **A card that has its own file for one
+  of those addresses keeps its own text** - the file owns the entry it names - so
+  the old `N0` stays until that file is edited or deleted.
 
 Two other things came with that session. RUN's `B`/`C` line keys now mark the
 screen for repaint: they moved the run line and returned without the flag, so
@@ -771,7 +770,7 @@ What the panel shows today:
   views, so what the operator turns off on the full body stays off when the code
   comes back - and back on again the same way.
 - [x] Text files are text. The file list carries them beside the programs - the
-  panel's own `/D/presets.txt` included - and the editor opens and saves them
+  card's preset entries included - and the editor opens and saves them
   (`nc_path_text()`), but only the program extensions are read as G-code
   (`nc_path_supported()`): a `.txt` gets no preview parse and RUN refuses it
   with `Not a program file`. The preview says `Text file - no preview` instead
@@ -973,8 +972,9 @@ Leftovers from this session, in the order they came up:
   Software-verified in `--stoptest` (the machine is given `S1500`, `M3` then
   sends `M3 S1500`, and the state file carries `SPINDLE=1500`). The panel still
   has no key of its own for `S`: with none, the modal one comes from a program
-  (or the state file, which the operator can edit like `presets.txt`); a key (or
-  a third value in the `#` cycle) is the keyboard decision already filed above.
+  (or the state file, which the operator can edit like any text on the card); a
+  key (or a third value in the `#` cycle) is the keyboard decision already filed
+  above.
 - [ ] 3x3 helper: no animation. Decided ("skip animation, it is weird and
   slow") - the helper just appears under its line.
 - [ ] 3x3 helper keys still have square corners. The footer strip's keys are cut
@@ -1726,7 +1726,7 @@ that the NC module's total source size decreased.
 - [x] Keep numeric NC word lookup with the NC parser in `nc.c`, not preview:
   preview and the path builder share `nc_line_word_float()`. The compiled
   G71/G72 preset rows also come from the vocabulary templates, while
-  `/D/presets.txt` remains the operator-editable override. Preview's layer key
-  reads `TRACE`; G7X's contour-entry action reads `DRAW`.
+  the card's `/D/presets` entries remain the operator-editable override.
+  Preview's layer key reads `TRACE`; G7X's contour-entry action reads `DRAW`.
 - [ ] Persist cursor position across reboot; current preservation is in-session.
 - [x] Hardware checklist exists in TESTING.md; executing it remains open.

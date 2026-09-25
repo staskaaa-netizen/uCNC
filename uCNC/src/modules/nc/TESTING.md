@@ -276,7 +276,7 @@ Use this as a short hardware pass list while NC is still pre-alpha.
   `--filetest` passes on a CRLF copy of the NC fixture.
 - `0` opens the file list on EDIT, TOOLS and RUN (no footer slot, by design);
   MANUAL's `0 ZERO` still wins there. In the list, browse up to the card root:
-  the text files (`presets.txt`) must be listed beside the programs.
+  the text files must be listed beside the programs (`presets\` among them).
 - Opening a `.txt` shows it as text, and the preview shows the same text
   read-only (line numbers plus the rows, `nc_preview_text_file()`) instead of a
   blank "no preview" pane: the preset file is the file this is for, and the
@@ -452,16 +452,17 @@ Use this as a short hardware pass list while NC is still pre-alpha.
   Software-verified by `test_nc_ui.py --dirtytest`, which also checks the other
   half: while a run is armed the panel keeps asking to draw by itself, and that
   periodic frame is what carries the cursor through a stream of emitted lines.
-- Presets: boot with a card and no `/D/presets.txt`; after the first key press
-  the file exists and opens as readable text (`[41]` / `name=` / `line=`).
-- Presets: edit `line=` for `41`, restart, and check the OD entry in the
-  floating 3x3 inserts the edited text.
+- Presets: boot with a card that has no `presets` folder; the folder appears and
+  the pads still insert the compiled entries. `--presettest` covers this.
+- Presets: put a file at `presets\41.txt` (first row a new name, then the rows),
+  restart, and check the OD entry in the floating 3x3 reads the new name and
+  inserts the file's rows; delete the file and the compiled entry is back.
+- Presets: give a free address a file (`presets\12.txt` with `COOLANT` and `M8`)
+  and check OPS `2` offers it - this is how a word the pads do not offer is
+  added, with no code change.
 - Presets: boot with no card, insert the card afterwards, press a key, and check
-  the file appears without a reboot. The screen must keep working with the
-  compiled presets while the card is absent.
-- Presets: damage the file (delete every `line=`), restart, and check the OD
-  entry still inserts the compiled text **and** the damaged file is still there
-  to repair.
+  the folder is found without a reboot. The screen must keep working with the
+  compiled entries while the card is absent.
 
 ## Preview
 
@@ -502,12 +503,12 @@ Use this as a short hardware pass list while NC is still pre-alpha.
   drawing.
 - `8 FINISH` in the `G7X` submenu inserts `G70 P0 Q0` where the cursor is (the
   helper's labelled line is replaced by it), the way `6 G80` inserts the end
-  mark, **including on a card whose `/D/presets.txt` predates `[44]`**: the file
-  defines the sections it names and ids it omits keep their compiled text
-  (`--presettest` checks a file with only `[41]` still offering `[43]`/`[44]`).
-  The reverse is also true and worth knowing at the bench: a section the file
-  *does* define wins, so an old `[41]` keeps the text it has (edit that section
-  on the panel, or delete the file to have it written from the compiled set).
+  mark, **including on a card that has no entry files at all**: an address with
+  no file keeps its compiled entry (`--presettest` checks that a folder holding
+  only `41.txt` still offers `43` and `48`). The reverse is also true and worth
+  knowing at the bench: a file that *does* exist wins, so `41.txt` writes what it
+  says - edit that file on the panel or on the PC, or delete it to go back to
+  the compiled entry.
 - Writing a P/Q range on the panel: `4 G7X` then `5 N` on each profile row puts
   `N0` at the start of the line and picks it, so the number is typed straight in
   (`N100 G1 X20 Z0`); `4 Q` on the header picks the `Q0` the preset already

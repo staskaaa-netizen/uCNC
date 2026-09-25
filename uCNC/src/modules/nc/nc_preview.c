@@ -1451,7 +1451,7 @@ static bool nc_preview_live_stock(const nc_preview_ctx_t *ctx,
 
 /* A file that is not a program, shown read-only: the same rows the editor
    would show, with their line numbers, as many as fit. There is nothing to draw
-   from such a file (the preset file is the one this is for), so the pane hands
+   from such a file (the preset entries are what this is for), so the pane hands
    the operator the text instead of a blank "no preview". */
 static void nc_preview_text_file(const nc_document_t *doc, int x, int y, int w, int h)
 {
@@ -1530,7 +1530,7 @@ void nc_preview_draw(const nc_preview_ctx_t *ctx,
 
     if (doc && doc->path[0] && !nc_path_supported(doc->path)) {
         /* Text is not a program. The preview must not read it as G-code - the
-           preset file is the file this is for - so it shows the text itself,
+           preset entries are what this is for - so it shows the text itself,
            which is what the operator opened it for. */
         if (clear_bg) {
             lvds_draw_fill_rect(x, y, w, h, NC_VISUAL_PREVIEW_BG);

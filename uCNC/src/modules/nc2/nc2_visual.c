@@ -4,6 +4,7 @@
 #include "nc2_boot.h"
 #include "nc2_draw.h"
 #include "nc2_files.h"
+#include "nc2_layout.h"
 #include "nc2_presets.h"
 
 #include "../../cnc.h"
@@ -12,26 +13,12 @@
 #include <stdio.h>
 #include <string.h>
 
-/* The panel is the machine's 800x600 and nc2 uses all of it: a header line, the
-   program down the left, the pad's corner on the right. There is no footer - the
-   pad *is* the keys - so the program gets the room the strip used to take. */
-#define NC2_HEADER_H 26
-#define NC2_PANE_X 8
-#define NC2_PANE_Y (NC2_HEADER_H + 6)
-#define NC2_PANE_W 524
-#define NC2_LINE_H 22
-#define NC2_ROWS ((LVDS_HSTX_HEIGHT - NC2_PANE_Y - 8) / NC2_LINE_H)
-
-#define NC2_PAD_W 234
-#define NC2_PAD_H 216
-#define NC2_PAD_X (LVDS_HSTX_WIDTH - NC2_PAD_W - 10)
-#define NC2_PAD_Y (LVDS_HSTX_HEIGHT - NC2_PAD_H - 10)
-
 static nc2_document_t g_doc;
 static char g_address[NC2_ADDR_MAX + 1];
 static char g_status[64];
 static char g_labels[9][NC2_PRESET_ROW_MAX];
 static bool g_dirty;
+static bool g_list;                 /* the file list is the screen */
 
 static void nc2_statusf(const char *text)
 {
@@ -84,6 +71,11 @@ bool nc2_visual_open(const char *path)
 const char *nc2_visual_path(void)
 {
     return g_doc.path;
+}
+
+const char *nc2_visual_screen_name(void)
+{
+    return g_list ? "FILES" : "EDIT";
 }
 
 bool nc2_visual_save(void)
@@ -186,6 +178,85 @@ void nc2_visual_key(char key)
 {
     nc2_key_t editor_key = NC2_KEY_NONE;
 
+    /* The file list is its own screen: a picker, with the keys a picker needs and
+       no pad (the pad's digits name a new file while one is being made). */
+    if (g_list) {
+        char path[NC2_PATH_MAX];
+        const nc2_file_entry_t *entry;
+
+        if (nc2_file_new_active()) {
+            if (key >= '0' && key <= '9') {
+                nc2_file_new_digit(key);
+            } else if (key == '*') {
+                nc2_file_new_end();
+                nc2_statusf("New file cancelled");
+            } else if (key == '#' || key == 'D') {
+                if (nc2_file_new_name()[0] &&
+                    nc2_file_create(nc2_file_new_name(), ".nc", path,
+                                    sizeof(path))) {
+                    nc2_file_new_end();
+                    if (nc2_visual_open(path)) {
+                        g_list = false;
+                        nc2_statusf("Created and opened");
+                    }
+                } else {
+                    nc2_statusf("Give the new file a number");
+                }
+            }
+            g_dirty = true;
+            return;
+        }
+        switch (key) {
+        case 'B':
+            nc2_file_step(-1);
+            break;
+        case 'C':
+            nc2_file_step(1);
+            break;
+        case 'D':
+        case '#':
+            if (!nc2_file_selected_path(path, sizeof(path))) {
+                nc2_statusf("Nothing to open");
+                break;
+            }
+            entry = nc2_file_entry(nc2_file_selected());
+            if (entry && entry->is_dir) {
+                if (!nc2_file_scan(path)) {
+                    nc2_statusf("Cannot read that folder");
+                }
+                break;
+            }
+            if (nc2_visual_open(path)) {
+                g_list = false;
+            }
+            break;
+        case '5':
+            nc2_file_new_begin();
+            nc2_statusf("New file: a number, # for OK");
+            break;
+        case '6':
+            if (nc2_file_delete_selected()) {
+                nc2_statusf("Deleted");
+            } else {
+                nc2_statusf("Cannot delete that");
+            }
+            break;
+        case '8':
+            if (!nc2_file_scan(nc2_file_dir())) {
+                nc2_statusf("Refresh failed");
+            }
+            break;
+        case '*':
+        case '0':
+            g_list = false;
+            nc2_statusf("");
+            break;
+        default:
+            break;
+        }
+        g_dirty = true;
+        return;
+    }
     if (g_doc.line_count == 0u) {
         return;                     /* no program: the keys have nothing to act on */
     }
@@ -196,8 +267,15 @@ void nc2_visual_key(char key)
     case '#': editor_key = NC2_KEY_ACCEPT; break;
     case '*': editor_key = NC2_KEY_DELETE; break;
     case '0':
-        /* The file list. It is the next piece of the module, and until it is
-           here the key does nothing rather than something surprising. */
+        /* The card, from its root: the programs, and the preset entries beside
+           them, which are text files the same editor opens. */
+        if (nc2_file_scan("/D")) {
+            g_list = true;
+            nc2_statusf("");
+        } else {
+            nc2_statusf("The card is not answering");
+        }
+        g_dirty = true;
         return;
     case '1': case '2': case '3': case '4':
     case '5': case '6': case '7': case '8': case '9':
@@ -244,9 +322,25 @@ static void nc2_draw_header(void)
     const char *path = g_doc.path[0] ? g_doc.path : "(no program)";
 
     nc2_fill(0, 0, LVDS_HSTX_WIDTH, NC2_HEADER_H, nc2_col_header());
-    snprintf(line, sizeof(line), "EDIT  %s%s", path, g_doc.dirty ? " *" : "");
+    snprintf(line, sizeof(line), "%s  %s%s", g_list ? "FILES" : "EDIT", path,
+             g_doc.dirty ? " *" : "");
     nc2_text_clip(8, 6, line, (LVDS_HSTX_WIDTH - 16) / nc2_col_width(LVDS_FONT_NORMAL),
                   nc2_col_text(), nc2_col_header(), LVDS_FONT_NORMAL);
+}
+
+/* The two panes: the program on the left, the drawing on the right, split where
+   nc splits them. The preview's own drawing is the next piece of the module, so
+   its pane is here, framed, and the pad sits in its corner meanwhile. */
+static void nc2_draw_panes(void)
+{
+    nc2_fill(NC2_LEFT_PANE_X, NC2_PANE_Y, NC2_LEFT_PANE_W, NC2_PANE_H,
+             nc2_col_bg());
+    nc2_frame(NC2_LEFT_PANE_X, NC2_PANE_Y, NC2_LEFT_PANE_W, NC2_PANE_H,
+              nc2_col_dim());
+    nc2_fill(NC2_RIGHT_PANE_X, NC2_PANE_Y, NC2_RIGHT_PANE_W, NC2_PANE_H,
+             nc2_col_bg());
+    nc2_frame(NC2_RIGHT_PANE_X, NC2_PANE_Y, NC2_RIGHT_PANE_W, NC2_PANE_H,
+              nc2_col_dim());
 }
 
 /* One row of the program: its number, then the text - and, on the row the cursor
@@ -259,20 +353,20 @@ static void nc2_draw_row(size_t index, int y)
     lvds_color_t bg = cursor ? nc2_col_select() : nc2_col_bg();
     int col_w = nc2_col_width(LVDS_FONT_NORMAL);
     char number[8];
-    int x = NC2_PANE_X + 4;
+    int x = NC2_LEFT_PANE_X + NC2_LINE_NO_PAD;
     int cols;
     nc2_field_t fields[NC2_MAX_FIELDS];
     int count;
     int picked = -1;
 
     if (cursor) {
-        nc2_fill(NC2_PANE_X, y - 2, NC2_PANE_W, NC2_LINE_H - 2,
+        nc2_fill(NC2_LEFT_PANE_X, y - 2, NC2_LEFT_PANE_W - 2, NC2_ROW_H - 2,
                  nc2_col_select());
     }
     snprintf(number, sizeof(number), "%3u", (unsigned)(index + 1u));
     nc2_text(x, y, number, nc2_col_dim(), bg, LVDS_FONT_NORMAL);
     x += 4 * col_w;
-    cols = (NC2_PANE_W - (x - NC2_PANE_X)) / col_w;
+    cols = (NC2_LEFT_PANE_W - (x - NC2_LEFT_PANE_X) - 4) / col_w;
     if (cols <= 0) {
         return;
     }
@@ -308,13 +402,49 @@ static void nc2_draw_program(void)
     size_t first = 0u;
     size_t i;
 
-    nc2_fill(NC2_PANE_X, NC2_PANE_Y, NC2_PANE_W,
-             LVDS_HSTX_HEIGHT - NC2_PANE_Y - 8, nc2_col_bg());
-    if (g_doc.cursor >= NC2_ROWS) {
-        first = g_doc.cursor - NC2_ROWS + 1u;
+    if (g_doc.cursor >= NC2_CODE_ROWS) {
+        first = g_doc.cursor - NC2_CODE_ROWS + 1u;
     }
-    for (i = first; i < g_doc.line_count && i - first < NC2_ROWS; i++) {
-        nc2_draw_row(i, NC2_PANE_Y + (int)(i - first) * NC2_LINE_H);
+    for (i = first; i < g_doc.line_count && i - first < NC2_CODE_ROWS; i++) {
+        nc2_draw_row(i, NC2_PANE_Y + 4 + (int)(i - first) * NC2_ROW_H);
+    }
+}
+
+/* The card: what is in the folder the operator is looking at, the one picked lit,
+   and the name being typed for a new file. It is the whole screen while it is up -
+   a picker, with no pad: the digits are the new file's name there. */
+static void nc2_draw_list(void)
+{
+    int rows = (NC2_PANE_H - 40) / NC2_ROW_H;
+    int i;
+
+    nc2_text_clip(NC2_LEFT_PANE_X + 4, NC2_PANE_Y + 6, nc2_file_dir(),
+                  (NC2_LEFT_PANE_W + NC2_RIGHT_PANE_W - 20) /
+                  nc2_col_width(LVDS_FONT_NORMAL),
+                  nc2_col_text(), nc2_col_bg(), LVDS_FONT_NORMAL);
+    for (i = 0; i < nc2_file_count() && i < rows; i++) {
+        const nc2_file_entry_t *entry = nc2_file_entry(i);
+        int y = NC2_PANE_Y + 30 + i * NC2_ROW_H;
+        char line[NC2_NAME_MAX + 4];
+
+        if (i == nc2_file_selected()) {
+            nc2_fill(NC2_LEFT_PANE_X + 2, y - 2,
+                     NC2_LEFT_PANE_W + NC2_RIGHT_PANE_W - 24, NC2_ROW_H - 2,
+                     nc2_col_select());
+        }
+        snprintf(line, sizeof(line), "%s%s", entry->name,
+                 entry->is_dir ? "/" : "");
+        nc2_text_clip(NC2_LEFT_PANE_X + 8, y, line, 48, nc2_col_text(),
+                      i == nc2_file_selected() ? nc2_col_select() : nc2_col_bg(),
+                      LVDS_FONT_NORMAL);
+    }
+    if (nc2_file_new_active()) {
+        char line[NC2_NAME_MAX + 8];
+
+        snprintf(line, sizeof(line), "NEW  %s.nc",
+                 nc2_file_new_name()[0] ? nc2_file_new_name() : "_");
+        nc2_text_clip(NC2_LEFT_PANE_X + 8, NC2_PANE_BOTTOM - 24, line, 40,
+                      nc2_col_field_fg(), nc2_col_field_bg(), LVDS_FONT_NORMAL);
     }
 }
 
@@ -357,8 +487,21 @@ void nc2_visual_draw(void)
     }
     nc2_fill(0, 0, LVDS_HSTX_WIDTH, LVDS_HSTX_HEIGHT, nc2_col_bg());
     nc2_draw_header();
-    nc2_draw_program();
-    nc2_draw_pad_band();
+    if (g_list) {
+        /* The list is one column, not the editor's two panes: it takes the whole
+           body while it is up, the way a picker does. */
+        nc2_fill(NC2_LEFT_PANE_X, NC2_PANE_Y,
+                 NC2_RIGHT_PANE_X + NC2_RIGHT_PANE_W - NC2_LEFT_PANE_X, NC2_PANE_H,
+                 nc2_col_bg());
+        nc2_frame(NC2_LEFT_PANE_X, NC2_PANE_Y,
+                  NC2_RIGHT_PANE_X + NC2_RIGHT_PANE_W - NC2_LEFT_PANE_X,
+                  NC2_PANE_H, nc2_col_dim());
+        nc2_draw_list();
+    } else {
+        nc2_draw_panes();
+        nc2_draw_program();
+        nc2_draw_pad_band();
+    }
     if (g_status[0]) {
         nc2_fill(0, LVDS_HSTX_HEIGHT - 22, LVDS_HSTX_WIDTH, 22, nc2_col_header());
         nc2_text_clip(8, LVDS_HSTX_HEIGHT - 18, g_status,

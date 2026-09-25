@@ -40,6 +40,8 @@
 #include "nc_visual.h"
 #include "nc2_boot.h"
 #include "nc2.h"
+#include "nc2_files.h"
+#include "nc2_layout.h"
 #include "nc2_presets.h"
 #include "nc2_visual.h"
 #include "g7x.h"
@@ -1665,6 +1667,192 @@ static void host_editor_flush(void)
 {
     mcu_unit_test_advance_time(2000000u);
     host_pump(40u);
+}
+
+/* Put the list's cursor on an entry by name: what a picker is for, and what the
+   check has to do for itself (the screen's keys only step). */
+static bool host_file2_select(const char *name)
+{
+    int i;
+
+    for (i = 0; i < nc2_file_count(); i++) {
+        const nc2_file_entry_t *e = nc2_file_entry(i);
+
+        if (strcmp(e->name, name) != 0) {
+            continue;
+        }
+        while (nc2_file_selected() > i) {
+            nc2_file_step(-1);
+        }
+        while (nc2_file_selected() < i) {
+            nc2_file_step(1);
+        }
+        return true;
+    }
+    return false;
+}
+
+/* nc2's file list: `0` opens the card, and the picker has to do the four things
+   an operator needs from it - walk, open, make one, delete one - on the folders
+   and the text files the card actually holds, with no pad in the way (the digits
+   name a new file there).
+
+     1. `0` lists the card's own root: the folders are there as well as the files,
+        and `..` is not, because the root is as far up as it goes;
+     2. `C` steps and `D` opens: a folder is entered, a program is loaded into the
+        editor and the list closes;
+     3. `5` then digits then `#` makes a numbered program in the folder being
+        listed and opens it;
+     4. `6` deletes the selected file, and `8` reads the folder again. */
+static int host_file2test(void)
+{
+    static const char *const program = "/D/nc/files/one.nc";
+    static const char *const text_file = "/D/nc/files/notes.txt";
+    char created[NC2_PATH_MAX];
+    int failures = 0;
+    int count;
+    int i;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!host_fs_write_text(program, "G0 X1 Z1\n") ||
+        !host_fs_write_text(text_file, "notes\n")) {
+        puts("file2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    (void)nc2_visual_open("/D/nc/files/one.nc");
+
+    /* 1. the card's root. */
+    nc2_visual_key('0');
+    if (strcmp(nc2_visual_screen_name(), "FILES") != 0 ||
+        strcmp(nc2_file_dir(), "/D") != 0) {
+        printf("file2test: FAIL `0` is on \"%s\" at \"%s\"\n",
+               nc2_visual_screen_name(), nc2_file_dir());
+        return 1;
+    }
+    count = nc2_file_count();
+    {
+        bool saw_dir = false;
+        bool saw_up = false;
+
+        for (i = 0; i < count; i++) {
+            const nc2_file_entry_t *e = nc2_file_entry(i);
+
+            if (e->is_dir && strcmp(e->name, "nc") == 0) {
+                saw_dir = true;
+            }
+            if (strcmp(e->name, "..") == 0) {
+                saw_up = true;
+            }
+        }
+        if (!saw_dir || saw_up) {
+            printf("file2test: FAIL the root lists %d entries (dir %d, up %d)\n",
+                   count, saw_dir, saw_up);
+            failures++;
+        }
+    }
+
+    /* 2. into the folders, and open a program. The card root holds `nc`, and the
+       programs are one level under it. */
+    if (!host_file2_select("nc")) {
+        puts("file2test: FAIL the card's own folders are not listed");
+        return 1;
+    }
+    nc2_visual_key('D');
+    if (!host_file2_select("files")) {
+        puts("file2test: FAIL the programs folder is not listed");
+        return 1;
+    }
+    nc2_visual_key('D');
+    if (strcmp(nc2_file_dir(), "/D/nc/files") != 0 ||
+        nc2_file_count() < 2) {
+        printf("file2test: FAIL entering `nc/files` gave \"%s\" with %d entries\n",
+               nc2_file_dir(), nc2_file_count());
+        failures++;
+    }
+
+    /* 3. and a program opens into the editor. */
+    if (!host_file2_select("one.nc")) {
+        puts("file2test: FAIL the program is not in its folder");
+        return 1;
+    }
+    nc2_visual_key('D');
+    if (strcmp(nc2_visual_screen_name(), "EDIT") != 0 ||
+        strcmp(nc2_visual_path(), program) != 0) {
+        printf("file2test: FAIL opening gave \"%s\" on \"%s\"\n",
+               nc2_visual_screen_name(), nc2_visual_path());
+        failures++;
+    }
+
+    /* 4. a new one, named with the pad's digits. */
+    nc2_visual_key('0');
+    nc2_visual_key('5');
+    nc2_visual_key('4');
+    nc2_visual_key('2');
+    nc2_visual_key('#');
+    snprintf(created, sizeof(created), "%s", nc2_visual_path());
+    if (strcmp(created, "/D/42.nc") != 0 ||
+        strcmp(nc2_visual_screen_name(), "EDIT") != 0 ||
+        !host_fs_read_text("/D/42.nc", created, sizeof(created))) {
+        printf("file2test: FAIL the new file is \"%s\"\n", created);
+        failures++;
+    }
+
+    /* 5. and delete one: the notes, picked by name. */
+    nc2_visual_key('0');
+    if (!host_file2_select("nc")) {
+        puts("file2test: FAIL the card's folders are gone");
+        return 1;
+    }
+    nc2_visual_key('D');
+    if (!host_file2_select("files")) {
+        puts("file2test: FAIL the programs folder is gone");
+        return 1;
+    }
+    nc2_visual_key('D');
+    if (!host_file2_select("notes.txt")) {
+        puts("file2test: FAIL the notes file is not in the folder");
+        failures++;
+    } else {
+        bool gone = false;
+
+        nc2_visual_key('6');
+        count = nc2_file_count();
+        nc2_visual_key('8');
+        for (i = 0; i < nc2_file_count(); i++) {
+            const nc2_file_entry_t *e = nc2_file_entry(i);
+
+            if (!e->is_dir && strcmp(e->name, "notes.txt") == 0) {
+                gone = false;
+                break;
+            }
+            gone = true;
+        }
+        if (!gone || nc2_file_count() > count) {
+            puts("file2test: FAIL the deleted file is still listed");
+            failures++;
+        }
+    }
+
+    /* And the list draws. */
+    nc2_visual_draw();
+    {
+        const uint32_t *px = (const uint32_t *)lvds_host_pixels();
+
+        if (!host_ink_in(px, NC2_LEFT_PANE_X + 4, NC2_PANE_Y + 30, 300, 200)) {
+            puts("file2test: FAIL the list drew nothing");
+            failures++;
+        }
+    }
+
+    if (failures) {
+        printf("file2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("file2test: PASS the card's list walks, opens, makes and deletes");
+    return 0;
 }
 
 /* nc2's screen: the program down the left, the pad's corner on the right, no
@@ -4500,6 +4688,23 @@ static int host_dump_nc2(const char *path)
     if (!nc2_visual_open("/D/nc/files/lathe-demo.nc")) {
         (void)nc2_visual_open("/D/nc/files/screen.nc");
     }
+    /* `--keys` presses nc2's own keys, one character at a time, so a frame of a
+       screen that only appears after input can be looked at. */
+    if (g_key_script[0]) {
+        const char *p = g_key_script;
+
+        while (*p) {
+            while (*p == ',' || *p == ' ') {
+                p++;
+            }
+            if (*p) {
+                nc2_visual_key(*p);
+            }
+            while (*p && *p != ',') {
+                p++;
+            }
+        }
+    }
     nc2_visual_draw();
     if (!lvds_host_save_bmp(path)) {
         fprintf(stderr, "nc_ui: cannot write %s\n", path);
@@ -4620,6 +4825,8 @@ int host_tests_run(int argc, char **argv)
             return host_pad2test();
         if (strcmp(argv[i], "--screen2test") == 0)
             return host_screen2test();
+        if (strcmp(argv[i], "--file2test") == 0)
+            return host_file2test();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

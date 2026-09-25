@@ -366,6 +366,17 @@ if __name__ == "__main__":
         fail("FAIL nc2's screen does not draw or write the program",
              run.stdout[-1500:] or run.stderr[-1500:])
 
+    # nc2's file list: `0` opens the card, and the picker walks, opens, makes and
+    # deletes - with the folders in it and no pad in the way.
+    root = OUT / "file2-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--file2test"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "file2test: PASS" not in run.stdout:
+        fail("FAIL nc2's file list does not walk, open, make or delete",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
     # The operator's own program and tool table, kept with the NC module
     # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
     # the firmware writes its state next to them, then checked through the

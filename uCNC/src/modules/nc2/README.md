@@ -83,9 +83,26 @@ the editor's "a letter with no number is a field waiting for a number" rule does
 the rest. That leaves the contour pad (`47`) as the only key that computes
 rather than writes - and it is files too (see *Settled from the bench*, 4).
 
-## Files and budget
+## The layout, and what it is worth in lines
 
-| file | target | what it owns |
+**The layout is nc's, unchanged:** the code pane on the left, the drawing on the
+right, the same split (`NC2_LEFT_PANE_X` and `NC2_SPLIT_X` are nc's numbers), and
+the pad pinned in the bottom-right corner of the drawing's pane. What is gone is
+the footer strip and the DRO band - the pad is the keys and the machine's numbers
+wait for the run - so the two panes are taller by exactly what those bands took.
+The bench was plain about this: *"no do not change it. only 3x3 in place corner,
+same dual screen as before and no footer or dro."*
+
+The bench's own estimate of what that is worth, after the first three pieces
+landed: *"we will have less line of code, but not by that much; my guesstimate is
+around 15-16 will fit easy."* So this is **not a size exercise** - the board's
+flash has room, and the point is fewer *things*, not fewer lines. The table below
+stays as a shape to aim at and a way to notice a file growing past its job, not
+as a target to squeeze into.
+
+## Files
+
+| file | working figure | what it owns |
 | --- | --- | --- |
 | `nc2.c` | 950 | the document: words, fields, the value editor's keys, the pad's helper and its label line |
 | `nc2_presets.c` | 450 | addresses -> files: names, rows, the pad's tree |
@@ -100,7 +117,7 @@ rather than writes - and it is files too (see *Settled from the bench*, 4).
 | `nc2_preview.c` | 1 100 | stock, contour, dimensions, the live tool |
 | `nc2_draw.c` | 450 | primitives, glyphs, the 3x3 grid |
 | headers, `nc2_layout.h` | 350 | the boundary and the shared numbers |
-| **total** | **6 950** | (the block scan is g7x's now; the helper is kept) |
+| **total** | **~7 000** | the block scan is g7x's now, and the helper is kept - and neither figure is a ceiling |
 
 Its own test target, `tools/test_nc2.py`, builds and runs the module against the
 same virtual machine the station uses (AGENTS.md 7), and `nc2/TESTING.md` keeps
@@ -211,7 +228,8 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built | `nc2_presets.c` (address -> file, read, write), `nc2_boot.c` (the shipped entries, the one-time seed, the logo), `nc2.c` (the document, the fields, the value editor's keys, the pad's helper and its label line), `--seedtest` and `--edit2test` |
 | built (2) | the pad's tree: `nc2_address_*` and `nc2_slot()` in `nc2_presets.c`, `nc2_pad_open/write/close()` in `nc2.c`, `--pad2test` |
 | built (3) | the screen: `nc2_draw.c` (colours, text, the 3x3) and `nc2_visual.c` (the program down the left, the pad's corner on the right, no footer), the program read and written back (`nc2_files.c`), `--screen2test`, `--dump-nc2` |
-| next | the card's file list (the rest of `nc2_files.c`: the folder, open/new/delete), then state, the run and the DRO that only appears while the machine is doing something |
+| built (4) | the two panes as nc has them (the same split, no footer, no DRO), and the card's file list: `0` opens `/D`, folders are entered, a program opens into the editor, `5` + digits + `#` makes a numbered one, `6` deletes, `8` re-reads, `*`/`0` come back - `--file2test` |
+| next | the preview's own drawing in the right pane (`nc2_preview.c`), then state, the run and the DRO that only appears while the machine is doing something |
 | then | the g7x block scan moving to `g7x_blocks.c`, the tool table's screen, and the panel switch: `nc` out, `nc2` in, one commit |
 
 One upstream landmine was found on the way, in `file_system.c`: `fs_opendir()`

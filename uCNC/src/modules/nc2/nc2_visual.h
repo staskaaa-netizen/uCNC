@@ -19,6 +19,9 @@ bool nc2_visual_open(const char *path);
 bool nc2_visual_save(void);
 /* The file in play, "" when there is none. */
 const char *nc2_visual_path(void);
+/* What the screen is showing, for a shell that names it: `EDIT`, and `FILES`
+   while the card's list is up. */
+const char *nc2_visual_screen_name(void);
 
 /* One machine key, as the keypad sends it: `0`-`9`, `A`-`D`, `#`, `*`. */
 void nc2_visual_key(char key);

@@ -1,5 +1,12 @@
 # NC path builder: the pad walks a contour
 
+> **Superseded by a proposal, not yet decided** (`uCNC/src/modules/nc/TODO.md`,
+> "The path builder is 728 lines, and Fanuc needs two words"): this dialect has
+> no `U`/`W` word, so the in-place point this pad keeps is the only way to write
+> an increment today. If the parser takes `U`/`W` as the incremental twins of
+> `X`/`Z`, every part of this file describes code that no longer has a job -
+> `G1 W-10.0 F0.2` carries the increment itself.
+
 The path builder is a contour-entry tool for EDIT. Insert a cycle and its end
 mark from the G7X vocabulary first, place the cursor inside that closed block,
 then open PATH. The pad appends `G1` contour rows before the block's end mark.

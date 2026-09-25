@@ -1114,6 +1114,47 @@ Written down from an operator's afternoon of real programs on the station. Each
 one is an option to weigh, not a decision - except the first, which is already
 possible today and only needs saying out loud.
 
+- [ ] **The path builder is 728 lines, and Fanuc needs two words.** The bench,
+  after the preset collapse: *"is path builder. its needs nothing except ix and
+  iz keys. or just new special g code which acts from previous line -
+  incremental filling values but latter collapse to normal g1 lines."* What the
+  builder owns today is a *point*: which axis moved, what the other one was, a
+  step table, diagonals, the mm check, a session's rows with undo and cancel, a
+  pad and a footer (`nc_path_builder.c` 728 lines, `+57` header,
+  `docs/nc-path-builder.md`, `--buildertest`). Fanuc does the same job with two
+  words: `G1 W-10.0 F0.2` is Z-10 from where the tool is, `G1 U-5.0` is X-5, both
+  always incremental whichever distance mode is active, in the same units and
+  diameter/radius mode as X and Z - so the *program text itself* carries the
+  increment and the reader resolves it. There is nothing left for a builder to
+  own; the profile a cycle validates is the resolved points, which G7x already
+  computes.
+
+  The fact to weigh first: **this dialect has no U or W at all.** The parser's
+  word table is X Y Z A B C D/Q F I J K L P R S T H, and any other letter is
+  refused (`STATUS_GCODE_UNUSED_WORDS`), so `G1 W-10` is an error on the machine
+  today. In this fork U/W exist only as the G71/G72 header words, parsed by the
+  G7x module's own hook - a different thing.
+
+  So the collapse is: the dialect takes U/W as first-class words (the
+  incremental twins of X/Z), the parser core applies them against the current
+  position, the NC emitter resolves the same way while it walks a block (it
+  already carries the last point for the preview), the vocabulary gains the two
+  words so the editor's `3 WORD` field can write them and the legend names them,
+  and then `nc_path_builder.c`, its header, its pad and footer tables, its
+  session bookkeeping, `docs/nc-path-builder.md` and `--buildertest` all go.
+  What stays: G7x owns the contour and the cycles (it resolves the increments
+  into points to check the monotonic rule and generate passes), the P/Q range and
+  the end mark, and the preview that draws the result.
+
+  The decision this needs, because it is not a local one: **U/W means editing
+  the upstream parser** (`src/core/parser.c`: two word flags, two cases, the
+  application in the motion path). A parser *module* cannot do it - a module sees
+  words the core accepted, and the core refuses the letter before any module is
+  asked - so the choice is a small upstream-shaped dialect addition, or nothing.
+  Worth proposing upstream on its own merits: every Fanuc/lathe-flavoured sender
+  emits U/W, and rejecting them is why a hand-written Fanuc program has to be
+  rewritten before this machine will read it.
+
 - [ ] **A word the pads do not offer is addable from the card today.** Every
   helper entry is a section, and a section whose id is a free key path appears on
   that pad, so the missing words do not have to wait for code: OPS `12`-`15` and

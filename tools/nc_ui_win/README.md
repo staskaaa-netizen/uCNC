@@ -93,7 +93,8 @@ is the whole of what a release carries; the RP2350 image is bench-only):
 
 ```text
 uCNC-programming-station.exe   the station (statically linked, no DLL needed)
-README.md                      this file, the operator's usage
+USER-GUIDE.md                  how to use it, for the operator
+README.md                      this file, the tool's own reference
 desktop-sender.md              how the station fits the desktop tools
 examples\lathe-demo.nc         the program below
 examples\tool.t                the table it calls T2 from

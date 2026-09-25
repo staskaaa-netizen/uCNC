@@ -75,7 +75,8 @@ The station ships from GitHub: `.github/workflows/nc-ui-windows.yaml` builds it
 with MinGW-w64 on `windows-latest` and runs the checks on every push and pull
 request, and `.github/workflows/nc-ui-release.yaml` builds the same station on a
 `v*` tag and attaches `uCNC-programming-station-win64.zip` (the statically
-linked exe, its README and this note) to that release. The station is the whole
+linked exe, the operator's `USER-GUIDE.md`, its README and this note) to that
+release. The station is the whole
 of what a release carries: the RP2350 image drives this machine's own
 HSTX-connected panel, so it is built and flashed from the bench rather than
 published (`pio run -e RP2350-LEANCAM-LVDS`, see AGENTS.md). The station keeps

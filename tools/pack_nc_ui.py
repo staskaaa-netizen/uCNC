@@ -4,7 +4,8 @@ The station is built and checked by `tools/test_nc_ui.py` (the same script the
 CI runs), and what comes out is one zip:
 
     uCNC-programming-station.exe   the station, statically linked
-    README.md                      the operator's usage
+    USER-GUIDE.md                  how to use it, for the operator
+    README.md                      the tool's own reference
     desktop-sender.md              how the station fits the desktop tools
     examples/lathe-demo.nc         a program to open, preview and run
     examples/tool.t                the table that program calls T2 from
@@ -72,6 +73,7 @@ def main(argv):
     shutil.rmtree(staging, ignore_errors=True)
     (staging / "examples").mkdir(parents=True)
     shutil.copy2(EXE, staging / "uCNC-programming-station.exe")
+    shutil.copy2(TOOL / "USER-GUIDE.md", staging / "USER-GUIDE.md")
     shutil.copy2(TOOL / "README.md", staging / "README.md")
     shutil.copy2(ROOT / "docs" / "desktop-sender.md", staging / "desktop-sender.md")
     examples = sorted((TOOL / "examples").iterdir())

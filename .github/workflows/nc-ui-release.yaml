@@ -67,9 +67,11 @@ jobs:
             repository's sources (`tools/nc_ui_win`).
 
             Download `uCNC-programming-station-win64.zip`, unpack it anywhere and
-            run `uCNC-programming-station.exe`. The `examples\` folder beside it is
-            the demo: a station that has no card of its own seeds one from it, so
-            the first start opens with `lathe-demo.nc` and the tool table it calls.
+            run `uCNC-programming-station.exe`. `USER-GUIDE.md` in the zip is how to
+            use it - the keys, every screen, writing a program, the card, and what to
+            look at when something is wrong. The `examples\` folder beside the exe is
+            the demo: a station that has no card of its own seeds one from it, so the
+            first start opens with `lathe-demo.nc` and the tool table it calls.
 
             The station is the whole of what is published here. The RP2350 image
             drives this machine's own HSTX-connected LVDS panel, so it is built and

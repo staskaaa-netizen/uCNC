@@ -1824,7 +1824,8 @@ size_t nc_visual_usage(const char *const **lines)
         "Arrows move, the digits type.",
         "B/C step between equal words.",
         "1 OPS  2 TOOL  3 WORD  4 G7X.",
-        "5 THREAD  6 PECK  7 DRAW.",
+        "5 THREAD  6 PECK open their",
+        "own pads (G7X's 7 is DRAW).",
         "# VIEW  * DEL  0 files."
     };
     static const char *const tools[] = {

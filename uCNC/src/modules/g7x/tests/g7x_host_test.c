@@ -1,4 +1,5 @@
 #include "../g7x_contour.h"
+#include "../g7x_blocks.h"
 #include "../g7x_source.h"
 
 #include <stdio.h>
@@ -726,6 +727,116 @@ static int test_numbered_source(void)
     return 0;
 }
 
+/* The document side of the cycle rules: the same program the stream tests use,
+   but read as a *file* - which block a row is in, which rows are a contour, and
+   the range a finish cut names above it. The lines come from a provider, not
+   from any module's document type, which is the point of the interface: a
+   screen with its own buffer asks the same questions the generator answers. */
+static const char *const g_doc_program[] = {
+    "G0 X52 Z2",
+    "G71 U1 R0.2 X0.5 Z0.5 F450 P10 Q20",
+    "N10 G1 X30 Z0",
+    "G1 X30 Z-15 C0 R0",
+    "G1 X35 Z-25 C0 R5",
+    "N20 G1 X50 Z-25",
+    "G80",
+    "G70 P10 Q20",
+    /* And a Fanuc pair, with its rows under it. */
+    "G71 U1 R0.5 X0.5 Z0.5",
+    "G71 P100 Q200 F450",
+    "N100 G1 X40 Z0",
+    "N200 G1 X55 Z-10",
+    "G80",
+    /* And a cycle whose range never closes. */
+    "G72 U1 R0.5 X0.5 Z0.5",
+    "G72 P300 Q400 F450",
+    "N300 G1 X30 Z-5"
+};
+
+static const char *doc_provide(void *user, size_t index)
+{
+    const char *const *program = user;
+    size_t count = sizeof(g_doc_program) / sizeof(g_doc_program[0]);
+
+    (void)count;
+    return program[index];
+}
+
+static g7x_doc_t doc_for(const char *const *program, size_t count)
+{
+    g7x_doc_t doc;
+
+    doc.line = doc_provide;
+    doc.user = (void *)program;
+    doc.count = count;
+    return doc;
+}
+
+static int test_document_blocks(void)
+{
+    g7x_doc_t doc = doc_for(g_doc_program,
+                            sizeof(g_doc_program) / sizeof(g_doc_program[0]));
+    size_t count = sizeof(g_doc_program) / sizeof(g_doc_program[0]);
+    size_t start = 0u;
+    size_t end = 0u;
+    size_t first = 0u;
+    size_t last = 0u;
+    int fails = 0;
+
+    /* The G80-terminated range: its rows are the profile, the end mark belongs
+       to it, and the G70 below names those rows. */
+    if (!g7x_doc_block_containing(&doc, 2u, &start, &end) ||
+        start != 1u || end != 6u) {
+        printf("FAIL document block for a row in the cycle is %u..%u\n",
+               (unsigned)start, (unsigned)end);
+        fails++;
+    }
+    if (!g7x_doc_line_is_any_contour(&doc, 3u) ||
+        g7x_doc_line_is_any_contour(&doc, 0u) ||
+        g7x_doc_line_is_any_contour(&doc, 7u)) {
+        printf("FAIL document contour answers are wrong\n");
+        fails++;
+    }
+    if (!g7x_doc_range_above(&doc, 7u, 10u, 20u, &first, &last) ||
+        first != 2u || last != 5u) {
+        printf("FAIL document range above is %u..%u\n", (unsigned)first,
+               (unsigned)last);
+        fails++;
+    }
+    if (!g7x_doc_line_path(&doc, 7u, &first, &last) ||
+        first != 2u || last != 5u) {
+        printf("FAIL document line path is %u..%u\n", (unsigned)first,
+               (unsigned)last);
+        fails++;
+    }
+
+    /* The Fanuc pair (the two `G71` lines at 8 and 9): both answer with the block
+       the first one heads, and its rows are the numbered ones under it. */
+    if (g7x_doc_block_start(&doc, 9u) != 8u) {
+        printf("FAIL the second line of a header pair does not map back\n");
+        fails++;
+    }
+    if (!g7x_doc_block_containing(&doc, 10u, &start, &end) ||
+        start != 8u || end != 12u) {
+        printf("FAIL the pair's block is %u..%u\n", (unsigned)start,
+               (unsigned)end);
+        fails++;
+    }
+
+    /* And a range that never closes is refused, not guessed. */
+    if (g7x_doc_block_end(&doc, 13u, &end) ||
+        g7x_doc_block_containing(&doc, 15u, &start, &end)) {
+        printf("FAIL an unclosed range answered\n");
+        fails++;
+    }
+
+    (void)count;
+    if (!fails) {
+        printf("document blocks: PASS\n");
+    }
+    return fails;
+}
+
 int main(void)
 {
     int fails = 0;
@@ -746,6 +857,7 @@ int main(void)
     fails += test_numbered_history();
     fails += test_numbered_source();
     fails += test_two_line_header();
+    fails += test_document_blocks();
 
     if (fails) {
         printf("FAILURES %d\n", fails);

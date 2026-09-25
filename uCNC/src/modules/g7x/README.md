@@ -543,3 +543,19 @@ Future test buckets after the split:
 - `G73` pattern-repeat roughing: not implemented yet.
 - LinuxCNC/GCodeTutor examples converted into the current `G71/G72 ... G80`
   source model where possible.
+### Where the cycles are in a program
+
+`g7x_blocks.c` answers, for *text* rather than for a stream: which rows are a
+block's profile, which block a row belongs to, and the numbered range a finish cut
+names above it. The caller supplies the lines through `g7x_doc_t` - a card file, a
+screen's own buffer, an array in a check - because g7x never reads a file or a
+document itself, and the questions a screen has to ask ("what does this row
+belong to", "which rows does that `G70` replay") are the same questions the
+generator answers while it runs. One owner, so a marked block and a generated
+block cannot disagree.
+
+It lived in NC's `nc_g7x.c` until 2026-09-25, doing exactly that with an
+`nc_document_t` instead of a provider - the same question asked twice, and the two
+answers had already drifted once (a block that answered with two different blocks
+for one line). What is left in NC is an adapter that hands over a document's
+lines, and `test_g7x.py`'s document cases come with the scan.

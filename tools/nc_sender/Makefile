@@ -10,7 +10,7 @@ CFLAGS = -std=gnu11 -O2 -Wall -Wextra -Wno-unused-parameter \
          -I$(NC) -I$(G7X) -I$(UCNC)
 
 MODULES = $(NC)/nc.c $(NC)/nc_emit.c $(NC)/nc_g7x.c \
-          $(G7X)/g7x.c $(G7X)/g7x_contour.c $(G7X)/g7x_source.c
+          $(G7X)/g7x.c $(G7X)/g7x_blocks.c $(G7X)/g7x_contour.c $(G7X)/g7x_source.c
 SENDER = nc_sender.c grbl_stream.c grbl_port_win32.c nc_send_job.c
 
 TARGET = $(BUILDDIR)/nc_send.exe

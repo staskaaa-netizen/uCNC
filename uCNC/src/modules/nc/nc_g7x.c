@@ -1,188 +1,70 @@
-/* Document scanning for G7x blocks: numbered ranges, Fanuc two-line headers and
-   plain G80-terminated cycles. Text only; no machine state. */
+/* NC's view of the G7x blocks inside a document - see nc_g7x.h.
+
+   The scan itself is g7x's (`g7x_blocks.c`): the rules for what a block is, what
+   a numbered range is and which rows carry contour belong to the module that
+   owns the cycles, and a screen asking the same question a second way is how the
+   two answers drift. So this file is only the adapter - it hands g7x the lines
+   of the document and nothing else. */
 #include "nc_g7x.h"
 
-#include "../g7x/g7x_contour.h"
+#include "../g7x/g7x_blocks.h"
 
-#include <math.h>
-
-static const char *nc_g7x_trim(const char *line)
+/* A line as the scan reads it: leading spaces skipped, because every reader
+   there treats `  G71 ...` as the cycle it is. */
+static const char *nc_g7x_provide(void *user, size_t index)
 {
-    while (line && (*line == ' ' || *line == '\t'))
+    const nc_document_t *doc = user;
+    const char *line;
+
+    if (!doc || index >= doc->line_count) {
+        return "";
+    }
+    line = doc->lines[index].text;
+    while (*line == ' ' || *line == '\t') {
         line++;
-    return line ? line : "";
+    }
+    return line;
 }
 
-static const char *nc_g7x_line(const nc_document_t *doc, size_t index)
+static g7x_doc_t nc_g7x_doc(const nc_document_t *doc)
 {
-    if (!doc || index >= doc->line_count)
-        return "";
-    return nc_g7x_trim(doc->lines[index].text);
+    g7x_doc_t d;
+
+    d.line = doc ? nc_g7x_provide : 0;
+    d.user = (void *)doc;
+    d.count = doc ? doc->line_count : 0u;
+    return d;
 }
 
 bool nc_g7x_line_is_header(const char *line)
 {
-    g7x_cycle_t cycle = g7x_cycle_from_line(line);
-
-    return cycle == G7X_CYCLE_G71 || cycle == G7X_CYCLE_G72;
+    return g7x_doc_line_is_header(line);
 }
 
 bool nc_g7x_line_range(const char *line, uint32_t *p, uint32_t *q)
 {
-    float pv;
-    float qv;
-    bool has_p;
-    bool has_q;
-
-    if (!line || !p || !q)
-        return false;
-    has_p = g7x_get_field_float(line, "P", &pv);
-    has_q = g7x_get_field_float(line, "Q", &qv);
-    if (!has_p || !has_q ||
-        !isfinite(pv) || !isfinite(qv) || pv < 1.0f || qv < 1.0f ||
-        floorf(pv) != pv || floorf(qv) != qv || qv < pv)
-        return false;
-    *p = (uint32_t)pv;
-    *q = (uint32_t)qv;
-    return true;
+    return g7x_doc_line_range(line, p, q);
 }
 
 bool nc_g7x_line_has_range_words(const char *line)
 {
-    float value;
-
-    if (!line)
-        return false;
-    return g7x_get_field_float(line, "P", &value) ||
-           g7x_get_field_float(line, "Q", &value);
-}
-
-/* Index of the first non-blank line after `line`, or doc->line_count. */
-static size_t nc_g7x_next_content_line(const nc_document_t *doc, size_t line)
-{
-    size_t i = line + 1u;
-
-    while (i < doc->line_count && !*nc_g7x_line(doc, i))
-        i++;
-    return i;
-}
-
-/* Last line of the header: the second block of a Fanuc two-line header. */
-static size_t nc_g7x_header_end(const nc_document_t *doc, size_t start_line)
-{
-    size_t next;
-
-    if (!nc_g7x_line_is_header(nc_g7x_line(doc, start_line)))
-        return start_line;
-    next = nc_g7x_next_content_line(doc, start_line);
-    if (next >= doc->line_count)
-        return start_line;
-    if (!nc_g7x_line_is_header(nc_g7x_line(doc, next)))
-        return start_line;
-    /* Same cycle repeated with no contour row between: Fanuc second block. */
-    if (g7x_cycle_from_line(nc_g7x_line(doc, next)) !=
-        g7x_cycle_from_line(nc_g7x_line(doc, start_line)))
-        return start_line;
-    return next;
-}
-
-/* The line a header belongs to: the *first* block of a Fanuc pair for both of
-   its lines, the line itself otherwise. Either line of the pair may carry the
-   P/Q range (the usual form puts it on the second, the bench's file on the
-   first), and which one does must not change which block a row is in - a cycle
-   whose rows answered with two different blocks handed the machine a headerless
-   profile when a step was taken from inside the contour. */
-static size_t nc_g7x_header_head(const nc_document_t *doc, size_t line)
-{
-    size_t previous = line;
-
-    if (!doc || line >= doc->line_count)
-        return line;
-    while (previous > 0u) {
-        previous--;
-        if (*nc_g7x_line(doc, previous))
-            break;
-    }
-    if (previous != line &&
-        nc_g7x_line_is_header(nc_g7x_line(doc, previous)) &&
-        nc_g7x_header_end(doc, previous) == line)
-        return previous;
-    return line;
+    return g7x_doc_line_has_range_words(line);
 }
 
 size_t nc_g7x_block_start(const nc_document_t *doc, size_t line)
 {
-    if (!doc || line >= doc->line_count)
-        return line;
-    if (!nc_g7x_line_is_header(nc_g7x_line(doc, line)))
-        return line;
-    return nc_g7x_header_head(doc, line);
-}
+    g7x_doc_t d = nc_g7x_doc(doc);
 
-/* Header line that carries the P/Q selection: the first line of a one-line
-   header, or whichever line of a Fanuc two-line header names the range. */
-static size_t nc_g7x_range_header(const nc_document_t *doc, size_t start_line)
-{
-    size_t header = nc_g7x_header_end(doc, start_line);
-    uint32_t p = 0u;
-    uint32_t q = 0u;
-
-    if (nc_g7x_line_range(nc_g7x_line(doc, header), &p, &q))
-        return header;
-    if (nc_g7x_line_range(nc_g7x_line(doc, start_line), &p, &q))
-        return start_line;
-    return start_line;
+    return g7x_doc_block_start(&d, line);
 }
 
 bool nc_g7x_block_end(const nc_document_t *doc,
                       size_t start_line,
                       size_t *end_line)
 {
-    size_t header;
-    size_t i;
-    uint32_t p = 0u;
-    uint32_t q = 0u;
+    g7x_doc_t d = nc_g7x_doc(doc);
 
-    if (!doc || !end_line || start_line >= doc->line_count)
-        return false;
-    if (!nc_g7x_line_is_header(nc_g7x_line(doc, start_line)))
-        return false;
-
-    header = nc_g7x_range_header(doc, start_line);
-    if (nc_g7x_line_range(nc_g7x_line(doc, header), &p, &q)) {
-        /* Numbered range: N(Q) closes the profile. */
-        uint32_t number = 0u;
-        for (i = header + 1u; i < doc->line_count; i++) {
-            if (g7x_line_number(nc_g7x_line(doc, i), &number) && number == q) {
-                size_t next = nc_g7x_next_content_line(doc, i);
-
-                /* A `G80` written after the range is the cycle's end mark, and
-                   it belongs to the same block. The two ways of writing a cycle
-                   have to answer with the same rows: the block is what a step
-                   hands the machine, so a range-terminated cycle that left its
-                   end mark behind was sent in two pieces and the pane drew a
-                   different pale block from the one a `G80`-terminated cycle
-                   drew (bench: "now it colorize both g71 and path if any g71 is
-                   select. with pq or with g80"). */
-                if (next < doc->line_count &&
-                    g7x_contour_cmd_from_line(nc_g7x_line(doc, next)) ==
-                        G7X_CONTOUR_END) {
-                    i = next;
-                }
-                *end_line = i;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    for (i = start_line + 1u; i < doc->line_count; i++) {
-        if (g7x_contour_cmd_from_line(nc_g7x_line(doc, i)) == G7X_CONTOUR_END) {
-            *end_line = i;
-            return true;
-        }
-    }
-    return false;
+    return g7x_doc_block_end(&d, start_line, end_line);
 }
 
 bool nc_g7x_block_containing(const nc_document_t *doc,
@@ -190,40 +72,25 @@ bool nc_g7x_block_containing(const nc_document_t *doc,
                              size_t *start_line,
                              size_t *end_line)
 {
-    size_t i;
+    g7x_doc_t d = nc_g7x_doc(doc);
 
-    if (start_line)
-        *start_line = line;
-    if (end_line)
-        *end_line = line;
-    if (!doc || line >= doc->line_count)
-        return false;
+    return g7x_doc_block_containing(&d, line, start_line, end_line);
+}
 
-    /* The closest header at or above the line whose block reaches it. Headers
-       cannot nest, so the first one that closes over the line is the block it
-       belongs to - and a header is asked for the *pair* it heads, so the second
-       line of a two-line header answers with the block the first one does. */
-    i = line + 1u;
-    while (i > 0u) {
-        size_t candidate = i - 1u;
-        size_t head;
-        size_t block_end;
+bool nc_g7x_line_is_contour(const nc_document_t *doc,
+                            size_t start_line,
+                            size_t index)
+{
+    g7x_doc_t d = nc_g7x_doc(doc);
 
-        if (!nc_g7x_line_is_header(nc_g7x_line(doc, candidate))) {
-            i--;
-            continue;
-        }
-        head = nc_g7x_header_head(doc, candidate);
-        if (nc_g7x_block_end(doc, head, &block_end) && block_end >= line) {
-            if (start_line)
-                *start_line = head;
-            if (end_line)
-                *end_line = block_end;
-            return true;
-        }
-        i--;
-    }
-    return false;
+    return g7x_doc_line_is_contour(&d, start_line, index);
+}
+
+bool nc_g7x_line_is_any_contour(const nc_document_t *doc, size_t index)
+{
+    g7x_doc_t d = nc_g7x_doc(doc);
+
+    return g7x_doc_line_is_any_contour(&d, index);
 }
 
 bool nc_g7x_range_above(const nc_document_t *doc,
@@ -233,47 +100,9 @@ bool nc_g7x_range_above(const nc_document_t *doc,
                         size_t *first,
                         size_t *last)
 {
-    size_t found_first = (size_t)-1;
-    size_t found_last = (size_t)-1;
-    size_t i;
-    uint32_t number = 0u;
+    g7x_doc_t d = nc_g7x_doc(doc);
 
-    if (!doc || line == 0u || line > doc->line_count || p == 0u || q < p) {
-        return false;
-    }
-    /* Below the line that names the range, and no further back than the row that
-       closes it: N(Q) first, then N(P). */
-    for (i = line; i > 0u; i--) {
-        const char *text = nc_g7x_line(doc, i - 1u);
-
-        if (!g7x_line_number(text, &number) || number == 0u) {
-            continue;
-        }
-        if (found_last == (size_t)-1) {
-            if (number == q) {
-                found_last = i - 1u;
-            }
-            continue;
-        }
-        if (number == p) {
-            found_first = i - 1u;
-            break;
-        }
-        if (number < p) {
-            break;              /* walked past the range without meeting N(P) */
-        }
-    }
-    if (found_first == (size_t)-1 || found_last == (size_t)-1 ||
-        found_first > found_last) {
-        return false;
-    }
-    if (first) {
-        *first = found_first;
-    }
-    if (last) {
-        *last = found_last;
-    }
-    return true;
+    return g7x_doc_range_above(&d, line, p, q, first, last);
 }
 
 bool nc_g7x_line_path(const nc_document_t *doc,
@@ -281,63 +110,7 @@ bool nc_g7x_line_path(const nc_document_t *doc,
                       size_t *first,
                       size_t *last)
 {
-    uint32_t p = 0u;
-    uint32_t q = 0u;
+    g7x_doc_t d = nc_g7x_doc(doc);
 
-    if (first) {
-        *first = line;
-    }
-    if (last) {
-        *last = line;
-    }
-    if (!doc || line >= doc->line_count) {
-        return false;
-    }
-    /* A row inside a cycle belongs with the cycle's block. */
-    if (nc_g7x_block_containing(doc, line, first, last)) {
-        return true;
-    }
-    /* A finish cut names a range instead of *being* one: it replays rows the
-       roughing cycle collected above it. */
-    if (g7x_cycle_from_line(nc_g7x_line(doc, line)) != G7X_CYCLE_G70 ||
-        !nc_g7x_line_range(nc_g7x_line(doc, line), &p, &q)) {
-        return false;
-    }
-    return nc_g7x_range_above(doc, line, p, q, first, last);
-}
-
-bool nc_g7x_line_is_contour(const nc_document_t *doc,
-                            size_t start_line,
-                            size_t index)
-{
-    size_t end;
-    size_t first;
-    uint32_t p = 0u;
-    uint32_t q = 0u;
-
-    if (!doc || index >= doc->line_count)
-        return false;
-    if (!nc_g7x_block_end(doc, start_line, &end))
-        return false;
-    first = nc_g7x_header_end(doc, start_line) + 1u;
-    if (index < first)
-        return false;
-    if (nc_g7x_line_range(nc_g7x_line(doc, nc_g7x_range_header(doc, start_line)), &p, &q))
-        return index <= end;
-    return index < end;
-}
-
-bool nc_g7x_line_is_any_contour(const nc_document_t *doc, size_t index)
-{
-    size_t i;
-
-    if (!doc || index >= doc->line_count)
-        return false;
-    for (i = 0; i <= index; i++) {
-        if (!nc_g7x_line_is_header(doc->lines[i].text))
-            continue;
-        if (nc_g7x_line_is_contour(doc, i, index))
-            return true;
-    }
-    return false;
+    return g7x_doc_line_path(&d, line, first, last);
 }

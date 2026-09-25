@@ -100,7 +100,7 @@ def module_sources():
     # built here so its own checks run with the same machine and card.
     nc2 = SRC / "modules" / "nc2"
     files += sorted(nc2.glob("*.c"))
-    files += [g7x / "g7x.c", g7x / "g7x_contour.c", g7x / "g7x_source.c",
+    files += [g7x / "g7x.c", g7x / "g7x_blocks.c", g7x / "g7x_contour.c", g7x / "g7x_source.c",
               SRC / "modules" / "cam_keyboard" / "cam_keyboard.c",
               SRC / "modules" / "g7_g8" / "parser_g7_g8.c"]
     files += [lvds / "lvds_draw_api.c", lvds / "lvds_palette.c",

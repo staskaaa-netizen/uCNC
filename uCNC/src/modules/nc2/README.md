@@ -7,7 +7,8 @@ from pure nc value editor to something too big to be nice. Visual side is ok to
 agree yet it could be made simpler too."* `nc` is **14 758 lines** (13 870
 without its host test) and 2 037 of those are one file. `nc2` is the same job
 with a budget of **6 700**: the value editor, the entries, the sender and the
-preview - and nothing else.
+preview - and nothing else. The estimate after the bench's own corrections is
+**~6 300** (see *What the preview will cost*).
 
 It is a second module, not a refactor of the first: `nc` keeps driving the panel
 until `nc2` answers everything `nc` does, and then the panel is switched over
@@ -73,8 +74,10 @@ things without a second mechanism.
 | --- | --- |
 | the footer strips, the submenu tables, every per-screen key table (`nc_menu.c`) | 195 |
 | the per-screen usage/label tables, the strip's toggle logic (part of `nc_visual.c`) | ~700 |
-| the preview's second dialect (the `#if NC_PREVIEW_DIN_*` variants) | ~600 |
 | `nc_feedback.c`, and the stub keys (`2 TOOL` -> `2 EDIT` sets a status line and returns - `nc_visual.c:697`) | 35 + 20 |
+
+**Kept, against it:** the preview's `DIN` layer, whole - *"Din must stay here too.
+it is nice feature ... then do it as is"* - so that row is not a saving either.
 
 **Kept, against that list:** the pad's helper and the label line it writes into
 the document. It is small, and it is two things at once - the pad's name where
@@ -236,11 +239,21 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built (2) | the pad's tree: `nc2_address_*` and `nc2_slot()` in `nc2_presets.c`, `nc2_pad_open/write/close()` in `nc2.c`, `--pad2test` |
 | built (3) | the screen: `nc2_draw.c` (colours, text, the 3x3) and `nc2_visual.c` (the program down the left, the pad's corner on the right, no footer), the program read and written back (`nc2_files.c`), `--screen2test`, `--dump-nc2` |
 | built (4) | the two panes as nc has them (the same split, no footer, no DRO), and the card's file list: `0` opens `/D`, folders are entered, a program opens into the editor, `5` + digits + `#` makes a numbered one, `6` deletes, `8` re-reads, `*`/`0` come back - `--file2test` |
-| next | the preview's own drawing in the right pane (`nc2_preview.c`), then state, the run and the DRO that only appears while the machine is doing something |
-| then | the g7x block scan moving to `g7x_blocks.c`, the tool table's screen, and the panel switch: `nc` out, `nc2` in, one commit |
+| built (5) | the cycle/block scan moved out of NC and into g7x (`g7x_blocks.c`, over a line provider), so nc2 will have **no scan file at all** - and the duplication the bench asked about is gone from nc too (`nc_g7x.c` is an adapter now) |
+| next | the sender (`nc2_emit.c`: the stream, the G7x feeding, `U`/`W`), and then the preview in the right pane - **with its `DIN` layer kept as nc has it** (the bench: *"Din must stay here too. it is nice feature ... then do it as is"*) |
+| then | the tool table's screen (its own thing, later), and the panel switch: `nc` out, `nc2` in, one commit |
 
 One upstream landmine was found on the way, in `file_system.c`: `fs_opendir()`
 writes into the string it is handed to drop a trailing `/` (`char *newpath =
 (char *)path; newpath[len - 1] = 0;`), so a literal like `"/D/presets/"` faults on
 read-only memory. `nc2` spells the folder without the slash for that one call and
 says why in `nc2_presets.h`; the function itself is the core's to fix.
+
+## What the preview will cost
+
+The bench, on nc's `DIN` preview layer: *"Din must stay here too. it is nice
+feature ... then do it as is and then we will see how it will look."* So the
+preview is not the place to save lines: `nc2_preview.c` carries the stock, the
+chuck, the dimension and ruler layer (DIN), the contour points, the generated
+motion of the cycles, and the live tool - as nc has them - which is ~1 700 lines
+and takes the estimate for the finished module from ~5 700 to **~6 300**.

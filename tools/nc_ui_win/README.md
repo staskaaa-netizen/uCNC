@@ -51,6 +51,7 @@ build\nc_ui.exe --uwtest                         # increments collapse to moves
 build\nc_ui.exe --contourtest                    # the pad walks the profile
 build\nc_ui.exe --seedtest                       # nc2's first start seeds a card
 build\nc_ui.exe --edit2test                      # nc2's fields and value editor
+build\nc_ui.exe --pad2test                       # nc2's pad is the file tree
 build\nc_ui.exe --dirtytest                      # a key repaints what it changed
 build\nc_ui.exe --runtest                        # FROM/FULL send the program
 build\nc_ui.exe --blocktest                      # RUN marks the block it runs
@@ -354,6 +355,12 @@ python tools\test_nc_ui.py
   picked - and the pad's helper writes its name as a line under the cursor, lands
   the entry's rows where that name stood, and takes the name back when the pad is
   left without a pick.
+- `--pad2test` checks that nc2's pad *is* the file tree: the digits walked are
+  the address and the file with that name is the slot, a group's label is its
+  file's first row, a slot that holds children opens and one that holds rows does
+  not, pressing an entry writes it where the pad's name stood and the pad stays
+  for the next press (which lands under it), `A` steps back up, and a slot nobody
+  wrote a file for simply is not there.
 - `--dirtytest` checks the repaint contract: a key that changes the screen has
   to ask for the draw itself. RUN's line keys (`B`/`C`) did not - they moved the
   run line and returned without the dirty flag, so the highlight sat on the old

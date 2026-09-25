@@ -67,14 +67,15 @@ static bool nc2_join_row(char *out, size_t out_sz, size_t *used,
     return true;
 }
 
-bool nc2_preset_read(const char *address, char *name, size_t name_sz,
-                     char *rows, size_t rows_sz)
+int nc2_preset_read(const char *address, char *name, size_t name_sz,
+                    char *rows, size_t rows_sz)
 {
     char path[64];
     char row[NC2_PRESET_ROW_MAX];
     fs_file_t *fp;
     size_t used = 0u;
     size_t row_used = 0u;
+    int row_count = 0;
     bool first = true;
     bool ok = true;
 
@@ -85,11 +86,11 @@ bool nc2_preset_read(const char *address, char *name, size_t name_sz,
         rows[0] = '\0';
     }
     if (!nc2_preset_path(address, path, sizeof(path))) {
-        return false;
+        return -1;
     }
     fp = fs_open(path, "r");
     if (!fp) {
-        return false;
+        return -1;
     }
     while (fs_available(fp) > 0) {
         char c;
@@ -109,11 +110,14 @@ bool nc2_preset_read(const char *address, char *name, size_t name_sz,
                     strncpy(name, row, name_sz - 1u);
                     name[name_sz - 1u] = '\0';
                 }
-            } else if (rows && rows_sz > 0u) {
-                ok = nc2_join_row(rows, rows_sz, &used, row, row_used);
-                if (!ok) {
-                    break;
+            } else {
+                if (rows && rows_sz > 0u) {
+                    ok = nc2_join_row(rows, rows_sz, &used, row, row_used);
+                    if (!ok) {
+                        break;
+                    }
                 }
+                row_count++;
             }
             row_used = 0u;
             continue;               /* a row longer than the buffer is cut */
@@ -127,12 +131,15 @@ bool nc2_preset_read(const char *address, char *name, size_t name_sz,
                 strncpy(name, row, name_sz - 1u);
                 name[name_sz - 1u] = '\0';
             }
-        } else if (rows && rows_sz > 0u) {
-            ok = nc2_join_row(rows, rows_sz, &used, row, row_used);
+        } else {
+            if (rows && rows_sz > 0u) {
+                ok = nc2_join_row(rows, rows_sz, &used, row, row_used);
+            }
+            row_count++;
         }
     }
     fs_close(fp);
-    return ok;
+    return ok ? row_count : -1;
 }
 
 int nc2_preset_write(const char *address, const char *name, const char *rows)
@@ -198,4 +205,98 @@ bool nc2_presets_any(void)
     }
     fs_close(dir);
     return false;
+}
+
+/* --- the pad's address, and what one slot of it holds --------------------- */
+
+void nc2_address_reset(char *address)
+{
+    if (address) {
+        address[0] = '\0';
+    }
+}
+
+bool nc2_address_push(char *address, char digit)
+{
+    size_t len;
+
+    if (!address || digit < '1' || digit > '9') {
+        return false;
+    }
+    len = strlen(address);
+    if (len + 1u > NC2_ADDR_MAX) {
+        return false;               /* the pad is three levels deep */
+    }
+    address[len] = digit;
+    address[len + 1u] = '\0';
+    return true;
+}
+
+void nc2_address_pop(char *address)
+{
+    size_t len;
+
+    if (!address) {
+        return;
+    }
+    len = strlen(address);
+    if (len > 0u) {
+        address[len - 1u] = '\0';
+    }
+}
+
+/* True when anything lives under `address` - which is what makes it a pad
+   rather than a row of program text. Nine stat() calls, and only for the slot
+   the operator pressed. */
+static bool nc2_has_children(const char *address)
+{
+    char child[NC2_ADDR_MAX + 2];
+    char digit;
+
+    if (strlen(address) >= NC2_ADDR_MAX) {
+        return false;
+    }
+    for (digit = '1'; digit <= '9'; digit++) {
+        snprintf(child, sizeof(child), "%s%c", address, digit);
+        if (nc2_preset_exists(child)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int nc2_slot(const char *address, char digit, char *label, size_t label_sz)
+{
+    char child[NC2_ADDR_MAX + 2];
+    char name[NC2_PRESET_ROW_MAX];
+    char rows[NC2_PRESET_ROW_MAX];
+    int kind = NC2_SLOT_EMPTY;
+
+    if (label && label_sz > 0u) {
+        label[0] = '\0';
+    }
+    if (!address || digit < '1' || digit > '9') {
+        return NC2_SLOT_EMPTY;
+    }
+    snprintf(child, sizeof(child), "%s%c", address, digit);
+    /* A file with a name but no rows is a pad's name, not an entry: pressing it
+       writes nothing, it only opens what is under it. */
+    if (nc2_preset_read(child, name, sizeof(name), rows, sizeof(rows)) > 0) {
+        kind |= NC2_SLOT_ENTRY;
+    }
+    if (nc2_has_children(child)) {
+        kind |= NC2_SLOT_PAD;
+    }
+    if (label && label_sz > 0u) {
+        if (name[0]) {
+            strncpy(label, name, label_sz - 1u);
+            label[label_sz - 1u] = '\0';
+        } else {
+            /* A pad with no file of its own still has to read as something:
+               its digits are what the operator typed to get here. */
+            strncpy(label, child, label_sz - 1u);
+            label[label_sz - 1u] = '\0';
+        }
+    }
+    return kind;
 }

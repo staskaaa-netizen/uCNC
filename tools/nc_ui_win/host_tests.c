@@ -1666,6 +1666,138 @@ static void host_editor_flush(void)
     host_pump(40u);
 }
 
+/* The pad is the file tree: the digits walked are the address, and the slot at
+   that address is the file with that name. There is no menu table anywhere -
+   the only names are the files' own first rows - and this is what walking it
+   looks like on the card the panel ships:
+
+     1. the root holds the groups and nothing else, and a group's label is its
+        file's name;
+     2. a slot that is a pad opens (its address grows a digit), a slot that is an
+        entry does not;
+     3. pressing an entry writes it where the pad's name stood, the pad stays for
+        the next press, and the next press lands under it;
+     4. `A` steps back up one level, and the tree answers for the level it is
+        at: the same digit means a different thing under a different address;
+     5. an address nobody wrote a file for is simply not there. */
+static int host_pad2test(void)
+{
+    char address[NC2_ADDR_MAX + 1];
+    char label[NC2_PRESET_ROW_MAX];
+    char rows[NC2_PRESET_ROW_MAX * 3];
+    nc2_document_t doc;
+    int kind;
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!nc2_boot_seed()) {
+        puts("pad2test: FAIL the card was not seeded");
+        return 1;
+    }
+
+    /* 1. the root. */
+    nc2_address_reset(address);
+    kind = nc2_slot(address, '1', label, sizeof(label));
+    if (kind != NC2_SLOT_PAD || strcmp(label, "OPS") != 0) {
+        printf("pad2test: FAIL the root's `1` is kind %d, \"%s\"\n", kind, label);
+        failures++;
+    }
+    kind = nc2_slot(address, '4', label, sizeof(label));
+    if (kind != NC2_SLOT_PAD || strcmp(label, "G7X") != 0) {
+        printf("pad2test: FAIL the root's `4` is kind %d, \"%s\"\n", kind, label);
+        failures++;
+    }
+    if (nc2_slot(address, '7', label, sizeof(label)) != NC2_SLOT_EMPTY) {
+        puts("pad2test: FAIL the root's `7` is not empty");
+        failures++;
+    }
+
+    /* 2. into G7X, where the slots are entries, not pads. */
+    if (!nc2_address_push(address, '4') || strcmp(address, "4") != 0) {
+        puts("pad2test: FAIL the address did not grow");
+        failures++;
+    }
+    kind = nc2_slot(address, '1', label, sizeof(label));
+    if (kind != NC2_SLOT_ENTRY || strcmp(label, "OD ROUGH") != 0) {
+        printf("pad2test: FAIL G7X `1` is kind %d, \"%s\"\n", kind, label);
+        failures++;
+    }
+    if (nc2_slot(address, '7', label, sizeof(label)) != NC2_SLOT_EMPTY) {
+        puts("pad2test: FAIL `7` under G7X is not empty (nothing ships there)");
+        failures++;
+    }
+
+    /* 3. pressing it: the entry lands where the pad's name stood, and the pad is
+       still there for the next press. */
+    nc2_document_init(&doc);
+    (void)nc2_insert_line(&doc, 0u, "G0 X52 Z2");
+    doc.cursor = 0u;
+    if (!nc2_pad_open(&doc, label)) {
+        puts("pad2test: FAIL the pad did not open on the slot's name");
+        return 1;
+    }
+    if (nc2_preset_read("41", 0, 0u, rows, sizeof(rows)) <= 0 ||
+        !nc2_pad_write(&doc, rows)) {
+        puts("pad2test: FAIL the entry's rows were not read and written");
+        failures++;
+    }
+    if (doc.line_count != 2u ||
+        strcmp(doc.lines[1], "G71 U0 R0 X0 Z0 F0 P0 Q0") != 0 ||
+        doc.cursor != 1u || doc.field != 0 || !nc2_pad_active(&doc)) {
+        printf("pad2test: FAIL the entry reads \"%s\"\n",
+               doc.line_count > 1u ? doc.lines[1] : "");
+        failures++;
+    }
+    (void)nc2_key(&doc, NC2_KEY_ACCEPT, 0);
+    (void)nc2_pad_write(&doc, "G1 X30 Z0");
+    if (doc.line_count != 3u || strcmp(doc.lines[2], "G1 X30 Z0") != 0) {
+        printf("pad2test: FAIL the second press wrote \"%s\"\n",
+               doc.line_count > 2u ? doc.lines[2] : "");
+        failures++;
+    }
+    nc2_pad_close(&doc);
+    if (doc.line_count != 3u) {
+        puts("pad2test: FAIL closing the pad took a written row");
+        failures++;
+    }
+
+    /* 4. back up, and the same digit means something else. */
+    nc2_address_pop(address);
+    if (strcmp(address, "") != 0) {
+        puts("pad2test: FAIL the address did not shrink");
+        failures++;
+    }
+    kind = nc2_slot(address, '4', label, sizeof(label));
+    if (kind != NC2_SLOT_PAD) {
+        puts("pad2test: FAIL the root's `4` is not a pad again");
+        failures++;
+    }
+
+    /* 5. and the file tree is the whole story: an address with no file is not
+       there, and neither is a level below the pad's depth. */
+    if (!nc2_address_push(address, '7') || !nc2_address_push(address, '1') ||
+        !nc2_address_push(address, '1') || nc2_address_push(address, '1')) {
+        puts("pad2test: FAIL the address grew past its depth");
+        failures++;
+    }
+    nc2_address_reset(address);
+    if (nc2_slot(address, '7', label, sizeof(label)) != NC2_SLOT_EMPTY ||
+        nc2_slot(address, '9', label, sizeof(label)) != NC2_SLOT_EMPTY ||
+        nc2_slot(address, '0', label, sizeof(label)) != NC2_SLOT_EMPTY) {
+        puts("pad2test: FAIL a slot nobody wrote answers");
+        failures++;
+    }
+
+    if (failures) {
+        printf("pad2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("pad2test: PASS the pad is the file tree, and every press writes where "
+         "the pad's name stood");
+    return 0;
+}
+
 /* nc2's value editor: a line is cut into fields at its letters, the keys walk
    them, and what is typed replaces the value that was there. The dumb editor the
    bench asked for, so the checks are about its two rules - where a field begins
@@ -1791,25 +1923,25 @@ static int host_edit2test(void)
         }
     }
 
-    /* 5. the pad's helper. */
+    /* 5. the pad. */
     nc2_document_init(&doc);
     (void)nc2_insert_line(&doc, 0u, "G0 X52 Z2");
     doc.cursor = 0u;
-    if (!nc2_helper_open(&doc, "G7X") || !nc2_helper_active(&doc) ||
+    if (!nc2_pad_open(&doc, "G7X") || !nc2_pad_active(&doc) ||
         doc.line_count != 2u || doc.cursor != 1u ||
         strcmp(doc.lines[1], "G7X") != 0) {
         printf("edit2test: FAIL the helper's name is \"%s\"\n",
                doc.line_count > 1u ? doc.lines[1] : "");
         failures++;
     }
-    if (!nc2_helper_write(&doc, "G71 U1 R0.5 X0.5 Z0.5 F450 P10 Q20\n"
+    if (!nc2_pad_write(&doc, "G71 U1 R0.5 X0.5 Z0.5 F450 P10 Q20\n"
                                 "N10 G1 X30 Z0\n"
                                 " C2\n"
                                 "N20 G1 X50 Z-15")) {
         puts("edit2test: FAIL the entry was not written");
         failures++;
     }
-    if (nc2_helper_active(&doc) || doc.line_count != 4u ||
+    if (!nc2_pad_active(&doc) || doc.line_count != 4u ||
         strcmp(doc.lines[0], "G0 X52 Z2") != 0 ||
         strcmp(doc.lines[1], "G71 U1 R0.5 X0.5 Z0.5 F450 P10 Q20") != 0 ||
         strcmp(doc.lines[2], "N10 G1 X30 Z0 C2") != 0 ||
@@ -1826,15 +1958,31 @@ static int host_edit2test(void)
         failures++;
     }
 
-    /* 6. and leaving the pad without a pick takes the name back. */
+    /* 6. the pad stays: a second press writes under the first, which is what
+       makes a profile walk one press per point. */
+    (void)nc2_key(&doc, NC2_KEY_ACCEPT, 0);             /* let the value go */
+    if (!nc2_pad_write(&doc, "N30 G1 X60 Z-15") || doc.line_count != 5u ||
+        strcmp(doc.lines[4], "N30 G1 X60 Z-15") != 0 || doc.cursor != 4u) {
+        printf("edit2test: FAIL the second press wrote \"%s\"\n",
+               doc.line_count > 4u ? doc.lines[4] : "");
+        failures++;
+    }
+    nc2_pad_close(&doc);
+    if (nc2_pad_active(&doc) || doc.line_count != 5u ||
+        strcmp(doc.lines[4], "N30 G1 X60 Z-15") != 0) {
+        puts("edit2test: FAIL closing the pad took a written row with it");
+        failures++;
+    }
+
+    /* 7. and leaving a pad that wrote nothing takes the name line back. */
     nc2_document_init(&doc);
     (void)nc2_insert_line(&doc, 0u, "G0 X52 Z2");
     doc.cursor = 0u;
-    (void)nc2_helper_open(&doc, "WORD");
-    nc2_helper_cancel(&doc);
-    if (nc2_helper_active(&doc) || doc.line_count != 1u || doc.cursor != 0u ||
+    (void)nc2_pad_open(&doc, "WORD");
+    nc2_pad_close(&doc);
+    if (nc2_pad_active(&doc) || doc.line_count != 1u || doc.cursor != 0u ||
         strcmp(doc.lines[0], "G0 X52 Z2") != 0) {
-        puts("edit2test: FAIL the cancelled helper left something behind");
+        puts("edit2test: FAIL a pad that wrote nothing left its name behind");
         failures++;
     }
 
@@ -1843,7 +1991,7 @@ static int host_edit2test(void)
         return 1;
     }
     puts("edit2test: PASS the fields walk, the value is typed over, and the "
-         "pad's name is the line the entry lands on");
+         "pad writes one entry per press");
     return 0;
 }
 
@@ -1937,18 +2085,18 @@ static int host_seedtest(void)
     }
 
     /* 3. the round trip: what the file says is what a key will write. */
-    if (!nc2_preset_read("34", name, sizeof(name), rows, sizeof(rows)) ||
+    if (nc2_preset_read("34", name, sizeof(name), rows, sizeof(rows)) != 1 ||
         strcmp(name, "U INC") != 0 || strcmp(rows, " U") != 0) {
         printf("seedtest: FAIL U INC reads \"%s\" / \"%s\"\n", name, rows);
         failures++;
     }
-    if (!nc2_preset_read("16", name, sizeof(name), rows, sizeof(rows)) ||
+    if (nc2_preset_read("16", name, sizeof(name), rows, sizeof(rows)) != 4 ||
         strcmp(name, "SETUP") != 0 ||
         strcmp(rows, "G970 X0 U0 Z0 W0\nG971 X0 Z0 I0 E0\nG972 C0\nG973 P0") != 0) {
         printf("seedtest: FAIL the setup entry reads \"%s\"\n", rows);
         failures++;
     }
-    if (nc2_preset_read("34", name, sizeof(name), rows, sizeof(rows)) &&
+    if (nc2_preset_read("34", name, sizeof(name), rows, sizeof(rows)) >= 0 &&
         !nc2_preset_exists("34")) {
         puts("seedtest: FAIL a read answered for a file that is not there");
         failures++;
@@ -1972,7 +2120,7 @@ static int host_seedtest(void)
     /* 5. a deleted file means the address is not an entry - and it stays that
        way, because the seed only ever fills a folder with nothing in it. */
     if (!fs_remove("/D/presets/34.txt") || nc2_preset_exists("34") ||
-        nc2_preset_read("34", name, sizeof(name), rows, sizeof(rows))) {
+        nc2_preset_read("34", name, sizeof(name), rows, sizeof(rows)) >= 0) {
         puts("seedtest: FAIL a deleted entry still answers");
         failures++;
     }
@@ -4307,6 +4455,8 @@ int host_tests_run(int argc, char **argv)
             return host_seedtest();
         if (strcmp(argv[i], "--edit2test") == 0)
             return host_edit2test();
+        if (strcmp(argv[i], "--pad2test") == 0)
+            return host_pad2test();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

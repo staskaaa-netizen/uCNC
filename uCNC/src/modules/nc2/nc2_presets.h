@@ -41,10 +41,12 @@ bool nc2_preset_exists(const char *address);
 /* The entry at `address`: the name (the first row) and the rows after it, joined
    with `\n` - a row that continues the one above keeps its leading space, so what
    is read is what was written. `rows` may be NULL when only the name is wanted.
-   False when there is no file: an address with no file is not an entry, and
-   there is no table behind it to fall back on. */
-bool nc2_preset_read(const char *address, char *name, size_t name_sz,
-                     char *rows, size_t rows_sz);
+   The answer is how many rows the file carries, or -1 when there is no file at
+   that address: an address with no file is not an entry, and a file with a name
+   and no rows is a pad's name, not one either. There is no table behind the files
+   to fall back on. */
+int nc2_preset_read(const char *address, char *name, size_t name_sz,
+                    char *rows, size_t rows_sz);
 
 /* Write one entry, and never over one: 1 when it was written, 0 when the file is
    already there, -1 on an I/O error. `rows == NULL` writes the name alone, which
@@ -54,5 +56,21 @@ int nc2_preset_write(const char *address, const char *name, const char *rows);
 /* True when the folder holds at least one entry file: the difference between a
    card the operator has used and one that has never seen an entry. */
 bool nc2_presets_any(void);
+
+/* The address the pad has walked to: the digits themselves, and "" at the root.
+   Pushing is what pressing a slot that holds children does, popping is `A`. */
+#define NC2_ADDR_MAX NC2_PRESET_ADDR_MAX
+void nc2_address_reset(char *address);
+bool nc2_address_push(char *address, char digit);
+void nc2_address_pop(char *address);
+
+/* What one slot of the pad holds: an entry (rows to write), a pad (things under
+   it), both, or nothing. `label` gets the name the slot reads as - the first row
+   of its file, or the address itself when there is a pad there and no file to
+   name it. `label` may be NULL when only the kind is wanted. */
+#define NC2_SLOT_EMPTY 0
+#define NC2_SLOT_ENTRY 1
+#define NC2_SLOT_PAD 2
+int nc2_slot(const char *address, char digit, char *label, size_t label_sz);
 
 #endif

@@ -53,10 +53,14 @@ typedef struct {
     bool drafting;              /* the draft has replaced the value */
     char path[NC2_PATH_MAX];
     bool dirty;
-    /* The helper: the line its name stands on, and where the cursor was. */
-    size_t helper_line;
-    size_t helper_origin;
-    bool helper_open;
+    /* The pad: the line its name stands on (until the first entry lands there),
+       where the cursor was when it opened, whether it is up, and the line the
+       *next* entry goes to - the cursor sits on the first row written (that is
+       the one to edit), while the next press belongs under the last row. */
+    size_t pad_label;
+    size_t pad_origin;
+    size_t pad_next;
+    bool pad_open;
 } nc2_document_t;
 
 /* The keys the editor acts on. The machine's `B`/`C` are one key with two
@@ -95,11 +99,14 @@ bool nc2_pick_field(nc2_document_t *doc, int index);
 void nc2_unpick(nc2_document_t *doc);
 bool nc2_key(nc2_document_t *doc, nc2_key_t key, char ch);
 
-/* The pad's helper: its name as a line under the cursor, and the entry's rows
-   where that line stands. */
-bool nc2_helper_open(nc2_document_t *doc, const char *name);
-bool nc2_helper_write(nc2_document_t *doc, const char *rows);
-void nc2_helper_cancel(nc2_document_t *doc);
-bool nc2_helper_active(const nc2_document_t *doc);
+/* The pad: its name as a line under the cursor while the operator is choosing,
+   and the entry's rows where that line stands. The pad *stays* - pressing a
+   second slot writes under the first - which is what makes a profile walk one
+   press per point; `nc2_pad_close` is how it ends, and it takes the name line
+   back only when nothing was written. */
+bool nc2_pad_open(nc2_document_t *doc, const char *name);
+bool nc2_pad_write(nc2_document_t *doc, const char *rows);
+void nc2_pad_close(nc2_document_t *doc);
+bool nc2_pad_active(const nc2_document_t *doc);
 
 #endif

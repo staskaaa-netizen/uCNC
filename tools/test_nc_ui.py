@@ -344,6 +344,17 @@ if __name__ == "__main__":
         fail("FAIL nc2's value editor does not walk the fields",
              run.stdout[-1500:] or run.stderr[-1500:])
 
+    # nc2's pad: the digits walked are the address, the file with that name is
+    # the slot, and pressing one writes where the pad's name stood.
+    root = OUT / "pad2-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--pad2test"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "pad2test: PASS" not in run.stdout:
+        fail("FAIL nc2's pad does not answer with the file tree",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
     # The operator's own program and tool table, kept with the NC module
     # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
     # the firmware writes its state next to them, then checked through the

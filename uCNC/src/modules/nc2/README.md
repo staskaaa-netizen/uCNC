@@ -134,6 +134,13 @@ settle. Anything else is a file.
    while `A` steps up one level. It needs no marker row, no flag and no new kind
    of file, and `475.txt` = `END` is the way out.
 
+   **Built that way, with one correction:** the pad does not close when an entry
+   lands - it *stays*, whatever kind of slot was pressed. So there is no marker
+   row, no flag and no `END` file: the walk continues because nothing ends it,
+   and `A` is the way out (at the root, `A` is the mode key). The one thing this
+   drops is the `5`-to-end the old pad had; see the note at the end of this
+   page.
+
 ## The address tree
 
 The digits pressed are the address, and the file with that name is the slot:
@@ -148,6 +155,20 @@ Each rule is one line: **a digit opens its slot - rows are written, children are
 a pad; `A` goes up a level**, and at the root `A` is the mode key. The root
 therefore holds the six groups `nc` gave footer keys to (plus three spare) with
 nothing hardcoded about them but their files.
+
+Two things the pad does that the files therefore describe rather than the code:
+the pad writes its name as a line at the cursor while the operator is choosing
+(the title and the place the entry lands), and the entry's rows land where that
+name stood. A second press lands under the *last* row of the first entry, not
+under the cursor - the cursor stays on the first row, which is the one to edit.
+
+**Open, and one word from the bench decides it:** the old pad ended with `5`.
+Here the pad ends with `A`, because `5` is a slot like any other - `25.txt` is
+`M5`, `35.txt` is `W INC`, and a rule that swallowed the centre key would make
+both unreachable. If `5` should end the pad instead, the smallest way is *an
+empty centre ends the pad*: `5` closes it when the address has no `x5` file, and
+the shipped `M5`/`W INC` keep working because their files are there. Say which
+and it is five lines.
 
 ## `nc_g7x` moves to g7x, and nc2 has no scan at all
 
@@ -188,7 +209,8 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | | |
 | --- | --- |
 | built | `nc2_presets.c` (address -> file, read, write), `nc2_boot.c` (the shipped entries, the one-time seed, the logo), `nc2.c` (the document, the fields, the value editor's keys, the pad's helper and its label line), `--seedtest` and `--edit2test` |
-| next | the 3x3 pad and its tree over the files, the code pane and the floating DRO (`nc2_visual.c`), the card's file list (`nc2_files.c`), then state/run/emit/preview |
+| built (2) | the pad's tree: `nc2_address_*` and `nc2_slot()` in `nc2_presets.c`, `nc2_pad_open/write/close()` in `nc2.c`, `--pad2test` |
+| next | the screen: the code pane, the 3x3 in the corner, the floating DRO (`nc2_visual.c`), then the card's file list (`nc2_files.c`) |
 | then | the g7x block scan moving to `g7x_blocks.c`, the tool table's screen, and the panel switch: `nc` out, `nc2` in, one commit |
 
 One upstream landmine was found on the way, in `file_system.c`: `fs_opendir()`

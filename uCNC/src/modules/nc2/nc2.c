@@ -12,8 +12,9 @@ void nc2_document_init(nc2_document_t *doc)
     memset(doc, 0, sizeof(*doc));
     doc->cursor = 0u;
     doc->field = -1;
-    doc->helper_line = (size_t)-1;
-    doc->helper_origin = 0u;
+    doc->pad_label = (size_t)-1;
+    doc->pad_origin = 0u;
+    doc->pad_next = 0u;
     doc->lines[0][0] = '\0';
 }
 
@@ -148,6 +149,9 @@ void nc2_cursor_move(nc2_document_t *doc, int delta)
     }
     if ((size_t)at != doc->cursor) {
         doc->cursor = (size_t)at;
+        /* Moving by hand is saying "I am working here": the pad's next entry
+           belongs under where the operator put the cursor. */
+        doc->pad_next = doc->cursor + 1u;
         nc2_unpick(doc);
     }
 }
@@ -387,14 +391,14 @@ bool nc2_key(nc2_document_t *doc, nc2_key_t key, char ch)
     }
 }
 
-/* --- the pad's helper ----------------------------------------------------- */
+/* --- the pad -------------------------------------------------------------- */
 
-bool nc2_helper_active(const nc2_document_t *doc)
+bool nc2_pad_active(const nc2_document_t *doc)
 {
-    return doc && doc->helper_open;
+    return doc && doc->pad_open;
 }
 
-bool nc2_helper_open(nc2_document_t *doc, const char *name)
+bool nc2_pad_open(nc2_document_t *doc, const char *name)
 {
     size_t origin;
     size_t at;
@@ -402,7 +406,7 @@ bool nc2_helper_open(nc2_document_t *doc, const char *name)
     if (!doc || !name) {
         return false;
     }
-    nc2_helper_cancel(doc);
+    nc2_pad_close(doc);
     nc2_unpick(doc);
     if (doc->line_count == 0u) {
         origin = 0u;
@@ -415,33 +419,39 @@ bool nc2_helper_open(nc2_document_t *doc, const char *name)
         return false;
     }
     doc->cursor = at;
-    doc->helper_origin = origin;
-    doc->helper_line = at;
-    doc->helper_open = true;
+    doc->pad_origin = origin;
+    doc->pad_label = at;
+    doc->pad_next = at;
+    doc->pad_open = true;
     return true;
 }
 
-void nc2_helper_cancel(nc2_document_t *doc)
+void nc2_pad_close(nc2_document_t *doc)
 {
-    if (!doc || !doc->helper_open) {
+    if (!doc || !doc->pad_open) {
         return;
     }
-    if (doc->helper_line < doc->line_count) {
-        (void)nc2_delete_line(doc, doc->helper_line);
+    /* The name line stands where the entry would have landed: if nothing was
+       written there it goes, and the cursor is where the pad found it. Once an
+       entry has landed the line is the operator's program and stays. */
+    if (doc->pad_label < doc->line_count) {
+        (void)nc2_delete_line(doc, doc->pad_label);
+        if (doc->pad_origin < doc->line_count) {
+            doc->cursor = doc->pad_origin;
+        }
     }
-    if (doc->helper_origin < doc->line_count) {
-        doc->cursor = doc->helper_origin;
-    }
-    doc->helper_line = (size_t)-1;
-    doc->helper_open = false;
+    doc->pad_label = (size_t)-1;
+    doc->pad_open = false;
     nc2_unpick(doc);
 }
 
-/* The rows of an entry land where the helper's name stood. A row that starts
-   with a space continues the row above it instead of starting a new one, which
-   is how a value joins a line already written; the first row that is written is
-   where the cursor and the picked field go. */
-bool nc2_helper_write(nc2_document_t *doc, const char *rows)
+/* The rows of an entry land where the pad's name stood - and, on the presses
+   after the first, one under the other, so a contour is written by pressing the
+   same pad again and again. A row that starts with a space continues the row
+   above it instead of starting a new one, which is how a value joins a line
+   already written; the first row written is where the cursor and the picked
+   field go. */
+bool nc2_pad_write(nc2_document_t *doc, const char *rows)
 {
     const char *row;
     size_t at;                  /* where the entry starts, at the helper's line */
@@ -452,13 +462,13 @@ bool nc2_helper_write(nc2_document_t *doc, const char *rows)
     if (!doc || !rows) {
         return false;
     }
-    if (doc->helper_open) {
-        at = doc->helper_line;
+    if (doc->pad_label != (size_t)-1) {
+        at = doc->pad_label;
         if (at >= doc->line_count) {
             return false;
         }
     } else {
-        at = doc->cursor + 1u;
+        at = doc->pad_next;
         if (nc2_insert_line(doc, at, "")) {
             doc->cursor = at;
         } else {
@@ -506,11 +516,15 @@ bool nc2_helper_write(nc2_document_t *doc, const char *rows)
         }
         row = end + 1;
     }
-    doc->helper_line = (size_t)-1;
-    doc->helper_open = false;
+    doc->pad_label = (size_t)-1;
     if (first != (size_t)-1) {
         doc->cursor = first;
         (void)nc2_pick_field(doc, 0);
+    }
+    if (last != (size_t)-1) {
+        /* Under the last row written, not under the cursor: the cursor is on the
+           first row, where the value to edit is. */
+        doc->pad_next = last + 1u;
     }
     return wrote;
 }

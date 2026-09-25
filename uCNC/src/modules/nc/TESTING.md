@@ -398,6 +398,19 @@ Use this as a short hardware pass list while NC is still pre-alpha.
   compares the drawings, so the preview's contour and its callouts read the rule
   too. Machine checks: a `G1 W-10` travels 10 mm, and a `U` is a diameter
   increment in G7 and a radius one in G8.
+- The contour pad (`4 G7X`, then `7`): every press writes one `G1` row below the
+  cursor - the moved axis at the step (`#` steps 0.5/1/2/5/10/20/50 mm), the
+  other carried over from the point the row above reached - the value left
+  picked to type over, `*` deletes the row just written, and `5` ends the
+  contour. The point is read out of the program (`nc_emit_line_is_direct()` and
+  `nc_emit_line_point()`), so a `G0` before the profile is what the first press
+  counts from and a program with no position starts at the stock corner.
+  Software check: `tools/test_nc_ui.py --contourtest` (the first point continues
+  from the program, the walk carries the axis that does not move, `#` steps,
+  `*` deletes, `5` ends, the empty program starts at the stock corner, leaving
+  the screen closes the pad, and the rows expand as the lines the sender reads).
+  Machine checks: the walked profile runs as written, inside a `G71` block and
+  outside one, and the reserved corners cut the chamfer/taper they promise.
 - Footer: **eight slots on every screen** - the same key size in the same places
   from screen to screen, with the entries a screen does not use left empty (the
   strip used to grow to nine and shrink its keys on RUN and the file list).

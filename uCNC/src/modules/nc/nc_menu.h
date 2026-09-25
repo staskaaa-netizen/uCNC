@@ -67,7 +67,10 @@ typedef enum {
     NC_FOOTER_ACTION_TOOL_SELECT,
     NC_FOOTER_ACTION_TOOL_EDIT,
     NC_FOOTER_ACTION_G7X_Q,
-    NC_FOOTER_ACTION_G7X_N
+    NC_FOOTER_ACTION_G7X_N,
+    /* The G7X submenu's `7`: the pad in place of the contour pad, which stays
+       up for every point of the profile until `5` ends it (nc_editor.c). */
+    NC_FOOTER_ACTION_CONTOUR
 } nc_footer_action_t;
 
 typedef struct {

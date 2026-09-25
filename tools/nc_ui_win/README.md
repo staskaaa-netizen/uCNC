@@ -48,6 +48,7 @@ build\nc_ui.exe --files tmp\ncroot --presettest # check the /D/presets entries
 build\nc_ui.exe --streamtest                     # a jog delivers both blocks
 build\nc_ui.exe --padtest                        # the keypad is the machine's
 build\nc_ui.exe --uwtest                         # increments collapse to moves
+build\nc_ui.exe --contourtest                    # the pad walks the profile
 build\nc_ui.exe --dirtytest                      # a key repaints what it changed
 build\nc_ui.exe --runtest                        # FROM/FULL send the program
 build\nc_ui.exe --blocktest                      # RUN marks the block it runs
@@ -318,6 +319,13 @@ MODE key still cycles for the machine.
   question the sender asks (`nc_emit_line_is_direct()`), which
   `tools/test_nc_ui.py` checks by rendering the two spellings and comparing the
   drawings.
+- `--contourtest` checks the contour pad (`4 G7X`, then `7`): each press writes
+  one `G1` row below the cursor - the moved axis at the step, the other carried
+  over from the point the row above reached - `#` steps the distance, `*` is the
+  panel's delete on the row just written, `5` ends the contour, and the pad
+  stays up until then. It reads the program back off the card after every press,
+  including the case with no position anywhere in it (the stock corner) and the
+  screen change that closes the pad.
 - `--dirtytest` checks the repaint contract: a key that changes the screen has
   to ask for the draw itself. RUN's line keys (`B`/`C`) did not - they moved the
   run line and returned without the dirty flag, so the highlight sat on the old

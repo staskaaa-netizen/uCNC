@@ -68,7 +68,7 @@ signals the tool drives (PWM0/DOUT0) instead of an encoder the PC does not have
 (`tools/nc_ui_win/host_spindle.c`). `python tools/test_nc_ui.py` builds the
 station, renders a panel frame and a whole-bench frame headlessly, and runs every
 headless check (`--fstest`, `--presettest`, `--streamtest`, `--padtest`,
-`--spindletest`, `--feedtest`, `--uwtest`, `--runtest`, `--blocktest`,
+`--spindletest`, `--feedtest`, `--uwtest`, `--contourtest`, `--runtest`, `--blocktest`,
 `--pacetest`, `--stoptest`, ...). Its README is the operator's usage.
 
 The station ships from GitHub: `.github/workflows/nc-ui-windows.yaml` builds it

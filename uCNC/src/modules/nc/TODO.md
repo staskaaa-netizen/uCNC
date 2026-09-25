@@ -7,8 +7,9 @@ Read this first; the sections below are the history behind it.
 Software status: `python tools/test_g7x.py all` (ALL PASS, 0 failures),
 `python tools/test_nc_sender.py`, `python tools/test_nc_ui.py` (panel frame,
 3x3 helper, the preset contract, `--uwtest` for Fanuc's `U`/`W` increments, and
-`--streamtest` for the panel's one-shot blocks, `--runtest`, `--dirtytest` and
-`--blocktest` for what RUN marks and sends) all pass, `pio run -e
+`--contourtest` for the G7X pad's profile walk, and `--streamtest` for the
+panel's one-shot blocks, `--runtest`, `--dirtytest` and `--blocktest` for what
+RUN marks and sends) all pass, `pio run -e
 RP2350-LEANCAM-LVDS` builds and was uploaded to the board (the single later
 change was a comment, so the running image matches this source),
 `-e RP2350-G7X-MODULE` builds. Only what says "bench" below is verified on the
@@ -1129,6 +1130,28 @@ possible today and only needs saying out loud.
   Bench still to do: the increments move the machine (a `G1 W-10` that travels
   10 mm, and a `U` that halves/doubles per G7/G8), and the two callouts on the
   glass. The suites prove resolution, ordering and equality - not motion.
+- [x] **And the pad under `7` walks the profile again - without a builder.**
+  Done 2026-09-25, the bench straight after the increments: *"it should provide
+  same result as before so each new press each new g1 with x/y as needed. and it
+  does not need its own 3 digits way. ie - it is also convenient as just contour
+  builder too. so put it all under 7 ? * will be still delete just hidden. so 7
+  will be left afloat until 5 is pressed."* The G7X pad's `7` (the slot `DRAW`
+  used) turns the editor's own three-by-three into the profile pad: `2`/`8` X,
+  `4`/`6` Z, corners both, `#` steps the distance, `*` is the panel's own delete
+  on the row just written, `5` ends it - and the pad stays up until then, which
+  is the "cycle back and forth". Each press writes one `G1` row below the
+  cursor, the moved axis at the step with the other carried over, the value left
+  picked to type over.
+
+  What makes it ~150 lines instead of the builder's 728: the point is read out
+  of the program itself (`nc_emit_line_is_direct()` + `nc_emit_line_point()`,
+  the same rule the sender and the preview use), so there is no point state, no
+  block discovery, no header or end mark to insert and no session to roll back;
+  and the rows land under the cursor, so the next press has nothing to
+  reconstruct. It also does not care whether it is inside a cycle - the bench's
+  point that it "is also convenient as just contour builder too". Software check:
+  `tools/test_nc_ui.py --contourtest`. Bench: the walked rows move the machine
+  as drawn, inside a `G71` block and outside one.
 - [ ] **A word the pads do not offer is addable from the card today.** Every
   helper entry is a section, and a section whose id is a free key path appears on
   that pad, so the missing words do not have to wait for code: OPS `12`-`15` and

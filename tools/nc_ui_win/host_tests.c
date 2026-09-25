@@ -1620,6 +1620,15 @@ static void host_editor_save(void)
     host_pump(40u);
 }
 
+/* The same, without the cancel: the contour pad has to *stay* up while the
+   program is written, so the flush is reached the way the panel reaches it -
+   by leaving the screen alone. */
+static void host_editor_flush(void)
+{
+    mcu_unit_test_advance_time(2000000u);
+    host_pump(40u);
+}
+
 /* Headless check of the editor's typed-key paths - the ones a frame dump cannot
    see. A typed character has to reach the thing that acts on it:
 
@@ -1942,7 +1951,216 @@ static int host_editortest(void)
     return 0;
 }
 
+/* The expansion, declared here because the pad's check reads it: the
+   definitions sit with the other emit helpers below. */
 #define HOST_EMIT_MAX 400
+static bool host_emit_lines(const nc_document_t *doc,
+                            char lines[][NC_MAX_LINE_LEN],
+                            size_t max,
+                            size_t *count,
+                            g7x_result_t *err);
+
+/* The contour pad: `4 G7X`, then `7`, and every press writes one row of the
+   profile - the axis that moves at the step, the other carried over from the
+   point the row above reached - with the pad still up for the next press until
+   `5`. Every check reads the program back off the card, because the rows are
+   the whole point of the pad:
+
+     1. `4` `7` opens it, and the first press continues from the program's own
+        point (the `G0 X52 Z2` above it) instead of inventing one;
+     2. a press, then another, write one row each, in order, and the axis that
+        does not move is carried over;
+     3. while the word the pad picked is still picked, the digits are the
+        editor's - the value is typed over the prefill - and `D` hands the pad
+        back its digits;
+     4. `#` steps the distance, so the next row moves by the new step;
+     5. `*` drops the point: the row being entered goes, and the pad keeps no
+        undo of its own;
+     6. `5` ends the contour;
+     7. with no point anywhere in the program, the first row starts at the
+        stock's corner, which is where a lathe profile starts;
+     8. leaving the screen closes the pad, and the rows already written stay.
+
+   What the pad draws is the editor's own three by three, so a frame is not the
+   check here; where the rows land is what the machine would cut, and the
+   expansion is asked for the same reason. */
+static int host_contourtest(void)
+{
+    static const char *const program = "/D/nc/files/contour.nc";
+    static const char *const fixture = "G0 X52 Z2\n";
+    char lines[HOST_EMIT_MAX][NC_MAX_LINE_LEN];
+    nc_document_t doc;
+    g7x_result_t err = G7X_OK;
+    size_t emitted = 0u;
+    int failures = 0;
+    unsigned i;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    if (!host_fs_write_text(program, fixture) ||
+        !host_fs_write_text("/D/nc_state.txt",
+                            "MODE=EDIT\nEDIT=/D/nc/files/contour.nc\n")) {
+        puts("contourtest: FAIL cannot set up the fixture");
+        return 1;
+    }
+    host_init_core();
+    nc_visual_select_mode(NC_MODE_PROGRAM);
+    host_pump_idle(64u);
+
+    /* 1. the pad opens on the G7X submenu's `7`, from the program's own point. */
+    host_press('4');
+    host_press('7');
+    if (!nc_editor_contour_active()) {
+        puts("contourtest: FAIL `4` `7` did not open the contour pad");
+        return 1;
+    }
+    host_press('2');                            /* X+ */
+    /* 3. the word the pad picked is the editor's while it is picked: type the
+       real value over the step's prefill, then `D` gives the pad its digits
+       back. */
+    host_press('3');
+    host_press('0');
+    nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
+    host_editor_flush();
+    nc_document_init(&doc);
+    if (nc_load_file(&doc, program) != NC_OK || doc.line_count != 2u ||
+        strcmp(doc.lines[1].text, "G1 X30 Z2") != 0) {
+        printf("contourtest: FAIL the first point is \"%s\"\n",
+               doc.line_count > 1u ? doc.lines[1].text : "");
+        failures++;
+    } else {
+        puts("contourtest: the point continues from the program, and its value is "
+             "typed over the prefill");
+    }
+
+    /* 2. the next press reads the point from the row just written, and carries
+       the axis that does not move. */
+    host_press('4');                            /* Z- */
+    host_editor_flush();
+    nc_document_init(&doc);
+    if (nc_load_file(&doc, program) != NC_OK || doc.line_count != 3u ||
+        strcmp(doc.lines[1].text, "G1 X30 Z2") != 0 ||
+        strcmp(doc.lines[2].text, "G1 X30 Z1.5") != 0) {
+        printf("contourtest: FAIL the second point is \"%s\"\n",
+               doc.line_count > 2u ? doc.lines[2].text : "");
+        failures++;
+    } else {
+        puts("contourtest: the walk carries the axis that does not move");
+    }
+
+    /* 4. `#` steps the distance - but only once the point is settled. */
+    nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
+    nc_visual_handle_key(NC_VISUAL_KEY_FINISH);
+    host_press('2');                            /* X+ by the new step */
+    nc_visual_handle_key(NC_VISUAL_KEY_ACCEPT);
+    host_editor_flush();
+    nc_document_init(&doc);
+    if (nc_load_file(&doc, program) != NC_OK || doc.line_count != 4u ||
+        strcmp(doc.lines[3].text, "G1 X31 Z1.5") != 0) {
+        printf("contourtest: FAIL the stepped point is \"%s\"\n",
+               doc.line_count > 3u ? doc.lines[3].text : "");
+        failures++;
+    } else {
+        puts("contourtest: `#` steps the distance");
+    }
+
+    /* 5. `*` drops the point being entered - the row goes with it - and the pad
+       is still up. */
+    host_press('2');                            /* a point, still being entered */
+    nc_visual_handle_key(NC_VISUAL_KEY_BACKSPACE);
+    if (!nc_editor_contour_active()) {
+        puts("contourtest: FAIL `*` closed the pad");
+        failures++;
+    }
+    host_editor_flush();
+    nc_document_init(&doc);
+    if (nc_load_file(&doc, program) != NC_OK || doc.line_count != 4u) {
+        printf("contourtest: FAIL `*` left %u rows\n", (unsigned)doc.line_count);
+        failures++;
+    } else {
+        puts("contourtest: `*` drops the point being entered");
+    }
+
+    /* 6. `5` ends the contour, and the rows already written stay. */
+    host_press('5');
+    if (nc_editor_contour_active()) {
+        puts("contourtest: FAIL `5` did not end the contour");
+        failures++;
+    }
+    host_editor_flush();
+    nc_document_init(&doc);
+    if (nc_load_file(&doc, program) != NC_OK || doc.line_count != 4u) {
+        printf("contourtest: FAIL `5` left %u rows\n",
+               (unsigned)doc.line_count);
+        failures++;
+    } else {
+        puts("contourtest: `5` ends the contour and keeps what it wrote");
+    }
+
+    /* 7. and the program the pad wrote is a program: the sender reads the rows
+       as they stand, which is what makes a walked profile an ordinary one. */
+    if (!host_emit_lines(&doc, lines, HOST_EMIT_MAX, &emitted, &err) ||
+        emitted != doc.line_count) {
+        printf("contourtest: FAIL the walked rows do not expand (%d)\n",
+               (int)err);
+        failures++;
+    } else {
+        for (i = 0u; i < emitted; i++) {
+            if (strcmp(lines[i], doc.lines[i].text) != 0) {
+                printf("contourtest: FAIL row %u leaves as \"%s\"\n",
+                       i + 1u, lines[i]);
+                failures++;
+                break;
+            }
+        }
+        if (i == emitted) {
+            puts("contourtest: the walked rows are the lines the sender reads");
+        }
+    }
+
+    /* 7. no point in the program at all: the first row starts at the stock's
+       corner, moved by the step `#` left behind (1 mm here, not the 0.5 it
+       started at - the distance is the operator's last choice, not a session's).
+       Everything is deleted first, so there is nothing to continue from. */
+    for (i = 0u; i < 8u; i++) {
+        nc_visual_handle_key(NC_VISUAL_KEY_PREV);
+    }
+    for (i = 0u; i < 5u; i++) {
+        nc_visual_handle_key(NC_VISUAL_KEY_BACKSPACE);
+    }
+    host_press('4');
+    host_press('7');
+    host_press('2');                            /* X+ */
+    host_editor_flush();
+    nc_document_init(&doc);
+    if (nc_load_file(&doc, program) != NC_OK || doc.line_count != 1u ||
+        strcmp(doc.lines[0].text, "G1 X51 Z0") != 0) {
+        printf("contourtest: FAIL the empty program starts at \"%s\"\n",
+               doc.line_count ? doc.lines[0].text : "");
+        failures++;
+    } else {
+        puts("contourtest: an empty program starts at the stock's corner");
+    }
+
+    /* 8. leaving the screen closes the pad, and what it wrote stays. */
+    if (!nc_editor_contour_active()) {
+        puts("contourtest: FAIL the pad did not stay up");
+        failures++;
+    }
+    nc_visual_select_mode(NC_MODE_RUN);
+    if (nc_editor_contour_active()) {
+        puts("contourtest: FAIL the pad outlived the screen");
+        failures++;
+    } else {
+        puts("contourtest: leaving the screen closes the pad");
+    }
+
+    if (failures) {
+        printf("contourtest: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("contourtest: PASS the pad writes the profile, one row per press");
+    return 0;
+}
 
 /* Expand a whole document and keep the lines, so two documents can be compared
    line for line. False with `err` set when the expansion stops. */
@@ -3720,6 +3938,8 @@ int host_tests_run(int argc, char **argv)
             return host_newfiletest();
         if (strcmp(argv[i], "--editortest") == 0)
             return host_editortest();
+        if (strcmp(argv[i], "--contourtest") == 0)
+            return host_contourtest();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

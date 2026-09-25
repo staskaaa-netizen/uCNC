@@ -115,7 +115,8 @@ whole-screen view of what you have written, and `0` opens the file list.
 `B`/`C` step between equal words - field by field, the way the on-screen 3x3
 helper works. The digit keys open the helper: `1 OPS` (the stock and setup
 rows), `2 TOOL`, `3 WORD` (one line by its name or number), `4 G7X` (the lathe
-cycles), `5 THREAD`, `6 PECK`.
+cycles - inside that pad, `7` walks a profile, see below), `5 THREAD`,
+`6 PECK`.
 
 What those entries insert is not burned in: it is the card's own files, which
 you can open and edit like any text file. The section below is what they are.
@@ -234,6 +235,41 @@ sees a `U` or a `W` from a move. The program keeps the spelling you typed.
   `G1 X30 Z0` / `G1 W-15` / `G1 U20` draw the same part and expand to the same
   motion.
 
+### Walking a profile: `4 G7X`, then `7`
+
+The pad can write the contour for you, one row per press. `4` `7` turns the
+three-by-three into the profile pad - `2`/`8` move X, `4`/`6` move Z, the
+corners move both at once - and it stays up until `5` ends it:
+
+```text
+4 7      open it on the line the profile continues from
+2 4 6    one G1 per press, the axis that does not move is carried over
+digits   while the value is picked, type the number you actually want
+D        take it (and step on to the other axis of a corner)
+#        step the distance (0.5/1/2/5/10/20/50 mm)
+*        take the point back (the panel's own delete key)
+5        end the contour
+```
+
+- **Each press is one line**, written below the cursor: the axis that moves at
+  the step, the other carried over from the point the row above reached, and the
+  value just written left picked so you can type the real number over it.
+- **The digits belong to the value while it is picked**, so a dimension is typed
+  the one way this panel types values; `D` takes it and gives the pad its digits
+  back. `#` accepts it too - and only then does `#` step the distance.
+- **The point comes from the program**, not from a memory of the pad: a `G0`
+  before the cycle is what the first press counts from, and after that each row
+  is what the next one continues from. If the program has no position yet, the
+  first row starts at the stock's corner from the `G971` setup.
+- **It is a contour builder anywhere**, not only inside a cycle: walk a profile
+  with `4` `7` and it is an ordinary list of `G1` rows the machine cuts. Inside
+  a `G71` block the rows are that cycle's profile - insert the cycle first (`4`
+  `1`..`3`), set its `P`/`Q` range (`4` `4`, `4` `5`) and walk it.
+- What it does *not* do: no header, no end mark, no undoing a whole session.
+  The cycle template and the `G80` come from their own keys, and `*` takes back
+  one row at a time. That is the whole pad - about a hundred lines, against the
+  seven-hundred-line builder it replaced.
+
 ## The preset entries - the words the screens insert
 
 Every helper entry that **writes text into the program** is the card's, not the
@@ -287,7 +323,7 @@ name it shipped with.
 
 **A word the pads do not offer** is added the same way, and there is no limit to
 how many: drop a file at an address whose slot is free on the pad you want it on
-- OPS `12`-`15` and `17`-`19`, TOOL `27`-`29`, WORD `36`-`39`, G7X `47` and `49`,
+- OPS `12`-`15` and `17`-`19`, TOOL `27`-`29`, WORD `36`-`39`, G7X `49`,
 THREAD `54`-`59`, PECK `64`-`69`. So `presets\12.txt` reading
 
 ```text
@@ -315,10 +351,11 @@ The entries you are most likely to edit:
 
 Not every key is an entry, and that line is deliberate: **what a key means is the
 panel's; what an entry writes into the program is the card's.** The keys that
-*edit the line* rather than insert text (`4 G7X`'s `4 Q` and `5 N`), the ones
-that take a typed value (`1 SELECT` opens the `T` field), and the ones that run
-an action (the file list, delete, the tool table, saving) are not entries and
-cannot be redefined from the card.
+*edit the line* rather than insert text (`4 G7X`'s `4 Q` and `5 N`, and its `7`,
+which walks a profile a row at a time), the ones that take a typed value (`1
+SELECT` opens the `T` field), and the ones that run an action (the file list,
+delete, the tool table, saving) are not entries and cannot be redefined from the
+card.
 
 ## The card
 

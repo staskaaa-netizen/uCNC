@@ -73,7 +73,11 @@ static const nc_footer_item_t g_nc_submenu_g7x[] = {
     /* The pad's text entries are the card's sections (`[41]`..`[43]`, `[46]`,
        `[48]`); what is left here is what a key *does* rather than writes. */
     { '4', "Q", NC_FOOTER_ACTION_G7X_Q },
-    { '5', "N", NC_FOOTER_ACTION_G7X_N }
+    { '5', "N", NC_FOOTER_ACTION_G7X_N },
+    /* `7` turns the pad into the contour pad: one `G1` per press, the pad in
+       place, `5` to end. It writes rows rather than text of its own, which is
+       why it is here and not an entry the card can fill. */
+    { '7', "DRAW", NC_FOOTER_ACTION_CONTOUR }
 };
 
 static const nc_footer_item_t g_nc_submenu_sync[] = {

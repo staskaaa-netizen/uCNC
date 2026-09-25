@@ -66,6 +66,13 @@ bool nc_editor_selected_word_key(nc_editor_ctx_t *ctx, nc_visual_key_t key, char
 /* The footer's menu entries (cycles, tools, G-code, ops) open the helper. */
 void nc_editor_open_modal(nc_editor_ctx_t *ctx, uint8_t action);
 
+/* The contour pad (`4 G7X`, then `7`): each press writes one `G1` row below the
+   cursor - the axis that moves at the step, the other carried over - and the pad
+   stays up until `5`. `#` steps the distance, `*` is the panel's own delete on
+   the row just written, and leaving the screen closes it. */
+bool nc_editor_contour_active(void);
+void nc_editor_contour_leave(void);
+
 /* A footer action the editor owns: the helper's menus, the one-line inserts,
    the file list with open/new/delete/refresh, saving, and the cursor steps.
    False when the action belongs to another owner. */

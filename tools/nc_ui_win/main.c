@@ -40,6 +40,7 @@
    nc_ui --version        print which build this exe is
    nc_ui --fstest         list /D through the firmware fs_* API
    nc_ui --presettest     check the /D/presets entries contract
+   nc_ui --contourtest    walk a profile with the G7X pad's `7`
    nc_ui --dump-presets DIR
                           write every entry the panel ships into DIR, one file
                           per address (this is how examples\presets is made)

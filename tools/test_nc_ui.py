@@ -308,6 +308,17 @@ if __name__ == "__main__":
         fail("FAIL a keypad key does not decode on both edges",
              run.stdout[-1500:] or run.stderr[-1500:])
 
+    # The contour pad - `4 G7X`, then `7`: every press writes one row of the
+    # profile and the pad stays up until `5`. The check reads the program back
+    # off the card after each press, and its own fixture is written by the test.
+    root = OUT / "contour-root"
+    run = subprocess.run([str(exe), "--files", str(root), "--contourtest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "contourtest: PASS" not in run.stdout:
+        fail("FAIL the contour pad does not write the profile it walks",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
     # The operator's own program and tool table, kept with the NC module
     # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
     # the firmware writes its state next to them, then checked through the

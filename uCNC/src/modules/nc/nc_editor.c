@@ -4,6 +4,7 @@
    handed in. */
 #include "nc_editor.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,11 +12,13 @@
 #include "../../cnc.h"
 #include "../../interface/grbl_stream.h"
 #include "nc_draw.h"
+#include "nc_emit.h"
 #include "nc_files.h"
 #include "nc_g7x.h"
 #include "nc_layout.h"
 #include "nc_menu.h"
 #include "nc_presets.h"
+#include "nc_preview.h"
 #include "nc_run.h"
 #include "nc_state.h"
 #include "nc_text.h"
@@ -279,6 +282,314 @@ static void nc_editor_select_first_value(nc_editor_ctx_t *ctx)
     }
 }
 
+/* --- the contour pad (the G7X submenu's `7`) ------------------------------ */
+
+/* What the pad draws when `7` is pressed: the same three-by-three the editor
+   floats, with the nine keys of a turning profile. `5` is the centre and ends
+   the contour; the corners move both axes, which is what makes a chamfer or a
+   taper one press instead of two. `*` keeps the panel's own delete - it is not
+   on the pad, but the key still takes the row just written back. */
+static const nc_footer_item_t g_nc_editor_contour_items[] = {
+    { '1', "Z- X+", NC_FOOTER_ACTION_NONE },
+    { '2', "X+", NC_FOOTER_ACTION_NONE },
+    { '3', "Z+ X+", NC_FOOTER_ACTION_NONE },
+    { '4', "Z-", NC_FOOTER_ACTION_NONE },
+    { '5', "END", NC_FOOTER_ACTION_NONE },
+    { '6', "Z+", NC_FOOTER_ACTION_NONE },
+    { '7', "Z- X-", NC_FOOTER_ACTION_NONE },
+    { '8', "X-", NC_FOOTER_ACTION_NONE },
+    { '9', "Z+ X-", NC_FOOTER_ACTION_NONE }
+};
+
+/* The distance one press moves: the operator types over the value that lands,
+   so this is a starting point and `#` steps it. Millimetres, like the program
+   the panel writes - the setup's units are the program's. */
+static const float g_nc_editor_contour_steps[] = {
+    0.5f, 1.0f, 2.0f, 5.0f, 10.0f, 20.0f, 50.0f
+};
+
+static bool g_nc_editor_contour_active;
+static uint8_t g_nc_editor_contour_step;
+/* The row just written and the word left picked on it: while both are still
+   under the cursor the point is being *entered*, and the digits belong to the
+   editor's field flow, not to the pad. `D` takes a corner's second word and
+   then closes the point, `*` drops it. */
+static size_t g_nc_editor_contour_point = (size_t)-1;
+static int g_nc_editor_contour_word = -1;
+static int g_nc_editor_contour_next = -1;
+
+static float nc_editor_contour_step_mm(void)
+{
+    return g_nc_editor_contour_steps[g_nc_editor_contour_step];
+}
+
+static void nc_editor_contour_settle(void)
+{
+    g_nc_editor_contour_point = (size_t)-1;
+    g_nc_editor_contour_word = -1;
+    g_nc_editor_contour_next = -1;
+}
+
+/* True while the row just written is still the one being entered: nothing has
+   accepted the value and the cursor has not left it. */
+static bool nc_editor_contour_pending(const nc_editor_ctx_t *ctx)
+{
+    return g_nc_editor_contour_point != (size_t)-1 &&
+           g_nc_editor_contour_point < ctx->doc->line_count &&
+           ctx->doc->cursor_line == g_nc_editor_contour_point &&
+           ctx->doc->selected_word == g_nc_editor_contour_word;
+}
+
+/* A millimetre value as a program spells it: `G1 X30 Z-15`, not
+   `G1 X30.000 Z-15.000`. The value is left picked for typing either way, so
+   this is what the row reads when the operator does not change it. */
+static void nc_editor_mm_text(float value, char *out, size_t out_sz)
+{
+    size_t len;
+
+    snprintf(out, out_sz, "%.3f", (double)value);
+    len = strlen(out);
+    while (len > 0u && out[len - 1u] == '0') {
+        out[--len] = '\0';
+    }
+    if (len > 0u && out[len - 1u] == '.') {
+        out[--len] = '\0';
+    }
+    if (strcmp(out, "-0") == 0) {
+        strcpy(out, "0");
+    }
+}
+
+/* Where the profile is now: the point the row under the cursor leaves the tool
+   at, read out of the program with the same rule the sender and the preview
+   use. An axis the program has not given yet starts at the stock's own corner,
+   which is where a lathe profile starts. */
+static void nc_editor_contour_point(nc_editor_ctx_t *ctx, float *x, float *z)
+{
+    const nc_document_t *doc = ctx->doc;
+    bool x_known = false;
+    bool z_known = false;
+    size_t last = doc->line_count ? doc->cursor_line : (size_t)-1;
+    size_t i;
+
+    *x = 0.0f;
+    *z = 0.0f;
+    for (i = 0u; i < doc->line_count && i <= last; i++) {
+        const char *line = doc->lines[i].text;
+        uint8_t words = 0u;
+        float px = *x;
+        float pz = *z;
+
+        if (!nc_emit_line_is_direct(line)) {
+            continue;                   /* a header's U is not an increment */
+        }
+        if (!nc_emit_line_point(line, &px, &pz, 0, 0u, &words)) {
+            continue;
+        }
+        *x = px;
+        *z = pz;
+        if (words & NC_EMIT_WORD_X_ABS) {
+            x_known = true;
+        }
+        if (words & NC_EMIT_WORD_Z_ABS) {
+            z_known = true;
+        }
+    }
+    if (!x_known || !z_known) {
+        nc_preview_info_t info;
+
+        nc_preview_collect(doc, &info);
+        if (!x_known) {
+            *x = info.stock_x;
+        }
+        if (!z_known) {
+            *z = 0.0f;
+        }
+    }
+}
+
+/* One press: a row of its own, below the cursor, and the cursor on it - which
+   is the whole of the "walk": the next press reads its point from the row just
+   written. The axis that does not move is carried over, the way a program
+   written by hand reads. */
+static bool nc_editor_contour_move(nc_editor_ctx_t *ctx, int dx, int dz)
+{
+    char xs[24];
+    char zs[24];
+    char row[NC_MAX_LINE_LEN];
+    nc_word_t words[24];
+    size_t at = ctx->doc->cursor_line + 1u;
+    float x = 0.0f;
+    float z = 0.0f;
+    float step = nc_editor_contour_step_mm();
+    int count;
+
+    nc_editor_contour_point(ctx, &x, &z);
+    x += (float)dx * step;
+    z += (float)dz * step;
+    nc_editor_mm_text(x, xs, sizeof(xs));
+    nc_editor_mm_text(z, zs, sizeof(zs));
+    snprintf(row, sizeof(row), "G1 X%s Z%s", xs, zs);
+    if (ctx->doc->line_count == 0u) {
+        at = 0u;                    /* an empty program takes its first row */
+    }
+    if (nc_insert_line(ctx->doc, at, row) != NC_OK) {
+        return false;
+    }
+    ctx->doc->cursor_line = at;
+    /* The value the operator is most likely to change is picked: the X word
+       for an X move, the Z word for a Z move, and for a corner the X one - the
+       diameter, the number a lathe hand reads first. */
+    count = nc_parse_words(row, words, 24);
+    ctx->doc->selected_word = -1;
+    g_nc_editor_contour_point = at;
+    g_nc_editor_contour_word = -1;
+    g_nc_editor_contour_next = -1;
+    if (count > 0) {
+        int i;
+
+        for (i = 0; i < count; i++) {
+            char letter = (char)toupper((unsigned char)words[i].letter);
+
+            if ((dx != 0 && letter == 'X') || (dz != 0 && letter == 'Z')) {
+                if (g_nc_editor_contour_word < 0) {
+                    g_nc_editor_contour_word = i;
+                } else {
+                    g_nc_editor_contour_next = i;
+                    break;
+                }
+            }
+        }
+        ctx->doc->selected_word = g_nc_editor_contour_word;
+    }
+    /* A fresh draft, so the first digit typed replaces the value the step
+       prefilled instead of being appended to it. */
+    nc_editor_clear_draft();
+    snprintf(ctx->status, ctx->status_size, "%s  step %.1f mm", row,
+             (double)step);
+    return true;
+}
+
+static void nc_editor_contour_begin(nc_editor_ctx_t *ctx)
+{
+    if (!ctx->editable) {
+        strncpy(ctx->status, "Not editable here", ctx->status_size - 1);
+        return;
+    }
+    g_nc_editor_contour_active = true;
+    snprintf(ctx->status, ctx->status_size, "Contour: 5 ends, # %.1f mm",
+             (double)nc_editor_contour_step_mm());
+    *ctx->dirty = true;
+}
+
+void nc_editor_contour_leave(void)
+{
+    g_nc_editor_contour_active = false;
+    nc_editor_contour_settle();
+}
+
+bool nc_editor_contour_active(void)
+{
+    return g_nc_editor_contour_active;
+}
+
+/* The contour's keys, while its pad is up.
+
+   Two modes, and which one is in force is the editor's own answer: while the
+   word just written is still picked, the digits and the sign are the field's
+   (one way to type a value, not two), `D` takes a corner's second word and then
+   closes the point, `*` drops the row. Once nothing is picked, the digits are
+   the pad's: the directions, `5` ends, `#` steps the distance, `*` takes the row
+   under the cursor back. */
+static bool nc_editor_contour_key(nc_editor_ctx_t *ctx, char ch,
+                                  nc_visual_key_t key)
+{
+    int dx = 0;
+    int dz = 0;
+
+    if (!g_nc_editor_contour_active) {
+        return false;
+    }
+    /* The mode key is the screen's: the pad closes and the screen changes,
+       which is what keeps the rows already written. */
+    if (key == NC_VISUAL_KEY_CANCEL || key == NC_VISUAL_KEY_MODE) {
+        nc_editor_contour_leave();
+        *ctx->dirty = true;
+        return false;
+    }
+    if (nc_editor_contour_pending(ctx)) {
+        if (ch == 'D') {
+            if (g_nc_editor_contour_next >= 0) {
+                g_nc_editor_contour_word = g_nc_editor_contour_next;
+                g_nc_editor_contour_next = -1;
+                ctx->doc->selected_word = g_nc_editor_contour_word;
+                nc_editor_clear_draft();
+                snprintf(ctx->status, ctx->status_size, "%s",
+                         ctx->doc->lines[g_nc_editor_contour_point].text);
+            } else {
+                ctx->doc->selected_word = -1;
+                nc_editor_contour_settle();
+            }
+            *ctx->dirty = true;
+            return true;
+        }
+        if (ch == '*') {
+            /* The point being entered: its row goes and the pad is back. */
+            (void)nc_delete_line(ctx->doc, ctx->doc->cursor_line);
+            nc_editor_contour_settle();
+            strncpy(ctx->status, "Point dropped", ctx->status_size - 1);
+            *ctx->dirty = true;
+            return true;
+        }
+        /* The digits, the sign, the point and `#` are the editor's field
+           flow: what is typed lands in the word the pad just picked. */
+        return false;
+    }
+    if (ch == '5' || ch == '0') {
+        g_nc_editor_contour_active = false;
+        nc_editor_contour_settle();
+        strncpy(ctx->status, "Contour ended", ctx->status_size - 1);
+        *ctx->dirty = true;
+        return true;
+    }
+    if (key == NC_VISUAL_KEY_FINISH) {              /* `#`: the step */
+        g_nc_editor_contour_step =
+            (uint8_t)((g_nc_editor_contour_step + 1u) %
+                      (sizeof(g_nc_editor_contour_steps) /
+                       sizeof(g_nc_editor_contour_steps[0])));
+        snprintf(ctx->status, ctx->status_size, "Contour step %.1f mm",
+                 (double)nc_editor_contour_step_mm());
+        *ctx->dirty = true;
+        return true;
+    }
+    if (key == NC_VISUAL_KEY_BACKSPACE) {           /* `*`: the delete */
+        if (nc_delete_line(ctx->doc, ctx->doc->cursor_line) == NC_OK) {
+            strncpy(ctx->status, "Point deleted", ctx->status_size - 1);
+        }
+        *ctx->dirty = true;
+        return true;
+    }
+    switch (ch) {
+    case '1': dx = 1; dz = -1; break;
+    case '2': dx = 1; break;
+    case '3': dx = 1; dz = 1; break;
+    case '4': dz = -1; break;
+    case '6': dz = 1; break;
+    case '7': dx = -1; dz = -1; break;
+    case '8': dx = -1; break;
+    case '9': dx = -1; dz = 1; break;
+    default: break;
+    }
+    if (dx == 0 && dz == 0) {
+        return true;                                /* a key the pad does not use */
+    }
+    if (!nc_editor_contour_move(ctx, dx, dz)) {
+        strncpy(ctx->status, "Insert failed", ctx->status_size - 1);
+    }
+    *ctx->dirty = true;
+    return true;
+}
+
 /* A pad is the panel's own entries - the ones that *do* something rather than
    write text: `Q`/`N`, the `G` field, the `T` field, the tool table - plus the
    card's sections for every other slot. A slot's id is its key path,
@@ -357,6 +668,11 @@ static bool nc_editor_modal_handle_key(nc_editor_ctx_t *ctx,
                                        char ch,
                                        nc_visual_key_t key)
 {
+    /* The contour pad is the modal's own child: while it is up it owns the
+       keys, the same way the helper does. */
+    if (nc_editor_contour_key(ctx, ch, key)) {
+        return true;
+    }
     if (!g_nc_editor_modal_active) {
         return false;
     }
@@ -453,6 +769,11 @@ static bool nc_editor_modal_handle_key(nc_editor_ctx_t *ctx,
                     } else {
                         nc_preset_name_for_id(id, ctx->status, ctx->status_size);
                     }
+                } else if (action == NC_FOOTER_ACTION_CONTOUR) {
+                    /* `7` under G7X: the pad becomes the contour pad, in place,
+                       and stays until `5`. Nothing is written for the press
+                       itself - the profile is the rows the next presses add. */
+                    nc_editor_contour_begin(ctx);
                 } else if (action == NC_FOOTER_ACTION_GCODE) {
                     /* The word field: type a G-code and its template lands, which
                        is where a single line of any kind is written. */
@@ -529,6 +850,23 @@ if (g_nc_editor_modal_active && !g_nc_editor_modal_prefix) {
        has a helper to draw. */
     nc_draw_modal_items(modal_x, keypad_y, g_nc_editor_modal_items,
                                g_nc_editor_modal_count, 0u);
+}
+if (g_nc_editor_contour_active) {
+    int visible = ctx->snapshot->cursor_visible_index;
+    int keypad_y;
+    int modal_x;
+
+    if (visible < 0) {
+        visible = 0;
+    }
+    keypad_y = NC_CODE_Y + (visible + 1) * NC_VISUAL_ROW_H - NC_MODAL_PAD;
+    keypad_y = nc_draw_clampi(keypad_y, NC_CODE_Y,
+                                NC_PANE_BOTTOM - NC_MODAL_PAD -
+                                NC_MODAL_KEY_H * NC_MODAL_ROWS);
+    modal_x = NC_RIGHT_PANE_X + NC_RIGHT_PANE_W - NC_MODAL_W - 8;
+    nc_draw_modal_items(modal_x, keypad_y, g_nc_editor_contour_items,
+                               sizeof(g_nc_editor_contour_items) /
+                               sizeof(g_nc_editor_contour_items[0]), 0u);
 }
 }
 

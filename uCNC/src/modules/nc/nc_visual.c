@@ -287,6 +287,9 @@ static void nc_visual_set_mode(nc_mode_t mode)
     /* Leaving MANUAL must not leave a jog running behind the next screen. */
     nc_visual_manual_screen(&manual);
     nc_manual_feed_cancel(&manual);
+    /* Leaving the screen drops the contour pad: the rows it wrote are ordinary
+       program text and stay in the document (the screen change saved them). */
+    nc_editor_contour_leave();
     g_nc_visual_mode = mode;
     nc_state_set_mode(mode);
     nc_state_save();
@@ -1790,7 +1793,7 @@ size_t nc_visual_usage(const char *const **lines)
         "Arrows move, the digits type.",
         "B/C step between equal words.",
         "1 OPS  2 TOOL  3 WORD  4 G7X.",
-        "5 THREAD, 6 PECK open a pad each.",
+        "5 THREAD  6 PECK; G7X's 7 draws.",
         "U/W are increments of X and Z.",
         "# VIEW  * DEL  0 files."
     };

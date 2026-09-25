@@ -916,165 +916,157 @@ static bool host_preset_line_is(int id, const char *expected)
     return ok;
 }
 
+/* The preset entries, which are the card's: `/D/presets/<address>.txt`, the
+   first row the name, the rest the rows to write (docs/nc-preset-file.md).
+
+     1. a card with no folder answers with the compiled entries, and the folder
+        is the one thing the panel creates by itself;
+     2. an entry file replaces its address - name and rows, both halves;
+     3. an empty first row keeps the compiled name (the name may be empty, the
+        rows may not);
+     4. an address no compiled entry uses appears on its pad when the card has
+        the file: this is how a word the pads do not offer is added;
+     5. every row of the file is written, in order;
+     6. a row that starts with a space continues the row above instead of
+        starting one;
+     7. a file with a name and no rows is not an entry;
+     8. an address outside the pads' space is not an entry either;
+     9. and the `presets.txt` this replaced is not read any more.
+
+   The old format's rules - the aliases, "an id the file omits keeps its compiled
+   text", "a section without a name is skipped" - are gone with the parser. */
 static int host_presettest(void)
 {
     static const char *const default_od = "G71 U0 R0 X0 Z0 F0 P0 Q0";
     static const char *const edited_od = "G71 U2 R1 X10 Z-5 F0.2 P100 Q200";
     static const char *const default_finish = "G70 P0 Q0";
-    static const char *const default_face = "G72 W0 R0 X0 Z0 F0 P0 Q0";
-    static const char *const edited_file =
-        "[41]\nname=OD TEST\nline=G71 U2 R1 X10 Z-5 F0.2 P100 Q200\n";
-    /* The file owns the insert text, so a section may carry several lines - the
-       header and its contour - and they go in in order. */
-    static const char *const multi_file =
-        "[41]\nname=OD MULTI\n"
-        "line=G71 U1 R0.2 X0.5 Z0.5 F450\n"
-        "line=G1 X30 Z0\n"
-        "line=G80\n";
-    /* A section without a name is not usable: the name is what names the entry,
-       even while the helper still shows its own labels. */
-    static const char *const unnamed_file =
-        "[41]\nline=G71 U9 R9 X9 Z9 F9 P9 Q9\n";
-    static const char *const broken_file = "this is not a preset file\n";
-    char buf[1024];
+    static const char *const entry_41 =
+        "OD TEST\nG71 U2 R1 X10 Z-5 F0.2 P100 Q200\n";
+    char name[32];
     fs_file_info_t info;
-    fs_file_t *fp;
     int failures = 0;
-    size_t read;
 
     cnc_init();
     cnc_unit_test_start();
     host_fs_mount(g_files_root[0] ? g_files_root : NULL);
     printf("nc_ui: fs root %s\n", g_files_root[0] ? g_files_root : "nc-files");
 
-    /* 1. missing file is materialised from the compiled presets */
-    (void)fs_remove("/D/presets.txt");
+    /* 1. no folder: the compiled entries answer, and the folder appears so the
+          operator has somewhere to put their own. */
+    (void)fs_rmdir("/D/presets");
     (void)nc_presets_init();
-    if (!fs_finfo("/D/presets.txt", &info)) {
-        puts("presettest: FAIL missing preset file was not created");
-        failures++;
-    } else if (info.size == 0u) {
-        puts("presettest: FAIL created preset file is empty");
+    (void)nc_presets_sync();
+    if (!fs_finfo("/D/presets", &info) || !info.is_dir) {
+        puts("presettest: FAIL the presets folder was not created");
         failures++;
     } else if (!host_preset_line_is(41, default_od)) {
-        puts("presettest: FAIL compiled OD preset did not insert");
+        puts("presettest: FAIL the compiled OD entry did not insert");
+        failures++;
+    } else if (!nc_preset_name_for_id(41, name, sizeof(name)) ||
+               strcmp(name, "OD ROUGH") != 0) {
+        puts("presettest: FAIL the compiled OD entry has no name");
         failures++;
     } else {
-        puts("presettest: PASS missing file is written from the compiled presets");
+        puts("presettest: PASS a card with no folder answers with the compiled "
+             "entries");
     }
 
-    /* 2. an edited file is what the menu inserts */
-    if (!host_fs_write_text("/D/presets.txt", edited_file)) {
-        puts("presettest: FAIL could not write the edited preset file");
+    /* 2. an entry file is what the key writes: both halves of it. */
+    if (!host_fs_write_text("/D/presets/41.txt", entry_41)) {
+        puts("presettest: FAIL could not write /D/presets/41.txt");
         failures++;
     } else {
         (void)nc_presets_init();
         if (!host_preset_line_is(41, edited_od)) {
-            puts("presettest: FAIL edited preset file was not used");
+            puts("presettest: FAIL the entry file's rows are not what `41` "
+                 "writes");
             failures++;
-        } else {
-            puts("presettest: PASS edited preset file is used");
-        }
-    }
-
-    /* 2b. the file defines the entries it mentions; ids it does not mention keep
-           their compiled text. A card written before `48 FINISH` existed must
-           still offer it, which is the case the bench hit. */
-    if (!host_fs_write_text("/D/presets.txt",
-                            "[41]\nname=OD TEST\n"
-                            "line=G71 U2 R1 X10 Z-5 F0.2 P100 Q200\n")) {
-        puts("presettest: FAIL could not write the one-section file");
-        failures++;
-    } else {
-        (void)nc_presets_init();
-        if (!host_preset_line_is(41, edited_od)) {
-            puts("presettest: FAIL the one-section file lost its edited [41]");
+        } else if (!nc_preset_name_for_id(41, name, sizeof(name)) ||
+                   strcmp(name, "OD TEST") != 0) {
+            printf("presettest: FAIL `41` is named \"%s\", not \"OD TEST\"\n",
+                   name);
             failures++;
         } else if (!host_preset_line_is(48, default_finish)) {
-            puts("presettest: FAIL [48] FINISH is not offered beside an old file");
-            failures++;
-        } else if (!host_preset_line_is(43, default_face)) {
-            puts("presettest: FAIL [43] FACE was lost with an old file");
+            puts("presettest: FAIL an address with no file lost its compiled "
+                 "entry");
             failures++;
         } else {
-            puts("presettest: PASS ids the file omits keep their compiled text");
+            puts("presettest: PASS an entry file is the name and the rows");
         }
     }
 
-    /* 2c. an id the menus used to hold still names its entry. The bench reads
-           this file and asked the right question about it - "in presets it is set
-           as `[10]` but i need to press 16?" - and the answer for a card written
-           before the renumbering is that `[10]` *is* the setup entry, so the
-           operator's edited lines are not lost to a menu decision. */
-    if (!host_fs_write_text("/D/presets.txt",
-                            "[10]\nname=MY STOCK\nline=G970 X-10 U120 Z-150 W30\n"
-                            "[80]\nname=MY END\nline=G80\n")) {
-        puts("presettest: FAIL could not write the old-id file");
+    /* 3. the name may be empty - and then the compiled name stands. */
+    if (!host_fs_write_text("/D/presets/16.txt", "\nG970 X-10 U120 Z-150 W30\n")) {
+        puts("presettest: FAIL could not write the nameless entry");
         failures++;
     } else {
         (void)nc_presets_init();
         if (!host_preset_line_is(16, "G970 X-10 U120 Z-150 W30")) {
-            puts("presettest: FAIL an edited [10] is not the setup entry");
+            puts("presettest: FAIL the nameless entry did not write its row");
             failures++;
-        } else if (!host_preset_line_is(46, "G80")) {
-            puts("presettest: FAIL an edited [80] is not the end entry");
-            failures++;
-        } else if (!host_preset_line_is(48, default_finish)) {
-            puts("presettest: FAIL the old-id file lost [48] FINISH");
+        } else if (!nc_preset_name_for_id(16, name, sizeof(name)) ||
+                   strcmp(name, "SETUP") != 0) {
+            printf("presettest: FAIL an empty first row did not keep the "
+                   "compiled name (\"%s\")\n", name);
             failures++;
         } else {
-            puts("presettest: PASS an id the menus used to hold names its entry");
+            puts("presettest: PASS an empty first row keeps the compiled name");
         }
     }
 
-    /* 2d. the new-line entry (`1 OPS` then `1`) is a section too, so what that
-           key writes is the card's: a blank line by default, a separator or a
-           command the operator keeps needing when the file says so. */
-    (void)fs_remove("/D/presets.txt");
-    (void)nc_presets_init();
-    if (!host_preset_line_is(11, "")) {
-        puts("presettest: FAIL the new-line entry is not a blank line by default");
-        failures++;
-    } else if (!host_fs_write_text("/D/presets.txt",
-                                   "[11]\nname=SEP\nline=(---)\n")) {
-        puts("presettest: FAIL could not write the redefined new-line entry");
+    /* 4. an address no compiled entry uses, with a file: the word the pads do
+          not offer today. */
+    if (!host_fs_write_text("/D/presets/12.txt", "COOLANT\nM8\n")) {
+        puts("presettest: FAIL could not write the added entry");
         failures++;
     } else {
         (void)nc_presets_init();
-        if (!host_preset_line_is(11, "(---)")) {
-            puts("presettest: FAIL the card cannot redefine what `1` writes");
+        if (!host_preset_line_is(12, "M8")) {
+            puts("presettest: FAIL the added entry did not write");
             failures++;
-        } else if (!host_fs_write_text("/D/presets.txt",
-                                       "[11]\nname=SEP\nline=(---)\n"
-                                       "[24]\nname=M3\nline=M3 S2000\n")) {
-            puts("presettest: FAIL could not write the redefined spindle word");
+        } else if (!nc_preset_name_for_id(12, name, sizeof(name)) ||
+                   strcmp(name, "COOLANT") != 0) {
+            puts("presettest: FAIL the added entry has no name");
             failures++;
         } else {
-            /* The TOOL pad's machine words are sections for the same reason: the
-               speed in `M3` is the operator's choice, not the panel's. */
-            (void)nc_presets_init();
-            if (!host_preset_line_is(24, "M3 S2000")) {
-                puts("presettest: FAIL the card cannot set the M3 speed");
-                failures++;
-            } else if (!host_preset_line_is(23, "M6")) {
-                puts("presettest: FAIL the tool change is not `M6` by default");
-                failures++;
-            } else {
-                puts("presettest: PASS the panel's text entries are the card's");
-            }
+            puts("presettest: PASS a free address with a file is an entry");
         }
     }
 
-    /* 2e. a `line=` that starts with a space continues the line above instead of
-           starting one - the only way a value that belongs on that line (a `Q`
-           on a header, a `C`/`R` on a contour row) gets in without the
-           controller ever seeing a line break. The check reads the inserted
-           text: one line, the words separated by their own spaces. */
-    if (!host_fs_write_text("/D/presets.txt",
-                            "[17]\nname=ROW\nline=G1 X0 Z0\nline= C0\n"
-                            "line= R0\n"
-                            "[18]\nname=NEXT\nline=G1 X10 Z0\n")) {
-        puts("presettest: FAIL could not write the inline-row file");
+    /* 5. every row, in order - a header and its contour are one entry. */
+    if (!host_fs_write_text("/D/presets/13.txt",
+                            "ROUGH\nG71 U1 R0.2 X0.5 Z0.5 F450\nG1 X30 Z0\n"
+                            "G80\n")) {
+        puts("presettest: FAIL could not write the multi-row entry");
+        failures++;
+    } else {
+        nc_document_t doc;
+        bool ok;
+
+        (void)nc_presets_init();
+        nc_document_init(&doc);
+        ok = nc_insert_preset_id(&doc, 13) && doc.line_count == 3u &&
+             strcmp(doc.lines[0].text, "G71 U1 R0.2 X0.5 Z0.5 F450") == 0 &&
+             strcmp(doc.lines[1].text, "G1 X30 Z0") == 0 &&
+             strcmp(doc.lines[2].text, "G80") == 0;
+        if (!ok) {
+            printf("presettest: FAIL the multi-row entry wrote %u lines: \"%s\" "
+                   "\"%s\" \"%s\"\n", (unsigned)doc.line_count,
+                   doc.line_count > 0u ? doc.lines[0].text : "",
+                   doc.line_count > 1u ? doc.lines[1].text : "",
+                   doc.line_count > 2u ? doc.lines[2].text : "");
+            failures++;
+        } else {
+            puts("presettest: PASS every row of an entry is written, in order");
+        }
+    }
+
+    /* 6. a row that starts with a space continues the row above: the only way a
+          value that belongs on a line already written gets in without the
+          controller seeing a line break inside the block. */
+    if (!host_fs_write_text("/D/presets/34.txt",
+                            "ROW\nG1 X0 Z0\n C0\n R0\n")) {
+        puts("presettest: FAIL could not write the inline-row entry");
         failures++;
     } else {
         nc_document_t doc;
@@ -1083,94 +1075,84 @@ static int host_presettest(void)
         (void)nc_presets_init();
         nc_document_init(&doc);
         (void)nc_insert_line(&doc, 0, "G71 U1 R1 X0.5 Z0.5 F450");
-        ok = nc_insert_preset_id(&doc, 17) &&
-             doc.line_count == 2u &&
-             strcmp(doc.lines[1].text, "G1 X0 Z0 C0 R0") == 0 &&
-             nc_insert_preset_id(&doc, 18) &&
-             doc.line_count == 3u &&
-             strcmp(doc.lines[2].text, "G1 X10 Z0") == 0;
+        ok = nc_insert_preset_id(&doc, 34) && doc.line_count == 2u &&
+             strcmp(doc.lines[1].text, "G1 X0 Z0 C0 R0") == 0;
         if (!ok) {
-            printf("presettest: FAIL the inline rows read \"%s\" / \"%s\"\n",
-                   doc.line_count > 1u ? doc.lines[1].text : "",
-                   doc.line_count > 2u ? doc.lines[2].text : "");
+            printf("presettest: FAIL the inline rows read \"%s\"\n",
+                   doc.line_count > 1u ? doc.lines[1].text : "");
             failures++;
         } else {
             puts("presettest: PASS a row that starts with a space continues the "
-                 "line above");
+                 "row above");
         }
     }
 
-    /* 3. a file with no usable section falls back without touching the text */
-    if (!host_fs_write_text("/D/presets.txt", broken_file)) {
-        puts("presettest: FAIL could not write the unparsable preset file");
+    /* 7. the rows are the mandatory half: a file with a name and nothing else is
+          not an entry, and the address stays empty. */
+    if (!host_fs_write_text("/D/presets/35.txt", "NOTHING\n")) {
+        puts("presettest: FAIL could not write the empty entry");
         failures++;
     } else {
+        (void)nc_presets_init();
+        if (nc_preset_name_for_id(35, name, sizeof(name)) ||
+            host_preset_line_is(35, "NOTHING")) {
+            puts("presettest: FAIL an entry with no rows is offered");
+            failures++;
+        } else {
+            puts("presettest: PASS a file with no rows is not an entry");
+        }
+    }
+
+    /* 8. an address outside the pads' space is not an entry either. */
+    if (!host_fs_write_text("/D/presets/99.txt", "OUTSIDE\nM8\n")) {
+        puts("presettest: FAIL could not write the out-of-range entry");
+        failures++;
+    } else {
+        (void)nc_presets_init();
+        if (nc_preset_name_for_id(99, name, sizeof(name)) ||
+            host_preset_line_is(99, "M8")) {
+            puts("presettest: FAIL an address outside the pads' space is an "
+                 "entry");
+            failures++;
+        } else {
+            puts("presettest: PASS an address outside the pads' space is not an "
+                 "entry");
+        }
+    }
+
+    /* 9. the file this replaced is not read any more: its sections are ordinary
+          text on the card now, and the addresses answer as if it were not
+          there. */
+    if (!host_fs_write_text("/D/presets.txt",
+                            "[41]\nname=OLD\nline=G71 U9 R9 X9 Z9 F9 P9 Q9\n")) {
+        puts("presettest: FAIL could not write the old presets.txt");
+        failures++;
+    } else {
+        (void)fs_remove("/D/presets/41.txt");
         (void)nc_presets_init();
         if (!host_preset_line_is(41, default_od)) {
-            puts("presettest: FAIL unparsable preset file did not fall back");
+            puts("presettest: FAIL the old presets.txt is still read");
             failures++;
         } else {
-            read = 0u;
-            buf[0] = '\0';
-            fp = fs_open("/D/presets.txt", "r");
-            if (fp) {
-                read = fs_read(fp, (uint8_t *)buf, sizeof(buf) - 1u);
-                fs_close(fp);
-            }
-            buf[read] = '\0';
-            if (strcmp(buf, broken_file) != 0) {
-                puts("presettest: FAIL the unparsable file was rewritten");
-                failures++;
-            } else {
-                puts("presettest: PASS unparsable file falls back and is left alone");
-            }
+            puts("presettest: PASS presets.txt is not read any more");
         }
     }
 
-    /* 4. a section with several lines inserts all of them, in order, through
-          the same call the panel's OD entry makes. */
-    if (!host_fs_write_text("/D/presets.txt", multi_file)) {
-        puts("presettest: FAIL could not write the multi-line preset file");
+    /* And the one entry that writes nothing at all: `1 OPS` then `1` is a blank
+       line, which is an entry like any other. */
+    if (!host_preset_line_is(11, "")) {
+        puts("presettest: FAIL the new-line entry is not a blank line");
         failures++;
     } else {
-        nc_document_t doc;
-        bool ok;
-
-        (void)nc_presets_init();
-        nc_document_init(&doc);
-        ok = nc_insert_preset_id(&doc, 41) &&
-             doc.line_count == 3u &&
-             strcmp(doc.lines[0].text, "G71 U1 R0.2 X0.5 Z0.5 F450") == 0 &&
-             strcmp(doc.lines[1].text, "G1 X30 Z0") == 0 &&
-             strcmp(doc.lines[2].text, "G80") == 0;
-        if (!ok) {
-            printf("presettest: FAIL the OD section inserted %u lines\n",
-                   (unsigned)doc.line_count);
-            failures++;
-        } else {
-            puts("presettest: PASS every line= of a section is inserted, in order");
-        }
+        puts("presettest: PASS the compiled new-line entry is one blank line");
     }
 
-    /* 5. a section without `name=` is skipped, so the compiled OD stays. */
-    if (!host_fs_write_text("/D/presets.txt", unnamed_file)) {
-        puts("presettest: FAIL could not write the nameless preset file");
-        failures++;
-    } else {
-        (void)nc_presets_init();
-        if (!host_preset_line_is(41, default_od)) {
-            puts("presettest: FAIL a section without a name was used");
-            failures++;
-        } else {
-            puts("presettest: PASS a section without a name is skipped");
-        }
+    if (failures) {
+        printf("presettest: FAILED (%d)\n", failures);
+        return 1;
     }
-
-    printf("presettest: %s (%d failure%s)\n",
-           failures ? "FAILED" : "OK",
-           failures,
-           failures == 1 ? "" : "s");
-    return failures ? 1 : 0;
+    puts("presettest: PASS the card's entries are address files");
+    return 0;
 }
 
 /* Headless check of the panel's one-shot blocks on the reader the RUN stream

@@ -137,7 +137,7 @@ if __name__ == "__main__":
     run = subprocess.run([str(exe), "--files", str(root), "--presettest"],
                          capture_output=True, text=True)
     print(run.stdout.strip())
-    if run.returncode or "presettest: OK" not in run.stdout:
+    if run.returncode or "presettest: PASS" not in run.stdout:
         fail("FAIL preset file contract",
              run.stdout[-1500:] or run.stderr[-1500:])
     if not (root / "presets.txt").exists():

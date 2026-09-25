@@ -1,3 +1,27 @@
+/* The preset entries: an address, and at that address two things.
+
+   An **address** is the key path that inserts the entry - `42` is G7X `4` then
+   `2` - because that is the one thing the pads need to find it. At each address
+   there is a **name** that may be empty and the **rows** the key writes, which
+   may not. That is the whole model; everything else here is only how the card
+   spells it.
+
+   The card spells it as files: one per address, in /D/presets, named after the
+   address (`41.txt`), first row the name, the rest the rows, and a row that
+   starts with a space continues the row before it. So there is no format for
+   the panel to parse and no second editor to write: the file list and the
+   editor that already exist *are* the preset editor, and the entries are the
+   operator's own text files. A card with no folder, or no file for an address,
+   answers with the compiled table below - that is what keeps a machine without
+   a card working, and it is the only part of this that lives in flash.
+
+   What is in RAM is one name per address the pads can reach and a flag saying
+   whether the folder has that entry: about a kilobyte, read once when the drive
+   settles. The rows are not kept - they are read from the file when a key
+   writes them, so the panel's memory cannot be grown by anything on the card.
+
+   `docs/nc-preset-file.md` is the contract, including what the file format this
+   replaced used to be and why it is gone. */
 #include "nc_presets.h"
 #include "nc_vocab.h"
 
@@ -6,34 +30,18 @@
 #include <stdio.h>
 #include <string.h>
 
-#define NC_PRESET_FILE_PATH "/D/presets.txt"
-#define NC_PRESET_MAX 24
-#define NC_PRESET_MAX_LINES 8
+#define NC_PRESET_DIR "/D/presets/"
+#define NC_PRESET_SUFFIX ".txt"
+/* The addresses the pads can reach: one digit for the pad, one for the slot. */
+#define NC_PRESET_ADDR_FIRST 10
+#define NC_PRESET_ADDR_LAST 69
+#define NC_PRESET_ADDR_COUNT (NC_PRESET_ADDR_LAST - NC_PRESET_ADDR_FIRST + 1)
+#define NC_PRESET_NAME_LEN 16
 
-typedef struct {
-    int id;
-    char name[16];
-    uint8_t count;
-    char lines[NC_PRESET_MAX_LINES][NC_MAX_LINE_LEN];
-} nc_preset_rec_t;
-
-static nc_preset_rec_t g_nc_presets[NC_PRESET_MAX];
-static int g_nc_preset_count;
-/* The preset file lives on the SD card, and the card is mounted from the main
-   loop - long after module init. So the file is resolved lazily: every call
-   until it is settled keeps the compiled presets and tries again. */
-static bool g_nc_presets_file_settled;
-static bool g_nc_presets_from_file;
-
-/* The compiled entries, one row each: an id (the key path, see
-   `nc_presets.h`), the name the key reads as, and the rows it writes - `\n`
-   separated, because a section's rows are lines of a program. Everything the
-   card can change about an entry is here and nowhere else in the code.
-
-   Two of them are worth the note: `11` writes *nothing* (a blank line is a
-   section like any other, and a separator comment or a command the operator
-   keeps needing is their edit), and `32`/`33` start with a space so they add
-   their word to the line the cursor is on rather than starting one. */
+/* The compiled entries, one row each: the address, the name a key reads as
+   (which the card may empty or replace) and the rows it writes, `\n` separated
+   because a section's rows are lines of a program. Everything a card can say
+   about an entry is here and nowhere else in the code. */
 typedef struct {
     int id;
     const char *name;
@@ -63,350 +71,329 @@ static const nc_preset_builtin_t g_nc_preset_builtins[] = {
     { NC_PRESET_ID_DWELL, "DWELL", "G4 P0" }
 };
 
-static void nc_preset_add_builtin(int id,
-                                  const char *name,
-                                  const char *rows)
+/* What the folder said, read once: which addresses have an entry file, and the
+   name each of them carries (the file's first row). */
+static bool g_nc_preset_there[NC_PRESET_ADDR_COUNT];
+static char g_nc_preset_names[NC_PRESET_ADDR_COUNT][NC_PRESET_NAME_LEN];
+/* The folder lives on the card, and the card is mounted from the main loop -
+   long after module init. Until the drive answers, the compiled entries are what
+   the panel uses. */
+static bool g_nc_presets_settled;
+
+static int nc_preset_slot(int id)
 {
-    nc_preset_rec_t *rec;
-    const char *row;
-    int i;
-
-    if (g_nc_preset_count >= NC_PRESET_MAX || !rows) {
-        return;
+    if (id < NC_PRESET_ADDR_FIRST || id > NC_PRESET_ADDR_LAST) {
+        return -1;
     }
-    rec = &g_nc_presets[g_nc_preset_count++];
-    memset(rec, 0, sizeof(*rec));
-    rec->id = id;
-    strncpy(rec->name, name, sizeof(rec->name) - 1);
-    row = rows;
-    for (i = 0; i < NC_PRESET_MAX_LINES; i++) {
-        const char *end = strchr(row, '\n');
-        size_t len = end ? (size_t)(end - row) : strlen(row);
-
-        if (len >= sizeof(rec->lines[0])) {
-            len = sizeof(rec->lines[0]) - 1u;
-        }
-        memcpy(rec->lines[rec->count], row, len);
-        rec->lines[rec->count][len] = '\0';
-        rec->count++;
-        if (!end) {
-            break;              /* the last row */
-        }
-        row = end + 1;
-    }
+    return id - NC_PRESET_ADDR_FIRST;
 }
 
-static void nc_presets_load_builtin(void)
+static const nc_preset_builtin_t *nc_preset_builtin(int id)
 {
     size_t i;
 
-    g_nc_preset_count = 0;
-    for (i = 0u; i < sizeof(g_nc_preset_builtins) / sizeof(g_nc_preset_builtins[0]); i++) {
-        const char *rows = g_nc_preset_builtins[i].rows;
-        if (g_nc_preset_builtins[i].id == NC_PRESET_ID_OD) {
-            rows = nc_vocab_gcode_template(71);
-        } else if (g_nc_preset_builtins[i].id == NC_PRESET_ID_BORE ||
-                   g_nc_preset_builtins[i].id == NC_PRESET_ID_FACE) {
-            rows = nc_vocab_gcode_template(72);
-        }
-        nc_preset_add_builtin(g_nc_preset_builtins[i].id,
-                              g_nc_preset_builtins[i].name,
-                              rows);
-    }
-}
-
-/* Ids the menus used to hold, mapped to the entry they always named: `10` was a
-   one-level path on an older footer, `44`/`80` were two levels of the layout
-   before the G7X and OPS menus were arranged as they are now. A card's section
-   keeps meaning what it meant - the operator's edited text is not thrown away
-   for a renumbering - and the file is not rewritten behind their back; the name
-   is theirs to fix when they next open the file.
-
-   `80`'s entry is the end mark, which the OPS menu no longer offers (the G7X
-   menu's `6 G80` is the one key for it), so its id is that path: `46`. */
-static int nc_preset_id_current(int id)
-{
-    switch (id) {
-    case 10: return 16;              /* setup:  OPS `1` then `6` */
-    case 44: return 48;              /* finish: G7X `4` then `8` */
-    case 80: return 46;              /* end:    G7X `4` then `6` */
-    default: return id;
-    }
-}
-
-static bool nc_presets_write_builtin_file(void)
-{
-    fs_file_t *fp = fs_open(NC_PRESET_FILE_PATH, "w");
-    bool ok = true;
-    int i;
-    int j;
-
-    if (!fp) {
-        return false;
-    }
-    for (i = 0; i < g_nc_preset_count; i++) {
-        char line[NC_MAX_LINE_LEN + 16];
-        int n;
-
-        n = snprintf(line, sizeof(line), "[%d]\nname=%s\n",
-                     g_nc_presets[i].id,
-                     g_nc_presets[i].name);
-        if (n > 0) {
-            ok = fs_write(fp, (const uint8_t *)line, (size_t)n) == (size_t)n;
-        }
-        for (j = 0; ok && j < g_nc_presets[i].count; j++) {
-            n = snprintf(line, sizeof(line), "line=%s\n",
-                         g_nc_presets[i].lines[j]);
-            if (n > 0) {
-                ok = fs_write(fp, (const uint8_t *)line, (size_t)n) == (size_t)n;
-            }
-        }
-        if (ok) {
-            ok = fs_write(fp, (const uint8_t *)"\n", 1u) == 1u;
-        }
-        if (!ok) {
-            break;
-        }
-    }
-    fs_close(fp);
-    if (!ok) {
-        /* A half-written default would look like the operator's own file on
-           the next boot, so drop it and let a later call try again. */
-        (void)fs_remove(NC_PRESET_FILE_PATH);
-    }
-    return ok;
-}
-
-static nc_preset_rec_t *nc_preset_find_id(int id)
-{
-    int i;
-
-    for (i = 0; i < g_nc_preset_count; i++) {
-        if (g_nc_presets[i].id == id) {
-            return &g_nc_presets[i];
+    for (i = 0u; i < sizeof(g_nc_preset_builtins) / sizeof(g_nc_preset_builtins[0]);
+         i++) {
+        if (g_nc_preset_builtins[i].id == id) {
+            return &g_nc_preset_builtins[i];
         }
     }
     return 0;
 }
 
-static bool nc_preset_valid_name(const char *name)
+/* The rows of a compiled entry. Two of them are the vocabulary's templates
+   rather than a fixed line, so a cycle header follows the dialect the panel
+   knows instead of drifting away from it. */
+static const char *nc_preset_builtin_rows(int id)
 {
-    return name && name[0] && strlen(name) < 16;
+    const nc_preset_builtin_t *builtin = nc_preset_builtin(id);
+
+    if (!builtin) {
+        return 0;
+    }
+    if (id == NC_PRESET_ID_OD) {
+        return nc_vocab_gcode_template(71);
+    }
+    if (id == NC_PRESET_ID_BORE || id == NC_PRESET_ID_FACE) {
+        return nc_vocab_gcode_template(72);
+    }
+    return builtin->rows;
 }
 
-/* One section of the file, applied over the compiled set. The file defines the
-   entries it names - an edited `[41]` is the operator's OD preset and stays so -
-   while an id the file does not mention keeps its compiled entry, so a card
-   written before an entry existed still offers it (that is how `44 FINISH`
-   survives a `presets.txt` from an older build). A section without a name or
-   without a line is dropped, which leaves the compiled entry it would have
-   replaced in place. */
-static void nc_preset_apply_section(const nc_preset_rec_t *section)
+static bool nc_preset_path(int id, char *out, size_t out_sz)
 {
-    nc_preset_rec_t *dst;
+    int n;
 
-    if (!section || section->id <= 0 || section->count == 0 ||
-        !nc_preset_valid_name(section->name)) {
-        return;
+    if (!out || out_sz == 0u || nc_preset_slot(id) < 0) {
+        return false;
     }
-    dst = nc_preset_find_id(section->id);
-    if (dst) {
-        *dst = *section;
-        return;
+    n = snprintf(out, out_sz, "%s%d%s", NC_PRESET_DIR, id, NC_PRESET_SUFFIX);
+    return n > 0 && (size_t)n < out_sz;
+}
+
+/* --- one entry file, read once -------------------------------------------- */
+
+/* Where a row goes when the entry is written: the document, the line the next
+   continuing row joins, and whether anything has been written yet. */
+typedef struct {
+    nc_document_t *doc;
+    size_t at;
+    size_t last;
+    bool wrote;
+} nc_preset_out_t;
+
+/* Put one row of an entry into the program.
+
+   A row that starts with a space **continues the line above** instead of
+   starting one: that is how a value that belongs on the line already written - a
+   `Q` on a cycle header, a `C`/`R` on a contour row - gets into the program
+   without the controller ever seeing a line break inside a block it has to read
+   as one (bench: "on N/Q or other things to be added inline - just use trick by
+   not have a new line before values. so controller will know it all"). It is the
+   same rule the editor's own wrapping uses. */
+static nc_result_t nc_preset_put_row(nc_preset_out_t *out, const char *row)
+{
+    nc_result_t r;
+
+    if (!out || !out->doc || !row) {
+        return NC_ERR_BAD_ARG;
     }
-    if (g_nc_preset_count < NC_PRESET_MAX) {
-        g_nc_presets[g_nc_preset_count] = *section;
-        g_nc_preset_count++;
+    if (row[0] == ' ' && out->last != (size_t)-1) {
+        char joined[NC_MAX_LINE_LEN];
+        int n = snprintf(joined, sizeof(joined), "%s%s",
+                         out->doc->lines[out->last].text, row);
+
+        if (n <= 0 || n >= (int)sizeof(joined)) {
+            return NC_ERR_LINE_TOO_LONG;
+        }
+        r = nc_set_line(out->doc, out->last, joined);
+    } else {
+        r = nc_insert_line(out->doc, out->at, row);
+        if (r == NC_OK) {
+            out->last = out->at;
+            out->at++;
+        }
+    }
+    if (r == NC_OK) {
+        out->wrote = true;
+    }
+    return r;
+}
+
+/* The rows a compiled entry carries, which are `\n` separated in the table. An
+   entry with empty rows writes one empty line - "a new line" is an entry like
+   any other. */
+static nc_result_t nc_preset_put_text(nc_preset_out_t *out, const char *rows)
+{
+    const char *row = rows;
+
+    for (;;) {
+        const char *end = strchr(row, '\n');
+        size_t len = end ? (size_t)(end - row) : strlen(row);
+        char line[NC_MAX_LINE_LEN];
+        nc_result_t r;
+
+        if (len >= sizeof(line)) {
+            len = sizeof(line) - 1u;
+        }
+        memcpy(line, row, len);
+        line[len] = '\0';
+        r = nc_preset_put_row(out, line);
+        if (r != NC_OK || !end) {
+            return r;
+        }
+        row = end + 1;
     }
 }
 
-static bool nc_presets_read_file(void)
+/* One entry file: the first row is the name, every row after it is written, and
+   a file with no row after the name is not an entry (the rows are the mandatory
+   half of the model). `out` may be NULL, which is how the settle reads a name
+   without writing anything. False when the file cannot be read. */
+static bool nc_preset_read_file(int id, char *name, size_t name_sz,
+                                nc_preset_out_t *out, bool *has_rows)
 {
+    char path[NC_MAX_LINE_LEN];
+    char row[NC_MAX_LINE_LEN];
     fs_file_t *fp;
-    char line[NC_MAX_LINE_LEN + 8];
-    size_t used = 0;
-    int read_count = 0;
-    nc_preset_rec_t section;
-    bool have_section = false;
+    size_t used = 0u;
+    bool first = true;
+    bool ok = true;
 
-    fp = fs_open(NC_PRESET_FILE_PATH, "r");
+    if (name && name_sz > 0u) {
+        name[0] = '\0';
+    }
+    if (has_rows) {
+        *has_rows = false;
+    }
+    if (!nc_preset_path(id, path, sizeof(path))) {
+        return false;
+    }
+    fp = fs_open(path, "r");
     if (!fp) {
         return false;
     }
-    while (fs_available(fp) && read_count < 4096) {
+    while (fs_available(fp)) {
         char c;
+
         if (fs_read(fp, (uint8_t *)&c, 1u) != 1u) {
+            ok = false;
             break;
         }
-        read_count++;
-        if (c == '\n' || used + 1u >= sizeof(line)) {
-            char *p = line;
-            line[used] = '\0';
-            used = 0;
-            while (*p == ' ' || *p == '\t') {
-                p++;
-            }
-            if (*p == '[') {
-                int id = 0;
-                if (sscanf(p, "[%d]", &id) == 1) {
-                    if (have_section) {
-                        nc_preset_apply_section(&section);
-                    }
-                    memset(&section, 0, sizeof(section));
-                    /* An id the menus used to hold is read as the entry it
-                       always named, so the rest of the file's rules - "the
-                       section replaces the compiled entry with that id", "the
-                       last section to name an entry wins" - work on one id per
-                       entry, whatever the card was written with. */
-                    section.id = nc_preset_id_current(id);
-                    have_section = true;
+        if (c == '\r') {
+            continue;
+        }
+        if (c == '\n' || used + 1u >= sizeof(row)) {
+            row[used] = '\0';
+            if (first) {
+                first = false;
+                if (name && name_sz > 0u) {
+                    strncpy(name, row, name_sz - 1u);
+                    name[name_sz - 1u] = '\0';
                 }
-            } else if (have_section && strncmp(p, "name=", 5u) == 0) {
-                strncpy(section.name, p + 5, sizeof(section.name) - 1);
-            } else if (have_section && strncmp(p, "line=", 5u) == 0) {
-                if (section.count < NC_PRESET_MAX_LINES) {
-                    strncpy(section.lines[section.count],
-                            p + 5,
-                            sizeof(section.lines[0]) - 1);
-                    section.count++;
+            } else {
+                if (has_rows) {
+                    *has_rows = true;
+                }
+                if (out && nc_preset_put_row(out, row) != NC_OK) {
+                    ok = false;
+                    break;
                 }
             }
-        } else if (c != '\r') {
-            line[used++] = c;
+            used = 0u;
+            /* A row longer than the buffer is cut here: the panel's own line is
+               shorter than this buffer, so what is dropped could not be typed
+               into the program anyway. */
+            continue;
+        }
+        row[used++] = c;
+    }
+    if (ok && used > 0u) {
+        row[used] = '\0';
+        if (first) {
+            if (name && name_sz > 0u) {
+                strncpy(name, row, name_sz - 1u);
+                name[name_sz - 1u] = '\0';
+            }
+        } else {
+            if (has_rows) {
+                *has_rows = true;
+            }
+            if (out && nc_preset_put_row(out, row) != NC_OK) {
+                ok = false;
+            }
         }
     }
-    if (have_section) {
-        nc_preset_apply_section(&section);
-    }
     fs_close(fp);
-    /* Anything the file defines is in place now; the compiled entries it does
-       not define are untouched and still available. */
-    return have_section;
+    return ok;
 }
 
-/* Settles the preset file once the drive can answer: loads it when it is
-   there, writes the compiled default when it is not. Until then the compiled
-   presets stay in use, so a machine that boots without a card, or with one
-   inserted later, converges on the first call that finds the drive. */
-bool nc_presets_sync(void)
+/* --- the folder, read once ------------------------------------------------ */
+
+/* Read what the folder says about every address. Creating the folder is the one
+   write the panel makes by itself, and only once: it is where the operator's
+   entries will go, and a card with no folder answers with the compiled table. */
+static bool nc_presets_scan(void)
 {
     fs_file_info_t info;
+    char name[NC_PRESET_NAME_LEN];
+    int id;
 
-    if (g_nc_presets_file_settled) {
-        return g_nc_presets_from_file;
+    if (!fs_finfo(NC_PRESET_DIR, &info)) {
+        return fs_mkdir(NC_PRESET_DIR);
     }
-    if (fs_finfo(NC_PRESET_FILE_PATH, &info)) {
-        g_nc_presets_file_settled = true;
-        g_nc_presets_from_file = nc_presets_read_file();
-        return g_nc_presets_from_file;
+    memset(g_nc_preset_there, 0, sizeof(g_nc_preset_there));
+    memset(g_nc_preset_names, 0, sizeof(g_nc_preset_names));
+    for (id = NC_PRESET_ADDR_FIRST; id <= NC_PRESET_ADDR_LAST; id++) {
+        int slot = nc_preset_slot(id);
+        bool rows = false;
+
+        if (!nc_preset_read_file(id, name, sizeof(name), 0, &rows) || !rows) {
+            continue;               /* no file, or no rows after the name */
+        }
+        g_nc_preset_there[slot] = true;
+        strncpy(g_nc_preset_names[slot], name, sizeof(g_nc_preset_names[0]) - 1u);
     }
-    /* No file yet: leave the compiled default on the card so it can be
-       edited. A failed write means the drive is not mounted yet - keep the
-       compiled presets and retry on the next call. */
-    if (nc_presets_write_builtin_file()) {
-        g_nc_presets_file_settled = true;
-    }
-    return false;
+    return true;
 }
 
 bool nc_presets_init(void)
 {
-    g_nc_presets_file_settled = false;
-    g_nc_presets_from_file = false;
-    nc_presets_load_builtin();
+    g_nc_presets_settled = false;
     return nc_presets_sync();
 }
 
-static nc_result_t nc_preset_insert_lines(nc_document_t *doc,
-                                          const nc_preset_rec_t *rec)
+bool nc_presets_sync(void)
 {
-    size_t at;
-    size_t last;
-    bool inserted = false;
-    bool appended = false;
-    int i;
-
-    if (!doc || !rec || rec->count == 0) {
-        return NC_ERR_BAD_ARG;
+    if (g_nc_presets_settled) {
+        return true;
     }
-    at = doc->cursor_line + 1u;
-    if (doc->line_count == 0) {
-        at = 0;
+    /* A drive that cannot answer yet (no card, or one inserted later) is tried
+       again on the next call; the compiled entries are in use until then. */
+    if (!nc_presets_scan()) {
+        return false;
     }
-    /* The line an appending row continues: the one above the insert point, or
-       the last row this entry wrote. */
-    last = at > 0u ? at - 1u : (size_t)-1;
-    for (i = 0; i < rec->count; i++) {
-        const char *text = rec->lines[i];
-        nc_result_t r;
-
-        /* A row that starts with a space **continues the line above** instead of
-           starting one: that is how a value that belongs on the line already
-           written - a `Q` on a cycle header, a `C`/`R` on a contour row - gets
-           into the program without the controller ever seeing a line break
-           (bench: "on N/Q or other things to be added inline - just use trick by
-           not have a new line before values. so controller will know it all"). */
-        if (text[0] == ' ' && last != (size_t)-1) {
-            char joined[NC_MAX_LINE_LEN];
-             nc_word_t words[24];
-             int count;
-             int n = snprintf(joined, sizeof(joined), "%s%s",
-                              doc->lines[last].text, text);
-
-            if (n <= 0 || n >= (int)sizeof(joined)) {
-                return NC_ERR_BAD_ARG;
-            }
-            r = nc_set_line(doc, last, joined);
-            if (r != NC_OK) {
-                return r;
-            }
-            /* A value written to be typed is left picked, and the line under the
-               cursor stays the cursor's: this row is part of the line the
-               operator is already on. */
-            count = nc_parse_words(joined, words, 24);
-            doc->selected_word = count > 0 ? count - 1 : -1;
-            appended = true;
-            continue;
-        }
-        r = nc_insert_line(doc, at + (size_t)i, text);
-        if (r != NC_OK) {
-            return r;
-        }
-        last = at + (size_t)i;
-        inserted = true;
-    }
-    if (inserted) {
-        doc->cursor_line = at;
-        if (!appended) {
-            doc->selected_word = -1;
-        }
-    }
-    return NC_OK;
+    g_nc_presets_settled = true;
+    return true;
 }
 
 bool nc_insert_preset_id(nc_document_t *doc, int id)
 {
-    nc_preset_rec_t *rec;
+    nc_preset_out_t out;
+    int slot;
 
+    if (!doc) {
+        return false;
+    }
     (void)nc_presets_sync();
-    rec = nc_preset_find_id(id);
-    return rec && nc_preset_insert_lines(doc, rec) == NC_OK;
+    out.doc = doc;
+    out.at = doc->cursor_line + 1u;
+    if (doc->line_count == 0u) {
+        out.at = 0u;
+    }
+    out.last = out.at > 0u ? out.at - 1u : (size_t)-1;
+    out.wrote = false;
+    slot = nc_preset_slot(id);
+    if (slot >= 0 && g_nc_preset_there[slot]) {
+        /* The operator's own file for this address: read it and write it. */
+        if (!nc_preset_read_file(id, 0, 0u, &out, 0)) {
+            return false;
+        }
+        return out.wrote;
+    }
+    {
+        const char *rows = nc_preset_builtin_rows(id);
+
+        if (!rows) {
+            return false;
+        }
+        return nc_preset_put_text(&out, rows) == NC_OK && out.wrote;
+    }
 }
 
 bool nc_preset_name_for_id(int id, char *out, size_t out_sz)
 {
-    nc_preset_rec_t *rec;
+    const nc_preset_builtin_t *builtin;
+    int slot = nc_preset_slot(id);
 
     if (!out || out_sz == 0u) {
         return false;
     }
     out[0] = '\0';
     (void)nc_presets_sync();
-    rec = nc_preset_find_id(id);
-    if (!rec || !nc_preset_valid_name(rec->name)) {
+    /* The file's first row names the entry; an entry file with an empty first
+       row keeps the compiled name, and an address with no file at all answers
+       with the compiled entry. */
+    if (slot >= 0 && g_nc_preset_there[slot] && g_nc_preset_names[slot][0]) {
+        strncpy(out, g_nc_preset_names[slot], out_sz - 1u);
+        out[out_sz - 1u] = '\0';
+        return true;
+    }
+    builtin = nc_preset_builtin(id);
+    if (!builtin || !builtin->name[0]) {
         return false;
     }
-    strncpy(out, rec->name, out_sz - 1u);
+    strncpy(out, builtin->name, out_sz - 1u);
     out[out_sz - 1u] = '\0';
     return true;
 }

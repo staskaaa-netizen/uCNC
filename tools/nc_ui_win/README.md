@@ -32,7 +32,7 @@ opened from anywhere mounts the same card), and the file manager, the state
 store, the TOOLS document and the preset file behave on the desktop exactly as
 they do on the card. The
 uCNC fs layer splits the drive letter off before it calls a driver, so the paths
-that arrive here are already drive relative (`/nc/files`, `/presets.txt`,
+that arrive here are already drive relative (`/nc/files`, `/presets`, `/presets/41.txt`,
 `/` for the root) - the shape FatFs sees on the machine. The driver closes
 handles only; uCNC's `fs_close()` releases the driver's memory, the same
 contract `sd_card_v2` relies on.
@@ -44,7 +44,7 @@ after the first read and every file loaded as a single line.
 
 ```powershell
 build\nc_ui.exe --files tmp\ncroot --fstest      # list /D through fs_*
-build\nc_ui.exe --files tmp\ncroot --presettest # check /D/presets.txt
+build\nc_ui.exe --files tmp\ncroot --presettest # check the /D/presets entries
 build\nc_ui.exe --streamtest                     # a jog delivers both blocks
 build\nc_ui.exe --padtest                        # the keypad is the machine's
 build\nc_ui.exe --buildertest                    # walk a contour with the pad
@@ -270,13 +270,15 @@ MODE key still cycles for the machine.
 ## Headless checks
 
 - `--fstest` lists `/D` through the firmware `fs_*` API.
-- `--presettest` checks the `/D/presets.txt` contract (materialise, edit, fall
-  back on an unparsable file). It also checks the two halves of the section-ID
-  rule: an ID that names no entry in the file keeps its compiled text, and an ID
-  the menus used to hold (`10`/`44`/`80`) still names the entry it always named,
-  so an operator's edited section survives a renumbering. The IDs are the key
-  paths that insert the entries - one digit per level, `0` for the pad's quit
-  key - and `docs/nc-preset-file.md` is the table.
+- `--presettest` checks the preset entries, which are the card's: one file per
+  address in `/D/presets` (`41.txt` is G7X `4` then `2`), first row the name,
+  the rest the rows to write, a row starting with a space continuing the one
+  above. It checks that a card with no folder answers with the compiled entries
+  and gets the folder created, that a file replaces its address - name and rows -
+  that an empty first row keeps the compiled name, that a free address becomes an
+  entry (how a word the pads do not offer is added), that a file with no rows is
+  not an entry, and that the `presets.txt` this replaced is not read any more.
+  `docs/nc-preset-file.md` is the contract.
 - `--streamtest` checks the two blocks a jog queues both reach the reader.
 - `--padtest` checks the pad is the machine's 4x4 matrix and that every footer
   key of every mode is on it. A screen that offers a key the keypad has not is

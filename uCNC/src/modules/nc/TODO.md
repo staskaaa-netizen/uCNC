@@ -1126,24 +1126,23 @@ possible today and only needs saying out loud.
   (coolant `M8`/`M9`, work offsets `G54`-`G59`, program end `M0`/`M30`, ...), and
   whether a section dropped for want of a record should report itself instead of
   vanishing quietly.
-- [ ] **A `presets/` folder - the entry as an address, and the file as the
-  format.** The bench put it plainly: an entry is *an address, a name that may be
-  empty and the rows it writes, which may not* - everything else in the current
-  file is how that map is spelled. So name the file after the address
-  (`presets\42` is G7X `4` then `2`), make the first row the name (an empty first
-  row, no name) and the rest the rows to write, and the panel needs no parser at
-  all: the editor and the file list that already exist *are* the preset editor,
-  and the alias table, the 24/8 caps and the `[id]`/`name=`/`line=` language go
-  away with it. It *deletes* code rather than adding any, which is the test the
-  current shape fails: as it stands it is scaffolding around a one-to-one map.
-  What has to be kept whatever is decided: the address is the key path, the rows
-  are mandatory, a default set has to live in flash for a card with no folder,
-  and a row is drawn at the panel's own width. What it costs: one small file per
-  entry (a longer list, no page that shows them all), a settle that opens as
-  many files as there are entries, and the folder-versus-single-file question -
-  decided by whether the card's entries are read through `nc_files` at all.
-  `docs/nc-preset-file.md` has the longer note. Not implemented; the single file
-  stays the owner until this is decided.
+- [x] **A `presets/` folder - the entry as an address, and the file as the
+  format.** Done 2026-09-25, after the bench called the old shape what it was
+  (*"it all now is good and smelly scaffolding, while this all overall is just
+  basically addresses"*): `nc_presets.c` reads `/D/presets/<address>.txt` - the
+  first row the name, the rest the rows, a row starting with a space continuing
+  the one above - keeps only the names in RAM, reads the rows when a key writes
+  them, and creates the folder once. The parser, the alias table (`10`/`44`/`80`)
+  and the 24-record table are gone; `docs/nc-preset-file.md` is the contract and
+  keeps the old format as history. What is still open, and why:
+  - a card with the old `presets.txt` is not read: its entries are moved by hand,
+    because an automatic migration would keep the parser alive;
+  - the address space is two levels (`10`-`69`, one digit per pad and slot). A
+    third level (9*9*9) was considered and is not needed until a pad has
+    sub-slots, which no pad has;
+  - creating an entry from the panel: the file list browses into `presets\` and
+    the editor edits what it opens, so the missing half is the new-file flow
+    landing there with an address for a name.
 - [ ] **Nothing can type a character the keypad does not have.** The editor takes
   digits into the selected word and inserts whole entries from the 3x3 and the
   card; letters and symbols are unreachable (`%`, `(`, `)`, `;`, `[`, `]`, a
@@ -1224,18 +1223,26 @@ Before changing storage behavior, read the history and bench checklist in
   edits the selected value instead of opening the G7X helper, because the pad
   digits and the footer slots share keys. Decide which wins, or give the two
   different keys.
-- [x] `/D/presets.txt` owns the floating-menu insert text: one `[id]` section
+- [x] ~~`/D/presets.txt` owns the floating-menu insert text: one `[id]` section
   per menu entry with `name=` and one or more `line=`. Compiled presets are the
-  fallback; a missing file is written from them. See
+  fallback; a missing file is written from them.~~ Superseded 2026-09-25: the
+  entries are now one file per address in `/D/presets` - first row the name, the
+  rest the rows - so there is no format to parse and the file list and editor
+  *are* the preset editor. The parser, the alias table and the fixed record table
+  are gone with it; see
   [`docs/nc-preset-file.md`](../../../../docs/nc-preset-file.md).
-- [x] Lazy resolve: the SD card is mounted from the main loop, so the file is
+- [x] Lazy resolve: the SD card is mounted from the main loop, so the entries are
   settled on the first NC input event that finds the drive instead of during
-  `nc_visual_init()`. A damaged file falls back and is left for repair.
-- [ ] Show the `name=` of the sections in the floating 3x3 helper instead of the
-  fixed slot labels, so a renamed entry reads as renamed on the panel.
-- [ ] Preset editor/validator on the machine (create/rename/delete a section,
-  reject text the parser cannot read) so the file does not need a PC.
-- [ ] Per-section extra words (`R`, `C`, ...) as further `line=` rows once the
+  `nc_visual_init()`. A drive that cannot answer yet is retried; the compiled
+  entries are in use until then.
+- [x] Show the name of the entries in the floating 3x3 helper instead of the
+  fixed slot labels, so a renamed entry reads as renamed on the panel. The name
+  is the entry file's first row.
+- [ ] Preset entries created and edited on the machine: the file list already
+  browses into `presets\` and the editor edits what it opens, so what is left is
+  the *creating* half - a new file at a free address from the panel, and the
+  folder created on first use (done: `nc_presets_sync()` makes it).
+- [ ] Per-entry extra words (`R`, `C`, ...) as further rows once the
   field-by-field entry from `docs/nc-editor-tnc415.md` exists.
 
 ## MANUAL readout, jog and one-shot blocks (2026-09-19)

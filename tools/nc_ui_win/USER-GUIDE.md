@@ -118,9 +118,8 @@ rows), `2 TOOL`, `3 WORD` (one line by its name or number), `4 G7X` (the lathe
 cycles - inside that pad, `7` is `DRAW`, the 3x3 profile builder), `5 THREAD`,
 `6 PECK`.
 
-What those entries insert is not burned in: it is the card's `presets.txt`,
-which you can open and edit like any text file. The section below is what it
-holds.
+What those entries insert is not burned in: it is the card's own files, which
+you can open and edit like any text file. The section below is what they are.
 
 ### TOOLS - the tool table
 
@@ -145,9 +144,9 @@ last one.
 
 `0` opens it on EDIT, TOOLS and RUN. `B`/`C` or the arrows step the list, `4` or
 `D` opens the file, `5` makes a new one, `6` deletes, `8` refreshes, `#` runs it
-from this screen, `*` goes back. Text files are listed beside the programs
-(`presets.txt` included) - they open in the editor, but only program extensions
-are read as G-code, so a text file gets no preview and no RUN.
+from this screen, `*` goes back. Text files are listed beside the programs - the
+entry files in `presets\` are text files - they open in the editor, but only
+program extensions are read as G-code, so a text file gets no preview and no RUN.
 
 ### The view (whole screen)
 
@@ -199,76 +198,70 @@ Worth knowing before you write your own:
   write and expand it, but the spindle phase and pitch can only be proven on the
   machine.
 
-## The presets file - the words the screens insert
+## The preset entries - the words the screens insert
 
-Every helper entry that **writes text into the program** is defined by the card,
-not by the panel: the blank line, the setup block, the tool change and the
-spindle words, the chamfer and round, the cycle templates, the end mark, the
-thread and peck entries. The key that inserts an entry keeps its meaning; what
-it *writes* is this file's. That is how the panel is made to speak the words
-your shop uses - a `G71` header with your usual allowances, a `M3` at your usual
-speed, a separator comment you keep needing.
+Every helper entry that **writes text into the program** is the card's, not the
+panel's: the blank line, the setup block, the tool change and the spindle words,
+the chamfer and round, the cycle templates, the end mark, the thread and peck
+entries. The key that inserts an entry keeps its meaning; what it *writes* is
+the card's. That is how the panel is made to speak the words your shop uses - a
+`G71` header with your usual allowances, an `M3` at your usual speed, a
+separator you keep needing.
 
-The station writes the compiled defaults to `nc-files\presets.txt` the first
-time it needs them, so the file to edit always exists. You can edit it on the PC
-with any text editor, or on the screen: `0` opens the file list on EDIT, TOOLS
-and RUN, and the list carries text files, so `presets.txt` opens, edits and
-saves exactly like a program.
+**An entry is an address and, at that address, two things: a name and the rows
+it writes.** The address is the key path that inserts it - `42` is G7X `4` then
+`2`. The card spells it as a file per address, in `nc-files\presets\`:
 
 ```text
-[41]
-name=OD ROUGH
-line=G71 U2 R1 X0.5 Z0.5 F500 P0 Q0
+nc-files\presets\41.txt        "4 G7X then 1" - the OD cycle
 
-[16]
-name=SETUP
-line=G970 X-5 U60 Z-60 W5
-line=G971 X50 Z50 I0 E0
-line=G973 P7
+    OD ROUGH                   first row: the name the key reads as
+    G71 U2 R1 X0.5 Z0.5 F500   every row after it: what the key writes
+    G1 X30 Z0
 ```
 
-- **The ID is the key path that inserts the entry**, one digit per level, and
-  `0` is the pad's own quit key, so a path ending at the footer is written
-  `<key>0`. You never type an ID on the panel - you press the keys, and the file
-  says which entry an edited section defines.
-- `name=` is what the key reads as, and it is **required** - a section without
-  one is skipped and the compiled entry stays.
-- Each `line=` is one inserted line, in order. **A `line=` that starts with a
-  space continues the line above** instead of starting a new one - that is how a
-  value is added to a line already written without the controller seeing a line
-  break inside a block:
+There is no format to learn and no separate editor: `presets\41.txt` is an
+ordinary text file. Edit it on the PC, or on the screen - `0` opens the file
+list on EDIT, TOOLS and RUN, browse into `presets`, and a file opens, edits and
+saves like any other text file. Leave the first row empty and the key keeps the
+name it shipped with.
+
+- **A row that starts with a space continues the row above** instead of starting
+  a new one - that is how a value joins a line already written without the
+  controller seeing a line break inside a block:
 
   ```text
-  [17]
-  name=ROW
-  line=G1 X0 Z0
-  line= C0
-  line= R0
+  ROW
+  G1 X0 Z0
+   C0
+   R0
   ```
 
-  inserts the one line `G1 X0 Z0 C0 R0`, with the word just written left picked
-  so the number is typed straight into it.
-- **An ID the file does not mention keeps its compiled text**, so a card written
-  before a new entry existed still offers it. A damaged file is used as far as it
-  parses and then falls back to the defaults, and it is **left alone** so you can
-  repair it - only a missing file is created.
-- Limits: 24 sections, 8 lines per section, and the panel's own line width per
-  line (keep them under 46 characters like the program rows). The first two are
-  the panel's storage - a fixed table it fills from the card, so nothing it
-  reads can grow it - and the width is the panel's own row: a longer row is drawn
-  as two rows with a tab, which is fine for a program and awkward for a label.
+  writes the one line `G1 X0 Z0 C0 R0`, with the word just written left picked so
+  the number is typed straight into it.
+- **The name may be empty; the rows may not.** A file with a name and nothing
+  else is not an entry, so the address behaves as if the file were not there.
+- Keep the rows short: the panel draws one row at 46 characters, and a longer
+  row shows as two with a tab between them.
+- A card with no `presets` folder, or no file for an address, uses the entries
+  the panel ships with - the folder only ever *replaces* what it names.
 
-**A word the pads do not offer** can be added from the card rather than waiting
-for one: give the entry an id whose key path is a free slot on the pad you want
-it on - OPS `12`-`15` and `17`-`19`, TOOL `27`-`29`, WORD `34`-`39`, G7X `49`,
-THREAD `54`-`59`, PECK `64`-`69` - then a `name=` and the `line=` rows it
-writes. The panel holds 24 entries and nineteen are built in, so five new names
-fit; editing an existing id costs none of them. (`10`, `44` and `80` are the
-older spellings of the setup, finish and end mark, so leave those alone.)
+**A word the pads do not offer** is added the same way, and there is no limit to
+how many: drop a file at an address whose slot is free on the pad you want it on
+- OPS `12`-`15` and `17`-`19`, TOOL `27`-`29`, WORD `34`-`39`, G7X `49`,
+THREAD `54`-`59`, PECK `64`-`69`. So `presets\12.txt` reading
+
+```text
+COOLANT
+M8
+```
+
+puts a `COOLANT` word on OPS `2`. (The addresses run `10`-`69`: one digit for
+the pad, one for the slot. Anything named outside that is just a text file.)
 
 The entries you are most likely to edit:
 
-| ID | Entry | Pressed as |
+| Address | Entry | Pressed as |
 | --- | --- | --- |
 | `11` | a new line (blank by default - a separator or a command goes here) | `1 OPS` then `1 INS` |
 | `16` | setup - the stock and preview rows (`G970`-`G973`) | `1 OPS` then `6 SETUP` |
@@ -280,16 +273,12 @@ The entries you are most likely to edit:
 | `51`-`53` | thread OD, thread ID, tap | `5 THREAD` then `1`-`3` |
 | `61`-`63` | drill, peck, dwell | `6 PECK` then `1`-`3` |
 
-The ids the older menus used still name their entry (`10` is the setup, `44` the
-finish cut, `80` the end mark), so a file written before the pads were renumbered
-keeps your text.
-
-Not everything is a section, and that line is deliberate: **what a key means is
-the panel's; what an entry writes into the program is this file's.** So the
-entries that *edit the line* rather than insert text (`4 G7X`'s `4 Q` and `5 N`,
-and `7 DRAW` the builder), the ones that take a typed value (`1 SELECT` opens the
-`T` field), and the ones that run an action (the file list, delete, the tool
-table, saving) are not in the file and cannot be redefined from the card.
+Not every key is an entry, and that line is deliberate: **what a key means is the
+panel's; what an entry writes into the program is the card's.** The keys that
+*edit the line* rather than insert text (`4 G7X`'s `4 Q` and `5 N`, and `7 DRAW`
+the builder), the ones that take a typed value (`1 SELECT` opens the `T` field),
+and the ones that run an action (the file list, delete, the tool table, saving)
+are not entries and cannot be redefined from the card.
 
 ## The card
 
@@ -298,7 +287,8 @@ The card is a folder on the PC:
 ```text
 nc-files\
   nc\files\      your programs (.nc), tool tables (.t) and text files
-  presets.txt    the words the screens insert (editable text)
+  presets\       one file per entry, named after its key path (the words
+                 the screens insert - see above)
   nc_state.txt   what the panel remembers: mode, the file you had open, stops,
                  the spindle speed, the jog values
 ```

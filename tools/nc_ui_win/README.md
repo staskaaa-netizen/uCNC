@@ -49,6 +49,7 @@ build\nc_ui.exe --streamtest                     # a jog delivers both blocks
 build\nc_ui.exe --padtest                        # the keypad is the machine's
 build\nc_ui.exe --uwtest                         # increments collapse to moves
 build\nc_ui.exe --contourtest                    # the pad walks the profile
+build\nc_ui.exe --seedtest                       # nc2's first start seeds a card
 build\nc_ui.exe --dirtytest                      # a key repaints what it changed
 build\nc_ui.exe --runtest                        # FROM/FULL send the program
 build\nc_ui.exe --blocktest                      # RUN marks the block it runs
@@ -338,6 +339,12 @@ python tools\test_nc_ui.py
   stays up until then. It reads the program back off the card after every press,
   including the case with no position anywhere in it (the stock corner) and the
   screen change that closes the pad.
+- `--seedtest` checks nc2's first start: a card with no entry file gets the
+  entries the module ships, written once (`nc2_boot_seed()` lays down the table
+  in `nc2_boot.c`), the logo stands while it happens and leaves on its own, a
+  folder that already holds an entry is never touched, a file that is there is
+  never replaced, and deleting a file is how an address stops being an entry -
+  there is no compiled table behind the files to fall back on.
 - `--dirtytest` checks the repaint contract: a key that changes the screen has
   to ask for the draw itself. RUN's line keys (`B`/`C`) did not - they moved the
   run line and returned without the dirty flag, so the highlight sat on the old

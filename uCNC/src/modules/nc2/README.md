@@ -159,11 +159,32 @@ that true), and the sender, the preview and the mark all ask it. `nc2` then has
 NC side and the same amount leaving nc2's budget, so its target is 6 700 with
 300 of slack.
 
-## One question left
+## The first start: a separate thing that writes the files
 
-With no compiled fallback, a controller whose card has no entries has none at
-all - and that is the exact state the bench hit with `presets.txt` deleted. So:
-does the panel write the shipped entries onto its own card **once, while the
-`presets` folder holds no file of its own** and never overwriting anything (the
-rule the station already uses), or is filling the card the operator's job with
-the files the release carries?
+**Answered by the bench, and built:** a card with no entry file of its own gets
+the entries the panel ships, written once, with a boot logo on the screen while
+it happens - *"fallback - ok make it but as a separate class / thing with sort of
+booting logo and writing default files. it should not be big."*
+
+`nc2_boot.c` is that thing: one table (the groups and the words), one pass
+writing them, one screen. It is a **writer, never a fallback** - nothing at run
+time consults the table, so after the first start every entry is a file and
+deleting one is how an address stops being an entry. A folder that already holds
+an entry file is the operator's and is not touched at all.
+
+`nc2_presets.c` is the rest of the coin: the address to file name rule, the
+format's reader and its writer. `--seedtest` in the station checks all of it.
+
+## What is built, and what is next
+
+| | |
+| --- | --- |
+| built | `nc2_presets.c` (address -> file, read, write), `nc2_boot.c` (the shipped entries, the one-time seed, the logo), `--seedtest` |
+| next | `nc2.c`: the document and the dumb value editor - a line cut into fields at its letters, `D` walking the numerics, digits typing, nothing checked while editing |
+| then | the 3x3 pad and the tree, the code pane and the floating DRO, files/state/run/emit/preview, the g7x block scan moving to `g7x_blocks.c`, the panel switch |
+
+One upstream landmine was found on the way, in `file_system.c`: `fs_opendir()`
+writes into the string it is handed to drop a trailing `/` (`char *newpath =
+(char *)path; newpath[len - 1] = 0;`), so a literal like `"/D/presets/"` faults on
+read-only memory. `nc2` spells the folder without the slash for that one call and
+says why in `nc2_presets.h`; the function itself is the core's to fix.

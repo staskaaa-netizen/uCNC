@@ -41,6 +41,7 @@
    nc_ui --fstest         list /D through the firmware fs_* API
    nc_ui --presettest     check the /D/presets entries contract
    nc_ui --contourtest    walk a profile with the G7X pad's `7`
+   nc_ui --seedtest       the first start writes the entries onto an empty card
    nc_ui --dump-presets DIR
                           write every entry the panel ships into DIR, one file
                           per address (this is how examples\presets is made)

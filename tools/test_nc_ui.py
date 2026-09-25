@@ -26,6 +26,7 @@ FLAGS = ["-std=gnu11", "-O1", "-w",
          "-DEMULATE_GRBL_STARTUP=3", "-DLVDS_WIDTH=800", "-DLVDS_HEIGHT=600",
          "-include", "host_boardmap.h",
          f"-I{ROOT / 'uCNC'}", f"-I{SRC / 'modules' / 'nc'}",
+         f"-I{SRC / 'modules' / 'nc2'}",
          f"-I{SRC}", f"-I{SRC / 'modules'}",
          f"-I{SRC / 'modules' / 'g7x'}", f"-I{SRC / 'modules' / 'lvds_renderer'}",
          f"-I{TOOL}"]
@@ -95,6 +96,10 @@ def module_sources():
              "nc_presets.c", "nc_run.c", "nc_preview.c",
              "nc_state.c", "nc_text.c", "nc_tools.c", "nc_vocab.c", "nc_visual.c"]
     files = [nc / name for name in names]
+    # nc2 is the module that replaces nc; until the panel is switched over it is
+    # built here so its own checks run with the same machine and card.
+    nc2 = SRC / "modules" / "nc2"
+    files += sorted(nc2.glob("*.c"))
     files += [g7x / "g7x.c", g7x / "g7x_contour.c", g7x / "g7x_source.c",
               SRC / "modules" / "cam_keyboard" / "cam_keyboard.c",
               SRC / "modules" / "g7_g8" / "parser_g7_g8.c"]
@@ -317,6 +322,18 @@ if __name__ == "__main__":
     print(run.stdout.strip())
     if run.returncode or "contourtest: PASS" not in run.stdout:
         fail("FAIL the contour pad does not write the profile it walks",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
+    # nc2's first start: the module that replaces nc writes the entries it ships
+    # onto a card that has none, once, with the logo up - and then they are files
+    # like every other, so deleting one is how an address stops being an entry.
+    root = OUT / "seed-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--seedtest"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "seedtest: PASS" not in run.stdout:
+        fail("FAIL nc2's first start does not seed the card",
              run.stdout[-1500:] or run.stderr[-1500:])
 
     # The operator's own program and tool table, kept with the NC module

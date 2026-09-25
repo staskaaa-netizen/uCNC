@@ -38,6 +38,8 @@
 #include "nc_tools.h"
 #include "nc_vocab.h"
 #include "nc_visual.h"
+#include "nc2_boot.h"
+#include "nc2_presets.h"
 #include "g7x.h"
 #include "host_fs.h"
 #include "host_spindle.h"
@@ -52,6 +54,7 @@
 /* The checks are a flat list: each one is defined with the helpers it owns, so
    a helper an earlier check uses is stated here. */
 static bool host_fs_write_text(const char *path, const char *text);
+static bool host_fs_read_text(const char *path, char *out, size_t out_sz);
 static void host_press(char key);
 static void host_run_to_end(void);
 
@@ -898,6 +901,38 @@ static bool host_fs_write_text(const char *path, const char *text)
     return true;
 }
 
+/* The whole of a card file, as text: the checks that read an entry back compare
+   the file itself rather than what the module remembers of it. The `\r` is
+   dropped where it is found, because a card may have been written on a PC. */
+static bool host_fs_read_text(const char *path, char *out, size_t out_sz)
+{
+    fs_file_t *fp;
+    size_t used = 0u;
+
+    if (!out || out_sz == 0u) {
+        return false;
+    }
+    out[0] = '\0';
+    fp = fs_open(path, "r");
+    if (!fp) {
+        return false;
+    }
+    while (fs_available(fp) > 0 && used + 1u < out_sz) {
+        char c;
+
+        if (fs_read(fp, (uint8_t *)&c, 1u) != 1u) {
+            fs_close(fp);
+            return false;
+        }
+        if (c != '\r') {
+            out[used++] = c;
+        }
+    }
+    out[used] = '\0';
+    fs_close(fp);
+    return true;
+}
+
 static bool host_preset_line_is(int id, const char *expected)
 {
     nc_document_t doc;
@@ -1628,6 +1663,151 @@ static void host_editor_flush(void)
 {
     mcu_unit_test_advance_time(2000000u);
     host_pump(40u);
+}
+
+/* nc2's first start: a card that has never seen an entry gets the ones the panel
+   ships, written once, and the logo stands while it happens. The entries live in
+   `nc2/default.c`'s table and nowhere else, and after this has run they are files
+   like every other - so the checks are about the card:
+
+     1. an empty folder gets every shipped entry, with the format the reader
+        reads (name row, then the rows, a continuing row keeping its space);
+     2. the two rows that only exist to be written - the group's name and the
+        entry with one blank line - come out as they must;
+     3. what was written reads back as what was written;
+     4. a folder that holds an entry of its own is never touched, and a file that
+        is there is never replaced;
+     5. an address whose file is deleted is *not* an entry - there is no table
+        behind the files to fall back on - and the seed does not put it back;
+     6. the logo names what happened and goes away on its own. */
+static int host_seedtest(void)
+{
+    char name[64];
+    char rows[NC2_PRESET_ROW_MAX * 4];
+    char text[128];
+    fs_file_t *dir;
+    fs_file_info_t info;
+    int files = 0;
+    int failures = 0;
+    const uint32_t *px;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+
+    /* 1. the first start. */
+    if (!nc2_boot_seed()) {
+        puts("seedtest: FAIL an empty card was not seeded");
+        return 1;
+    }
+    if (!nc2_boot_active()) {
+        puts("seedtest: FAIL the logo did not come up");
+        failures++;
+    }
+    /* It is the screen for a moment, says what happened, and leaves on its own -
+       and the seconds it stands are the seed's, not the screen's, so a station
+       that had nothing to write never shows it at all. */
+    nc2_boot_draw();
+    px = (const uint32_t *)lvds_host_pixels();
+    if (!host_ink_in(px, 300, 240, 200, 120)) {
+        puts("seedtest: FAIL the logo drew nothing");
+        failures++;
+    }
+    nc2_boot_tick(600u);
+    if (!nc2_boot_active()) {
+        puts("seedtest: FAIL the logo left before its time");
+        failures++;
+    }
+    nc2_boot_tick(600u);
+    if (nc2_boot_active()) {
+        puts("seedtest: FAIL the logo stayed up");
+        failures++;
+    }
+    dir = fs_opendir(NC2_PRESET_ROOT);
+    if (!dir) {
+        puts("seedtest: FAIL the presets folder is not there");
+        return 1;
+    }
+    while (fs_next_file(dir, &info)) {
+        if (!info.is_dir) {
+            files++;
+        }
+    }
+    fs_close(dir);
+    if (files != 27) {
+        printf("seedtest: FAIL %d files were written, wanted 27\n", files);
+        failures++;
+    } else {
+        puts("seedtest: the empty card got the shipped entries");
+    }
+
+    /* 2. the two shapes that are easy to get wrong: a slot that only holds
+       children is its name alone, and an entry with one blank row is a name and
+       an empty line - which is what "a new line" is. */
+    if (!host_fs_read_text("/D/presets/1.txt", text, sizeof(text)) ||
+        strcmp(text, "OPS\n") != 0) {
+        printf("seedtest: FAIL the group file reads \"%s\"\n", text);
+        failures++;
+    }
+    if (!host_fs_read_text("/D/presets/11.txt", text, sizeof(text)) ||
+        strcmp(text, "INS\n\n") != 0) {
+        printf("seedtest: FAIL the blank-line entry reads \"%s\"\n", text);
+        failures++;
+    }
+
+    /* 3. the round trip: what the file says is what a key will write. */
+    if (!nc2_preset_read("34", name, sizeof(name), rows, sizeof(rows)) ||
+        strcmp(name, "U INC") != 0 || strcmp(rows, " U") != 0) {
+        printf("seedtest: FAIL U INC reads \"%s\" / \"%s\"\n", name, rows);
+        failures++;
+    }
+    if (!nc2_preset_read("16", name, sizeof(name), rows, sizeof(rows)) ||
+        strcmp(name, "SETUP") != 0 ||
+        strcmp(rows, "G970 X0 U0 Z0 W0\nG971 X0 Z0 I0 E0\nG972 C0\nG973 P0") != 0) {
+        printf("seedtest: FAIL the setup entry reads \"%s\"\n", rows);
+        failures++;
+    }
+    if (nc2_preset_read("34", name, sizeof(name), rows, sizeof(rows)) &&
+        !nc2_preset_exists("34")) {
+        puts("seedtest: FAIL a read answered for a file that is not there");
+        failures++;
+    }
+
+    /* 4. the operator's folder, and their files. */
+    if (nc2_preset_write("34", "MINE", " U9") != 0) {
+        puts("seedtest: FAIL a file that is there was written over");
+        failures++;
+    }
+    if (!host_fs_read_text("/D/presets/34.txt", text, sizeof(text)) ||
+        strcmp(text, "U INC\n U\n") != 0) {
+        printf("seedtest: FAIL the existing file changed to \"%s\"\n", text);
+        failures++;
+    }
+    if (nc2_boot_seed()) {
+        puts("seedtest: FAIL a folder with entries was seeded again");
+        failures++;
+    }
+
+    /* 5. a deleted file means the address is not an entry - and it stays that
+       way, because the seed only ever fills a folder with nothing in it. */
+    if (!fs_remove("/D/presets/34.txt") || nc2_preset_exists("34") ||
+        nc2_preset_read("34", name, sizeof(name), rows, sizeof(rows))) {
+        puts("seedtest: FAIL a deleted entry still answers");
+        failures++;
+    }
+    if (nc2_boot_seed()) {
+        puts("seedtest: FAIL the seed put a deleted file back");
+        failures++;
+    } else {
+        puts("seedtest: deleting an entry is how an address stops being one");
+    }
+
+    if (failures) {
+        printf("seedtest: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("seedtest: PASS a card with no entries gets them once, and the logo "
+         "says so");
+    return 0;
 }
 
 /* Headless check of the editor's typed-key paths - the ones a frame dump cannot
@@ -3941,6 +4121,8 @@ int host_tests_run(int argc, char **argv)
             return host_editortest();
         if (strcmp(argv[i], "--contourtest") == 0)
             return host_contourtest();
+        if (strcmp(argv[i], "--seedtest") == 0)
+            return host_seedtest();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

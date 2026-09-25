@@ -52,6 +52,8 @@ build\nc_ui.exe --contourtest                    # the pad walks the profile
 build\nc_ui.exe --seedtest                       # nc2's first start seeds a card
 build\nc_ui.exe --edit2test                      # nc2's fields and value editor
 build\nc_ui.exe --pad2test                       # nc2's pad is the file tree
+build\nc_ui.exe --screen2test                    # nc2's screen draws and writes
+build\nc_ui.exe --dump-nc2 screen.bmp            # nc2's screen on its own
 build\nc_ui.exe --dirtytest                      # a key repaints what it changed
 build\nc_ui.exe --runtest                        # FROM/FULL send the program
 build\nc_ui.exe --blocktest                      # RUN marks the block it runs
@@ -361,6 +363,13 @@ python tools\test_nc_ui.py
   not, pressing an entry writes it where the pad's name stood and the pad stays
   for the next press (which lands under it), `A` steps back up, and a slot nobody
   wrote a file for simply is not there.
+- `--screen2test` checks nc2's screen: it draws a program down the left and the
+  pad's corner on the right (and nothing where the footer used to be), `4` walks
+  into G7X and the pad's name is written as the line the entry will land on, `1`
+  writes that entry where the name stood with the pad still up, `D` and a digit
+  type over the value the entry landed with, `A` goes back up a level - and the
+  program that ends on the card is the one the screen wrote. `--dump-nc2 out.bmp`
+  renders nc2's screen on its own, the way `--dump` does for nc's.
 - `--dirtytest` checks the repaint contract: a key that changes the screen has
   to ask for the draw itself. RUN's line keys (`B`/`C`) did not - they moved the
   run line and returned without the dirty flag, so the highlight sat on the old

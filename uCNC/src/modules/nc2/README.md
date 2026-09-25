@@ -210,7 +210,8 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | --- | --- |
 | built | `nc2_presets.c` (address -> file, read, write), `nc2_boot.c` (the shipped entries, the one-time seed, the logo), `nc2.c` (the document, the fields, the value editor's keys, the pad's helper and its label line), `--seedtest` and `--edit2test` |
 | built (2) | the pad's tree: `nc2_address_*` and `nc2_slot()` in `nc2_presets.c`, `nc2_pad_open/write/close()` in `nc2.c`, `--pad2test` |
-| next | the screen: the code pane, the 3x3 in the corner, the floating DRO (`nc2_visual.c`), then the card's file list (`nc2_files.c`) |
+| built (3) | the screen: `nc2_draw.c` (colours, text, the 3x3) and `nc2_visual.c` (the program down the left, the pad's corner on the right, no footer), the program read and written back (`nc2_files.c`), `--screen2test`, `--dump-nc2` |
+| next | the card's file list (the rest of `nc2_files.c`: the folder, open/new/delete), then state, the run and the DRO that only appears while the machine is doing something |
 | then | the g7x block scan moving to `g7x_blocks.c`, the tool table's screen, and the panel switch: `nc` out, `nc2` in, one commit |
 
 One upstream landmine was found on the way, in `file_system.c`: `fs_opendir()`

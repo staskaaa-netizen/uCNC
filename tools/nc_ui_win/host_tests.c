@@ -41,6 +41,7 @@
 #include "nc2_boot.h"
 #include "nc2.h"
 #include "nc2_presets.h"
+#include "nc2_visual.h"
 #include "g7x.h"
 #include "host_fs.h"
 #include "host_spindle.h"
@@ -1664,6 +1665,143 @@ static void host_editor_flush(void)
 {
     mcu_unit_test_advance_time(2000000u);
     host_pump(40u);
+}
+
+/* nc2's screen: the program down the left, the pad's corner on the right, no
+   footer. The pad's slots are the files at the address walked to, which is the
+   whole menu, and this is what walking it does to the program:
+
+     1. the screen draws a program and the pad - ink where the pane is and where
+        the pad is, nothing where a footer used to be;
+     2. `4` walks into G7X: the pad's name is written as the line under the cursor
+        (the title, and the place the entry will land), and the pad now shows
+        G7X's own slots;
+     3. `1` writes that entry where the name stood, and the pad stays;
+     4. `D` then a digit types at the field the pad just picked - the value the
+        entry landed with is replaced, not extended;
+     5. `A` goes back up a level, and the program keeps what was written. */
+static int host_screen2test(void)
+{
+    static const char *const program = "/D/nc/files/screen.nc";
+    nc_document_t nc_doc;
+    const uint32_t *px;
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!host_fs_write_text(program,
+                            "G0 X52 Z2\n"
+                            "G71 U1 R0.5 X0.5 Z0.5 F450 P10 Q20\n"
+                            "N10 G1 X30 Z0\n"
+                            "G80\n")) {
+        puts("screen2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    /* A card with no entries gets them on the first start, and the logo stands
+       while that happens: let it go before looking at the screen. */
+    nc2_visual_tick(4000u);
+    if (nc2_boot_active()) {
+        puts("screen2test: FAIL the boot logo stayed up");
+        return 1;
+    }
+    if (!nc2_visual_open(program)) {
+        puts("screen2test: FAIL nc2 did not open the fixture");
+        return 1;
+    }
+
+    /* 1. it draws, and where the footer used to be there is program. */
+    nc2_visual_draw();
+    px = (const uint32_t *)lvds_host_pixels();
+    if (!host_ink_in(px, 20, 40, 480, 400)) {
+        puts("screen2test: FAIL the code pane drew nothing");
+        failures++;
+    }
+    if (!host_ink_in(px, LVDS_HSTX_WIDTH - 240, LVDS_HSTX_HEIGHT - 240, 230, 230)) {
+        puts("screen2test: FAIL the pad's corner drew nothing");
+        failures++;
+    }
+
+    /* 2. into G7X. */
+    nc2_visual_key('4');
+    if (strcmp(nc2_visual_address(), "4") != 0 ||
+        !nc2_visual_slot_label('1') ||
+        strcmp(nc2_visual_slot_label('1'), "OD ROUGH") != 0) {
+        printf("screen2test: FAIL the pad at \"%s\" shows \"%s\"\n",
+               nc2_visual_address(),
+               nc2_visual_slot_label('1') ? nc2_visual_slot_label('1') : "");
+        failures++;
+    }
+    nc2_visual_draw();
+    px = (const uint32_t *)lvds_host_pixels();
+    if (!host_ink_in(px, 20, 40, 480, 400)) {
+        puts("screen2test: FAIL the program does not show the pad's name");
+        failures++;
+    }
+
+    /* 3. the entry lands where the pad's name stood, and the pad stays. */
+    nc2_visual_key('1');
+    if (strcmp(nc2_visual_address(), "4") != 0 ||
+        nc2_visual_slot_label('1') == 0) {
+        puts("screen2test: FAIL the pad closed when the entry landed");
+        failures++;
+    }
+
+    /* 4. the field the entry landed with is picked: a digit replaces it. */
+    nc2_visual_key('D');
+    nc2_visual_key('9');
+    nc2_visual_key('#');
+
+    /* 5. back out, and read the program the screen wrote off the card. */
+    nc2_visual_key('A');
+    if (strcmp(nc2_visual_address(), "") != 0) {
+        printf("screen2test: FAIL `A` left the address at \"%s\"\n",
+               nc2_visual_address());
+        failures++;
+    }
+    nc_document_init(&nc_doc);
+    {
+        static char line[NC2_MAX_LINE_LEN];
+        bool saw_typed = false;
+        bool saw_name = false;
+        size_t i;
+
+        /* The document the screen holds is nc2's, not nc's, so the check reads
+           the file it saves through nc2's own writer. */
+        if (!nc2_visual_save()) {
+            puts("screen2test: FAIL nc2 did not save the program");
+            failures++;
+        } else if (nc_load_file(&nc_doc, program) != NC_OK) {
+            puts("screen2test: FAIL the saved program does not load as a program");
+            failures++;
+        } else {
+            for (i = 0u; i < nc_doc.line_count; i++) {
+                snprintf(line, sizeof(line), "%s", nc_doc.lines[i].text);
+                if (strcmp(line, "G7X") == 0) {
+                    saw_name = true;
+                }
+                if (strstr(line, "U9") != 0 && strstr(line, "G71") != 0) {
+                    saw_typed = true;
+                }
+            }
+            if (saw_name) {
+                puts("screen2test: FAIL the pad's name stayed in the program");
+                failures++;
+            }
+            if (!saw_typed) {
+                puts("screen2test: FAIL the typed value is not in the program");
+                failures++;
+            }
+        }
+    }
+
+    if (failures) {
+        printf("screen2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("screen2test: PASS the pad is the menu, and the program is what it "
+         "wrote");
+    return 0;
 }
 
 /* The pad is the file tree: the digits walked are the address, and the slot at
@@ -4351,6 +4489,27 @@ static int host_fstest(void)
     return 0;
 }
 
+/* nc2's own screen as a .bmp - the panel alone, like `--dump` for nc's - so the
+   new layout can be looked at without the station's window. */
+static int host_dump_nc2(const char *path)
+{
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    nc2_visual_init();
+    nc2_visual_tick(4000u);             /* past the first start's logo */
+    if (!nc2_visual_open("/D/nc/files/lathe-demo.nc")) {
+        (void)nc2_visual_open("/D/nc/files/screen.nc");
+    }
+    nc2_visual_draw();
+    if (!lvds_host_save_bmp(path)) {
+        fprintf(stderr, "nc_ui: cannot write %s\n", path);
+        return 1;
+    }
+    printf("nc_ui: wrote nc2's %dx%d screen to %s\n", lvds_host_width(),
+           lvds_host_height(), path);
+    return 0;
+}
+
 /* Write the compiled entries out as the card's own files: one per address,
    named after it, in the format `/D/presets` reads. This is where
    `tools/nc_ui_win/examples/presets` - what a fresh station's card is seeded
@@ -4413,6 +4572,8 @@ int host_tests_run(int argc, char **argv)
             return host_dump_bench(argv[i + 1]);
         if (strcmp(argv[i], "--dump-presets") == 0)
             return host_dump_presets(argv[i + 1]);
+        if (strcmp(argv[i], "--dump-nc2") == 0)
+            return host_dump_nc2(argv[i + 1]);
     }
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--fstest") == 0)
@@ -4457,6 +4618,8 @@ int host_tests_run(int argc, char **argv)
             return host_edit2test();
         if (strcmp(argv[i], "--pad2test") == 0)
             return host_pad2test();
+        if (strcmp(argv[i], "--screen2test") == 0)
+            return host_screen2test();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

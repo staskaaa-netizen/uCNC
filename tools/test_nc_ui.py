@@ -355,6 +355,17 @@ if __name__ == "__main__":
         fail("FAIL nc2's pad does not answer with the file tree",
              run.stdout[-1500:] or run.stderr[-1500:])
 
+    # nc2's screen: the program down the left and the pad's corner on the right,
+    # with the pad walking the files and the program keeping what it wrote.
+    root = OUT / "screen2-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--screen2test"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "screen2test: PASS" not in run.stdout:
+        fail("FAIL nc2's screen does not draw or write the program",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
     # The operator's own program and tool table, kept with the NC module
     # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
     # the firmware writes its state next to them, then checked through the

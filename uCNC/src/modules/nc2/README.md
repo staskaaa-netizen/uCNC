@@ -21,7 +21,10 @@ screen is left where it is for now.
 
 - The program, one word picked at a time.
 - **One 3x3 pad, pinned in the bottom right.** It is the only menu there is: no
-  footer strip and no submenu tables. The pad keeps the helper's own trick -
+  footer strip and no submenu tables, and **no borders around the panes** - the
+  one line between them is the whole of the layout's furniture (the bench: *"only
+  middle line is need, not borders from all sides"*). The pad's keys keep their
+  own outlines, because they are buttons. The pad keeps the helper's own trick -
   opening it writes its name as a line at the cursor, which is both the title
   and the place the entry lands (the bench kept this one: *"this one is not big
   and we may preserve it"*).
@@ -37,8 +40,12 @@ screen is left where it is for now.
 | `D` | the next numeric field; on the last one, accept |
 | `#` | insert the picked entry / accept the picked value |
 | `*` | delete - the thing under the cursor |
-| `0` | the file list |
+| `0` | **the exit, always**: out of a pad in one press whatever level it is on, out of the file list, and at the root the card itself |
 | `1`-`9` | the pad; with a value picked, they type into it |
+
+`0` is the exit everywhere (the bench: *"0 should be an exit always"*): `A` steps
+up one level, `0` leaves the whole pad - and only when there is nothing to leave
+does it open the card, which is where the programs are.
 
 The machine has no `-` and `.` keys and `nc2` does not add any: a value that
 needs a sign or a point is typed with the pad's own keys where the screen puts

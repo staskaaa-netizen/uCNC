@@ -248,6 +248,8 @@ void nc2_visual_key(char key)
             break;
         case '*':
         case '0':
+            /* `0` is the way out of whatever is up, and the list is one of those
+               things: out of the list is the program. */
             g_list = false;
             nc2_statusf("");
             break;
@@ -267,8 +269,17 @@ void nc2_visual_key(char key)
     case '#': editor_key = NC2_KEY_ACCEPT; break;
     case '*': editor_key = NC2_KEY_DELETE; break;
     case '0':
-        /* The card, from its root: the programs, and the preset entries beside
-           them, which are text files the same editor opens. */
+        /* `0` is the exit everywhere, so with a pad up it leaves the pad - one
+           press out of however deep, which `A` cannot do (that is one level). The
+           program itself has nothing to leave, so there it opens the card. */
+        if (g_address[0]) {
+            nc2_address_reset(g_address);
+            nc2_pad_close(&g_doc);
+            nc2_labels_at(g_address);
+            nc2_statusf("");
+            g_dirty = true;
+            return;
+        }
         if (nc2_file_scan("/D")) {
             g_list = true;
             nc2_statusf("");
@@ -328,19 +339,19 @@ static void nc2_draw_header(void)
                   nc2_col_text(), nc2_col_header(), LVDS_FONT_NORMAL);
 }
 
-/* The two panes: the program on the left, the drawing on the right, split where
-   nc splits them. The preview's own drawing is the next piece of the module, so
-   its pane is here, framed, and the pad sits in its corner meanwhile. */
+/* The two panes: the program on the left, the drawing on the right, and the line
+   between them - the *only* line, because a border on all four sides of each pane
+   is four lines saying what one already says. The preview's own drawing is the
+   next piece of the module, so its pane is here and the pad sits in its corner
+   meanwhile. */
 static void nc2_draw_panes(void)
 {
     nc2_fill(NC2_LEFT_PANE_X, NC2_PANE_Y, NC2_LEFT_PANE_W, NC2_PANE_H,
              nc2_col_bg());
-    nc2_frame(NC2_LEFT_PANE_X, NC2_PANE_Y, NC2_LEFT_PANE_W, NC2_PANE_H,
-              nc2_col_dim());
     nc2_fill(NC2_RIGHT_PANE_X, NC2_PANE_Y, NC2_RIGHT_PANE_W, NC2_PANE_H,
              nc2_col_bg());
-    nc2_frame(NC2_RIGHT_PANE_X, NC2_PANE_Y, NC2_RIGHT_PANE_W, NC2_PANE_H,
-              nc2_col_dim());
+    lvds_draw_line(NC2_SPLIT_X, NC2_PANE_Y, NC2_SPLIT_X, NC2_PANE_BOTTOM,
+                   nc2_col_dim());
 }
 
 /* One row of the program: its number, then the text - and, on the row the cursor
@@ -457,12 +468,8 @@ static void nc2_draw_pad_band(void)
     char key;
     int i;
 
-    /* A panel under the keys, in the panel's own grey: the pad is the machine's
-       keypad, not a second screen. */
-    nc2_fill(NC2_PAD_X - 4, NC2_PAD_Y - 26, NC2_PAD_W + 8, NC2_PAD_H + 30,
-             nc2_col_bg());
-    nc2_frame(NC2_PAD_X - 4, NC2_PAD_Y - 26, NC2_PAD_W + 8, NC2_PAD_H + 30,
-              nc2_col_dim());
+    /* The keys carry their own outlines (they are buttons); the band under them
+       is only the address line, with no box drawn around the lot. */
     nc2_pad_name(name, sizeof(name));
     if (g_address[0]) {
         snprintf(line, sizeof(line), "%s  %s", g_address, name);
@@ -493,9 +500,6 @@ void nc2_visual_draw(void)
         nc2_fill(NC2_LEFT_PANE_X, NC2_PANE_Y,
                  NC2_RIGHT_PANE_X + NC2_RIGHT_PANE_W - NC2_LEFT_PANE_X, NC2_PANE_H,
                  nc2_col_bg());
-        nc2_frame(NC2_LEFT_PANE_X, NC2_PANE_Y,
-                  NC2_RIGHT_PANE_X + NC2_RIGHT_PANE_W - NC2_LEFT_PANE_X,
-                  NC2_PANE_H, nc2_col_dim());
         nc2_draw_list();
     } else {
         nc2_draw_panes();

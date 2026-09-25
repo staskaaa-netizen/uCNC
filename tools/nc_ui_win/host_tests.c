@@ -1926,6 +1926,12 @@ static int host_screen2test(void)
         puts("screen2test: FAIL the program does not show the pad's name");
         failures++;
     }
+    /* The two panes are told apart by the line between them and nothing else: no
+       box around either, so the split is the one line the layout draws. */
+    if (!host_ink_in(px, NC2_SPLIT_X - 1, NC2_PANE_Y + 8, 3, 40)) {
+        puts("screen2test: FAIL the line between the panes is not drawn");
+        failures++;
+    }
 
     /* 3. the entry lands where the pad's name stood, and the pad stays. */
     nc2_visual_key('1');
@@ -1940,7 +1946,22 @@ static int host_screen2test(void)
     nc2_visual_key('9');
     nc2_visual_key('#');
 
-    /* 5. back out, and read the program the screen wrote off the card. */
+    /* 5. and `0` is the exit everywhere: with a pad up it leaves the pad in one
+       press, whatever level it is on, instead of opening the card. */
+    nc2_visual_key('0');
+    if (strcmp(nc2_visual_address(), "") != 0 ||
+        strcmp(nc2_visual_screen_name(), "EDIT") != 0) {
+        printf("screen2test: FAIL `0` left \"%s\" on \"%s\"\n",
+               nc2_visual_address(), nc2_visual_screen_name());
+        failures++;
+    }
+
+    /* 6. `A` is the step back - in again, then one level out. */
+    nc2_visual_key('4');
+    if (strcmp(nc2_visual_address(), "4") != 0) {
+        puts("screen2test: FAIL the pad did not open again");
+        failures++;
+    }
     nc2_visual_key('A');
     if (strcmp(nc2_visual_address(), "") != 0) {
         printf("screen2test: FAIL `A` left the address at \"%s\"\n",

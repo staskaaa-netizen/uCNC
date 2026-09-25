@@ -6,12 +6,16 @@ The bench, 2026-09-25: *"after some code review - it seems this whole nc drifted
 from pure nc value editor to something too big to be nice. Visual side is ok to
 agree yet it could be made simpler too."* `nc` is **14 758 lines** (13 870
 without its host test) and 2 037 of those are one file. `nc2` is the same job
-with a budget of **7 000**: the value editor, the entries, the sender and the
+with a budget of **6 700**: the value editor, the entries, the sender and the
 preview - and nothing else.
 
 It is a second module, not a refactor of the first: `nc` keeps driving the panel
 until `nc2` answers everything `nc` does, and then the panel is switched over
 once. No compatibility layer, no shared state, no half-migrated screen.
+
+Two things move out of NC's line count before `nc2` is written, because they are
+not NC's to own: the cycle/block scan goes to g7x (below), and the tool table's
+screen is left where it is for now.
 
 ## What the operator sees
 
@@ -79,7 +83,6 @@ rather than writes; see the open questions.
 | `nc2_presets.c` | 450 | addresses -> files: names, rows, the pad's tree |
 | `nc2_files.c` | 350 | the card: listing, load, save, new, delete |
 | `nc2_emit.c` | 700 | the sender: stream, G7x feeding, `U`/`W` |
-| `nc2_g7x.c` | 300 | document scanning for G7x blocks |
 | `nc2_run.c` | 600 | the run: pacing, the DRO's numbers, hold/stop |
 | `nc2_state.c` | 380 | what the panel remembers between boots |
 | `nc2_tools.c` | 250 | the tool table |
@@ -89,7 +92,7 @@ rather than writes; see the open questions.
 | `nc2_preview.c` | 1 100 | stock, contour, dimensions, the live tool |
 | `nc2_draw.c` | 450 | primitives, glyphs, the 3x3 grid |
 | headers, `nc2_layout.h` | 350 | the boundary and the shared numbers |
-| **total** | **7 000** | |
+| **total** | **6 700** | (the block scan is g7x's now; 300 of slack) |
 
 Its own test target, `tools/test_nc2.py`, builds and runs the module against the
 same virtual machine the station uses (AGENTS.md 7), and `nc2/TESTING.md` keeps
@@ -101,17 +104,66 @@ Nothing yet - that is the point of this page. The list has to be exactly: the
 named keys above, the address -> file rule, and whatever the open questions
 settle. Anything else is a file.
 
-## Open questions, to answer before code
+## Settled from the bench (2026-09-25)
 
-1. **The pad is the whole navigation.** With no footer, the first level of the
-   pad has to hold the groups `nc` gives footer keys to (OPS, TOOL, WORD, G7X,
-   THREAD, PECK) - nine slots, six used. Deeper levels are more addresses. Does
-   `A` walk up one level, and is the root one press away?
-2. **A card with no files.** `nc` falls back on 21 compiled entries (~60 lines
-   of data) so a bare card still has words. Keep that fallback in `nc2`, or are
-   the entries *only* files?
-3. **The other screens.** MANUAL (its own 3x3 jog pad and DRO) and TOOLS (the
-   tool table) stay modes of their own, or does the tool table become files too?
-4. **The contour pad (`47`).** It is the one key that computes its rows instead
-   of writing them. Keep it as the single hardcoded key, or make its nine
-   directions files too (the `471`-`479` shape, one more digit per point)?
+1. **No footer, and no second copy of the buttons.** The footer's items are the
+   pad's items somewhere else on the screen (*"it is basically same buttons just
+   different placement on most of screens"*), so the pad is the only menu and
+   everything in it comes from files - *"if we left scaffolding it will grow
+   back. so no - just files or one file."*
+2. **No compiled fallback.** The entries are files, full stop. A card with no
+   files has no entries; the release carries them (see the one question below).
+3. **The tool table is a file like the others** and is edited with the same
+   editor - it is rows, like every other entry. The TOOLS *screen* is a separate
+   question and is isolated: it is left as it is for now rather than rewritten
+   (*"spend on tools and menu a small amount of time ... if it can be isolated -
+   leave it as is for now"*).
+4. **The contour's directions are files too**, and the recursion is a rule
+   rather than a mechanism: *a slot that has children is a pad, and writing from
+   a slot that has children returns to it.* That is the whole trick - the pad's
+   address is the digits walked, so a direction file (`478.txt` = `X-`,
+   `G1 U-0.5`) writes its row and the pad is still there for the next point,
+   while `A` steps up one level. It needs no marker row, no flag and no new kind
+   of file, and `475.txt` = `END` is the way out.
+
+## The address tree
+
+The digits pressed are the address, and the file with that name is the slot:
+
+```
+1.txt .. 9.txt        the groups (their names are the files' first rows)
+11.txt .. 69.txt      the entries, as today
+471.txt .. 479.txt    a level deeper, where a pad needs more than one screen
+```
+
+Each rule is one line: **a digit opens its slot - rows are written, children are
+a pad; `A` goes up a level**, and at the root `A` is the mode key. The root
+therefore holds the six groups `nc` gave footer keys to (plus three spare) with
+nothing hardcoded about them but their files.
+
+## `nc_g7x` moves to g7x, and nc2 has no scan at all
+
+`nc_g7x.c` is 306 lines of "which rows are this cycle's profile" - block
+start/end, the Fanuc two-line header pair, the range above a `G70`, and whether
+a row is inside any contour. The *contract* for that is already g7x's
+(`g7x_source.h`: *"G7x never reads files or NC documents itself. A caller that
+owns program text supplies this cursor ... currently the NC preview"*), and
+every G-code question inside it is asked of g7x - but g7x answers the same
+question a second way, for the stream, and the two have drifted before (the
+README records a block that answered with two different blocks for one line).
+
+So the walk belongs in g7x as `g7x_blocks.c`, over a line-provider callback (the
+one thing g7x must not do is read an NC document itself - the callback keeps
+that true), and the sender, the preview and the mark all ask it. `nc2` then has
+**no `nc2_g7x.c`**: it supplies text and asks g7x. That is ~300 lines leaving the
+NC side and the same amount leaving nc2's budget, so its target is 6 700 with
+300 of slack.
+
+## One question left
+
+With no compiled fallback, a controller whose card has no entries has none at
+all - and that is the exact state the bench hit with `presets.txt` deleted. So:
+does the panel write the shipped entries onto its own card **once, while the
+`presets` folder holds no file of its own** and never overwriting anything (the
+rule the station already uses), or is filling the card the operator's job with
+the files the release carries?

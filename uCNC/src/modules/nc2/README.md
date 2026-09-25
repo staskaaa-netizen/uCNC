@@ -240,8 +240,10 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built (3) | the screen: `nc2_draw.c` (colours, text, the 3x3) and `nc2_visual.c` (the program down the left, the pad's corner on the right, no footer), the program read and written back (`nc2_files.c`), `--screen2test`, `--dump-nc2` |
 | built (4) | the two panes as nc has them (the same split, no footer, no DRO), and the card's file list: `0` opens `/D`, folders are entered, a program opens into the editor, `5` + digits + `#` makes a numbered one, `6` deletes, `8` re-reads, `*`/`0` come back - `--file2test` |
 | built (5) | the cycle/block scan moved out of NC and into g7x (`g7x_blocks.c`, over a line provider), so nc2 will have **no scan file at all** - and the duplication the bench asked about is gone from nc too (`nc_g7x.c` is an adapter now) |
-| next | the sender (`nc2_emit.c`: the stream, the G7x feeding, `U`/`W`), and then the preview in the right pane - **with its `DIN` layer kept as nc has it** (the bench: *"Din must stay here too. it is nice feature ... then do it as is"*) |
-| then | the tool table's screen (its own thing, later), and the panel switch: `nc` out, `nc2` in, one commit |
+| built (6) | the sender: `nc2_emit.c` (the stream, the G7x feeding, the numbered range above a `G70`, `U`/`W` written out as the absolutes they mean) - `--emit2test` runs **both** modules' senders over the same programs and requires the same output, from the top and from a run started in the middle |
+| built (7) | the preview: `nc2_preview.c` drew the stock, the chuck, the DIN rulers and callouts, the contour's point dimensions and the emitted path - the drawing pane is nc's picture, checked for ink and looked at against nc's own frame |
+| next | the drawing's tool panel and live tip (they need the tool table, which is its own module later), then `nc2_state.c`, `nc2_run.c` and the floating DRO |
+| then | the tool table's screen and MANUAL (each its own module, later), and the panel switch: `nc` out, `nc2` in, one commit |
 
 One upstream landmine was found on the way, in `file_system.c`: `fs_opendir()`
 writes into the string it is handed to drop a trailing `/` (`char *newpath =

@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "../g7x/g7x_blocks.h"
+
 /* nc2: the program, and the value editor that walks it.
 
    A document is lines of program and a cursor. The editor does one thing with
@@ -98,6 +100,10 @@ void nc2_cursor_move(nc2_document_t *doc, int delta);
 bool nc2_pick_field(nc2_document_t *doc, int index);
 void nc2_unpick(nc2_document_t *doc);
 bool nc2_key(nc2_document_t *doc, nc2_key_t key, char ch);
+
+/* The document as the cycle scan sees it: g7x owns the block rules and takes
+   the lines, not the document, so this is the one place the two meet. */
+g7x_doc_t nc2_document_g7x(const nc2_document_t *doc);
 
 /* The pad: its name as a line under the cursor while the operator is choosing,
    and the entry's rows where that line stands. The pad *stays* - pressing a

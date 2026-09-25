@@ -22,6 +22,16 @@ lvds_color_t nc2_col_pad_key(void);
 lvds_color_t nc2_col_pad_hot(void);
 lvds_color_t nc2_col_field_bg(void);
 lvds_color_t nc2_col_field_fg(void);
+lvds_color_t nc2_col_prev_bg(void);
+lvds_color_t nc2_col_prev_frame(void);
+lvds_color_t nc2_col_prev_stock(void);
+lvds_color_t nc2_col_prev_hatch(void);
+lvds_color_t nc2_col_prev_cut(void);
+lvds_color_t nc2_col_prev_profile(void);
+
+/* Keep a value inside a range: the drawing code is full of it, and it belongs
+   with the drawing rather than with each screen that draws. */
+int nc2_clampi(int v, int lo, int hi);
 
 int nc2_col_width(int font);
 int nc2_text_width(const char *text, int font);

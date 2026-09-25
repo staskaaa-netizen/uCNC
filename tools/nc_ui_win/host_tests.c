@@ -40,6 +40,7 @@
 #include "nc_visual.h"
 #include "nc2_boot.h"
 #include "nc2.h"
+#include "nc2_emit.h"
 #include "nc2_files.h"
 #include "nc2_layout.h"
 #include "nc2_presets.h"
@@ -1909,6 +1910,12 @@ static int host_screen2test(void)
         puts("screen2test: FAIL the pad's corner drew nothing");
         failures++;
     }
+    /* The drawing pane has the part in it - the stock, the chuck and the DIN
+       rulers - and none of that is the pad. */
+    if (!host_ink_in(px, NC2_RIGHT_PANE_X + 20, NC2_PANE_Y + 90, 320, 160)) {
+        puts("screen2test: FAIL the drawing pane drew nothing");
+        failures++;
+    }
 
     /* 2. into G7X. */
     nc2_visual_key('4');
@@ -2142,6 +2149,182 @@ static int host_pad2test(void)
     }
     puts("pad2test: PASS the pad is the file tree, and every press writes where "
          "the pad's name stood");
+    return 0;
+}
+
+/* Everything nc's sender emits for a document, as one string to compare. */
+static bool host_emit_everything_nc(const nc_document_t *doc,
+                                    size_t start,
+                                    char *out,
+                                    size_t out_sz)
+{
+    nc_emit_stream_t stream;
+    size_t line = 0u;
+    size_t used = 0u;
+
+    out[0] = '\0';
+    nc_emit_stream_begin(&stream, doc, start);
+    nc_emit_stream_set_log(&stream, false);
+    while (stream.active) {
+        char text[NC_MAX_LINE_LEN];
+        nc_emit_result_t r = nc_emit_stream_next(&stream, text, sizeof(text),
+                                                 &line);
+
+        if (r == NC_EMIT_ERROR) {
+            return false;
+        }
+        if (r != NC_EMIT_LINE) {
+            continue;
+        }
+        if (used + strlen(text) + 2u > out_sz) {
+            return false;
+        }
+        memcpy(out + used, text, strlen(text));
+        used += strlen(text);
+        out[used++] = '|';
+        out[used] = '\0';
+    }
+    return true;
+}
+
+/* The same for nc2's. */
+static bool host_emit_everything_nc2(const nc2_document_t *doc,
+                                     size_t start,
+                                     char *out,
+                                     size_t out_sz)
+{
+    nc2_emit_stream_t stream;
+    size_t line = 0u;
+    size_t used = 0u;
+
+    out[0] = '\0';
+    nc2_emit_stream_begin(&stream, doc, start);
+    nc2_emit_stream_set_log(&stream, false);
+    while (stream.active) {
+        char text[NC2_MAX_LINE_LEN];
+        nc2_emit_result_t r = nc2_emit_stream_next(&stream, text, sizeof(text),
+                                                   &line);
+
+        if (r == NC2_EMIT_ERROR) {
+            return false;
+        }
+        if (r != NC2_EMIT_LINE) {
+            continue;
+        }
+        if (used + strlen(text) + 2u > out_sz) {
+            return false;
+        }
+        memcpy(out + used, text, strlen(text));
+        used += strlen(text);
+        out[used++] = '|';
+        out[used] = '\0';
+    }
+    return true;
+}
+
+/* The two senders, line for line. What the machine is told is the one thing the
+   new module may not change on the way in, and the surest way to say so is to
+   feed both the same program and compare what comes out:
+
+     1. a program with two roughing cycles, a finish cut each and a plain row
+        after them;
+     2. the same program started mid-file (`RUN FROM`), where the new sender has
+        to prime its point from the lines above before it can resolve anything;
+     3. a contour written with Fanuc's `U`/`W` increments, which both senders have
+        to leave as the absolute lines the controller reads.
+
+   Every case runs through both `nc_emit_stream_*` and `nc2_emit_stream_*` and the
+   joined output has to be identical, so a difference in either one fails here
+   rather than on the machine. */
+static int host_emit2test(void)
+{
+    static const char *const program = "/D/nc/files/emit.nc";
+    static const char *const absolute_text =
+        "G970 X-5 U60 Z-60 W5\n"
+        "G971 X50 Z50 I0 E0\n"
+        "G973 P7\n"
+        "T2\n"
+        "M3 S450\n"
+        "G0 X52 Z2\n"
+        "G71 U3 R1 X1 Z1 F500 P50 Q55\n"
+        "N50 G1 X30 Z2\n"
+        "G1 X30 Z-15 C2\n"
+        "G1 X35 Z-15\n"
+        "N55 G1 X52 Z-25\n"
+        "G70 P50 Q55\n"
+        "G71 U2 R1 X1 Z1 F500 P100 Q200\n"
+        "N100 G1 X35 Z0 R0\n"
+        "G1 X35 Z-20 R5\n"
+        "N200 G1 X50 Z-20\n"
+        "G70 P100 Q200\n"
+        "G1 X60 Z5 C0 R0\n"
+        "M5\n";
+    static const char *const increments_text =
+        "G971 X50 Z50 I0 E0\n"
+        "G0 X52 Z2\n"
+        "G1 W-25\n"
+        "G1 U-22\n"
+        "G1 W-15\n"
+        "G1 U20\n"
+        "M5\n";
+    const char *text = absolute_text;
+    size_t starts[2];
+    int failures = 0;
+    int pass;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    /* Line 11 in the file above is the `G70 P50 Q55` - a run started there has
+       to know where the first cycle left the tool. */
+    starts[0] = 0u;
+    starts[1] = 11u;
+    for (pass = 0; pass < 3; pass++) {
+        nc_document_t a;
+        nc2_document_t b;
+        char out_nc[4096];
+        char out_nc2[4096];
+        size_t start;
+        size_t s;
+
+        if (pass == 2) {
+            text = increments_text;
+            starts[1] = 0u;
+        }
+        if (!host_fs_write_text(program, text)) {
+            puts("emit2test: FAIL cannot write the fixture");
+            return 1;
+        }
+        nc_document_init(&a);
+        nc2_document_init(&b);
+        if (nc_load_file(&a, program) != NC_OK ||
+            !nc2_file_load(&b, program)) {
+            puts("emit2test: FAIL the fixture does not load");
+            return 1;
+        }
+        for (s = 0u; s < 2u; s++) {
+            start = starts[s];
+            if (!host_emit_everything_nc(&a, start, out_nc, sizeof(out_nc)) ||
+                !host_emit_everything_nc2(&b, start, out_nc2, sizeof(out_nc2))) {
+                printf("emit2test: FAIL pass %d from line %u does not expand\n",
+                       pass, (unsigned)start);
+                failures++;
+                continue;
+            }
+            if (strcmp(out_nc, out_nc2) != 0) {
+                printf("emit2test: FAIL pass %d from line %u differs:\n"
+                       "  nc : %s\n  nc2: %s\n", pass, (unsigned)start,
+                       out_nc, out_nc2);
+                failures++;
+            }
+        }
+    }
+
+    if (failures) {
+        printf("emit2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("emit2test: PASS nc2 sends exactly what nc sends, from the top and "
+         "from the middle");
     return 0;
 }
 
@@ -4848,6 +5031,8 @@ int host_tests_run(int argc, char **argv)
             return host_screen2test();
         if (strcmp(argv[i], "--file2test") == 0)
             return host_file2test();
+        if (strcmp(argv[i], "--emit2test") == 0)
+            return host_emit2test();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

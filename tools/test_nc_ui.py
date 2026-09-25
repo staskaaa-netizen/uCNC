@@ -377,6 +377,18 @@ if __name__ == "__main__":
         fail("FAIL nc2's file list does not walk, open, make or delete",
              run.stdout[-1500:] or run.stderr[-1500:])
 
+    # nc2's sender against nc's: the same program has to leave as the same lines,
+    # from the top and from a run that starts in the middle, with the increments
+    # written out as the absolutes they mean.
+    root = OUT / "emit2-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--emit2test"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "emit2test: PASS" not in run.stdout:
+        fail("FAIL nc2's sender does not agree with nc's",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
     # The operator's own program and tool table, kept with the NC module
     # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
     # the firmware writes its state next to them, then checked through the

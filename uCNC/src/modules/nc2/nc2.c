@@ -72,6 +72,35 @@ int nc2_document_fields(const nc2_document_t *doc, nc2_field_t *out, int max)
     return nc2_fields(doc->lines[doc->cursor], out, max);
 }
 
+/* --- the document as the cycle scan sees it ------------------------------- */
+
+/* A line as g7x reads it: leading spaces skipped, because every reader there
+   treats `  G71 ...` as the cycle it is. */
+static const char *nc2_document_line(void *user, size_t index)
+{
+    const nc2_document_t *doc = user;
+    const char *line;
+
+    if (!doc || index >= doc->line_count) {
+        return "";
+    }
+    line = doc->lines[index];
+    while (*line == ' ' || *line == '\t') {
+        line++;
+    }
+    return line;
+}
+
+g7x_doc_t nc2_document_g7x(const nc2_document_t *doc)
+{
+    g7x_doc_t view;
+
+    view.line = doc ? nc2_document_line : 0;
+    view.user = (void *)doc;
+    view.count = doc ? doc->line_count : 0u;
+    return view;
+}
+
 /* --- lines ---------------------------------------------------------------- */
 
 bool nc2_insert_line(nc2_document_t *doc, size_t at, const char *text)

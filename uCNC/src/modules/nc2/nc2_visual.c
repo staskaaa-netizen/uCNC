@@ -5,6 +5,7 @@
 #include "nc2_draw.h"
 #include "nc2_files.h"
 #include "nc2_layout.h"
+#include "nc2_preview.h"
 #include "nc2_presets.h"
 
 #include "../../cnc.h"
@@ -504,6 +505,11 @@ void nc2_visual_draw(void)
     } else {
         nc2_draw_panes();
         nc2_draw_program();
+        /* The drawing goes on after the panes and before the pad: the pad is the
+           machine's keys and sits in the drawing's corner, so it is drawn last
+           of the three. */
+        nc2_preview_draw(&g_doc, NC2_RIGHT_PANE_X, NC2_PANE_Y, NC2_RIGHT_PANE_W,
+                         NC2_PANE_H);
         nc2_draw_pad_band();
     }
     if (g_status[0]) {

@@ -27,6 +27,26 @@ lvds_color_t nc2_col_pad_hot(void) { return lvds_palette_color(yellow); }
 lvds_color_t nc2_col_field_bg(void) { return lvds_palette_color(white_warm); }
 lvds_color_t nc2_col_field_fg(void) { return lvds_palette_color(black); }
 
+/* The preview's own elements: the drawing has its own background, frame, stock
+   and cut colours, so a pane can be read as a drawing and not as a screen. */
+lvds_color_t nc2_col_prev_bg(void) { return lvds_palette_element(LC_ELEM_PREVIEW_BG); }
+lvds_color_t nc2_col_prev_frame(void) { return lvds_palette_element(LC_ELEM_PREVIEW_FRAME); }
+lvds_color_t nc2_col_prev_stock(void) { return lvds_palette_element(LC_ELEM_PREVIEW_STOCK); }
+lvds_color_t nc2_col_prev_hatch(void) { return lvds_palette_element(LC_ELEM_PREVIEW_HATCH); }
+lvds_color_t nc2_col_prev_cut(void) { return lvds_palette_element(LC_ELEM_PREVIEW_CUT); }
+lvds_color_t nc2_col_prev_profile(void) { return lvds_palette_element(LC_ELEM_PREVIEW_PROFILE); }
+
+int nc2_clampi(int v, int lo, int hi)
+{
+    if (v < lo) {
+        return lo;
+    }
+    if (v > hi) {
+        return hi;
+    }
+    return v;
+}
+
 int nc2_col_width(int font)
 {
     return nc2_text_width("0", font);

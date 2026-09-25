@@ -49,13 +49,24 @@ MODULES = $(SRC)/modules/g7_g8/parser_g7_g8.c \
 APP = lvds_host.c host_fs.c host_shim.c host_spindle.c host_tests.c main.c
 
 TARGET = $(BUILDDIR)/nc_ui.exe
+# cmd.exe, which mingw32-make runs the recipes through, reads a `/` in a path
+# as a switch - the demo path is spelled the Windows way.
+DEMO = $(BUILDDIR)\examples
 
 .PHONY: all clean
 
-all: $(TARGET)
+all: $(TARGET) demo
 
 $(BUILDDIR):
 	if not exist $(BUILDDIR) mkdir $(BUILDDIR)
+
+# The demo card and the preset entries sit beside the exe, the way the release
+# zip carries them. The station seeds a card that has none of its own from
+# `examples\` - so a local build has to have them there too, or the first run
+# opens on an empty card and an empty `presets\`.
+demo: $(TARGET)
+	if not exist "$(DEMO)" mkdir "$(DEMO)"
+	xcopy /E /I /Y /Q examples "$(DEMO)" > nul
 
 $(TARGET): $(BUILDDIR) $(APP) $(MODULES)
 	$(CC) $(CFLAGS) $(APP) $(CORE) $(MODULES) -o $(TARGET) $(LDFLAGS)

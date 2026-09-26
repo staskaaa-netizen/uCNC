@@ -213,6 +213,8 @@ if __name__ == "__main__":
     for flag, marker, message in (
         ("--seedtest", "seedtest: PASS",
          "nc2's first start does not seed the card"),
+        ("--present2test", "present2test: PASS",
+         "a screen never hands its frame to the panel"),
         ("--edit2test", "edit2test: PASS",
          "nc2's value editor does not walk the fields"),
         ("--pad2test", "pad2test: PASS",

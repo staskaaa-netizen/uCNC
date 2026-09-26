@@ -16,6 +16,8 @@ flags, each of which sets up the card it needs:
                    and the DRO floats only while it is busy
     --manual2test  the jog keys move the machine, the stops are typed, the spindle
                    runs from the keys, and the axis zeroes and touches off
+    --present2test every screen hands its frame to the panel (the copy the
+                   machine needs and the host cannot see in the pixels)
 
 The station's own suite (`tools/test_nc_ui.py`) runs these with everything else;
 this target is for working on the module alone.
@@ -31,7 +33,7 @@ import test_nc_ui as station  # noqa: E402  (the build is the station's)
 CHECKS = ("--seedtest", "--edit2test", "--pad2test", "--screen2test",
           "--file2test", "--emit2test", "--run2test", "--manual2test",
           "--tools2test", "--block2test", "--label2test", "--pace2test",
-          "--demo2test")
+          "--demo2test", "--present2test")
 
 
 def main():

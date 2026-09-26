@@ -21,6 +21,7 @@
 
 static uint32_t g_frame[LVDS_HOST_WIDTH * LVDS_HOST_HEIGHT];
 static void *g_window;
+static unsigned g_present_count;
 
 int lvds_host_width(void) { return LVDS_HOST_WIDTH; }
 int lvds_host_height(void) { return LVDS_HOST_HEIGHT; }
@@ -243,8 +244,21 @@ lvds_color_t lvds_hstx_rgb(uint8_t r, uint8_t g, uint8_t b)
 
 void lvds_hstx_present(void)
 {
+    g_present_count++;
     if (g_window)
         InvalidateRect((HWND)g_window, NULL, FALSE);
+}
+
+/* How many times the screen has handed a frame over.
+
+   On the machine this is the copy from the PSRAM draw buffer into the SRAM
+   scanout, so a screen that never calls it draws a perfect frame nobody ever
+   sees - a black panel. The host does not need the copy (it draws straight into
+   the frame), so counting the call is the only way the host can tell that the
+   screen does it at all; `--screen2test` insists on it. */
+unsigned lvds_host_present_count(void)
+{
+    return g_present_count;
 }
 
 /* No PSRAM on the desktop: callers fall back to the SRAM path. */

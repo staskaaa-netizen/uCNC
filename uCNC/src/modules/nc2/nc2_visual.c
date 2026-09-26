@@ -928,6 +928,11 @@ void nc2_visual_draw(void)
 {
     if (nc2_boot_active()) {
         nc2_boot_draw();
+        /* The renderer draws into the PSRAM backbuffer and the scanout reads
+           SRAM: without this the panel keeps showing whatever it was showing -
+           black on a cold boot. It is a no-op on the host backend, which is
+           why every host frame looked right while the glass stayed dark. */
+        lvds_hstx_present();
         return;
     }
     nc2_fill(0, 0, LVDS_HSTX_WIDTH, LVDS_HSTX_HEIGHT, nc2_col_bg());
@@ -974,6 +979,7 @@ void nc2_visual_draw(void)
                       nc2_col_text(), nc2_col_header(), LVDS_FONT_SMALL);
     }
     nc2_visual_clear_dirty();
+    lvds_hstx_present();
 }
 
 /* --- the shell's own questions -------------------------------------------- */

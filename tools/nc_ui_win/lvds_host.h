@@ -28,6 +28,13 @@ int lvds_host_height(void);
 /* Write the current frame as a 24-bit BMP. Used by the headless smoke test. */
 bool lvds_host_save_bmp(const char *path);
 
+/* How many frames the screen has handed to the panel (`lvds_hstx_present()`).
+   A screen that draws without presenting shows a black panel on the machine,
+   and the host cannot see that in the pixels - it draws straight into the
+   frame - so the checks read the count instead. */
+unsigned lvds_host_present_count(void);
+
+
 #ifdef __cplusplus
 }
 #endif

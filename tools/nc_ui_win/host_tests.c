@@ -2165,6 +2165,73 @@ static int host_demo2test(void)
     return 0;
 }
 
+/* Every screen has to hand its frame to the panel.
+
+   On the machine `lvds_hstx_present()` is the copy from the PSRAM draw buffer
+   into the SRAM scanout: a screen that draws a perfect frame and never calls it
+   shows a black panel. The host draws straight into the frame and its
+   `present()` only repaints the window, so the pixels cannot tell - which is
+   why the first nc2 firmware booted to a black screen with every host check
+   green. The host counts the calls instead, and this insists on them: the first
+   start's logo, and the work screen it hands over to. */
+static int host_present2test(void)
+{
+    unsigned before;
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!nc2_boot_active()) {
+        puts("present2test: FAIL a fresh card did not raise the logo");
+        return 1;
+    }
+    before = lvds_host_present_count();
+    nc2_visual_draw();
+    if (lvds_host_present_count() != before + 1u) {
+        printf("present2test: FAIL the logo drew %u frames for the panel\n",
+               lvds_host_present_count() - before);
+        failures++;
+    }
+
+    /* Past the logo: the screen the operator works on, and the same one frame
+       per draw. */
+    nc2_visual_tick(4000u);
+    if (nc2_boot_active()) {
+        puts("present2test: FAIL the logo stayed up");
+        failures++;
+    }
+    before = lvds_host_present_count();
+    nc2_visual_draw();
+    if (lvds_host_present_count() != before + 1u) {
+        printf("present2test: FAIL the work screen drew %u frames for the "
+               "panel\n", lvds_host_present_count() - before);
+        failures++;
+    }
+
+    /* And every screen, not only the one that comes up first. */
+    nc2_visual_select_mode(NC2_MODE_MANUAL);
+    before = lvds_host_present_count();
+    nc2_visual_draw();
+    if (lvds_host_present_count() != before + 1u) {
+        puts("present2test: FAIL the MANUAL screen never reached the panel");
+        failures++;
+    }
+    nc2_visual_select_mode(NC2_MODE_RUN);
+    before = lvds_host_present_count();
+    nc2_visual_draw();
+    if (lvds_host_present_count() != before + 1u) {
+        puts("present2test: FAIL the RUN screen never reached the panel");
+        failures++;
+    }
+
+    if (failures) {
+        printf("present2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("present2test: PASS every screen hands its frame to the panel");
+    return 0;
+}
+
 /* nc2's value editor: a line is cut into fields at its letters, the keys walk
    them, and what is typed replaces the value that was there. The dumb editor the
    bench asked for, so the checks are about its two rules - where a field begins
@@ -2737,6 +2804,8 @@ int host_tests_run(int argc, char **argv)
             return host_keytest();
         if (strcmp(argv[i], "--seedtest") == 0)
             return host_seedtest();
+        if (strcmp(argv[i], "--present2test") == 0)
+            return host_present2test();
         if (strcmp(argv[i], "--edit2test") == 0)
             return host_edit2test();
         if (strcmp(argv[i], "--pad2test") == 0)

@@ -382,6 +382,10 @@ python tools\test_nc_ui.py
   damages a pixel in the pad's corner and draws again: a frame that changes
   nothing has to leave it (only the drawing and the strip are painted), and a
   key has to paint over it.
+  The meter logs its breakdown to the console once a second
+  (`[MSG:NC2 fps ... draw ... screen ... stock ... geom ... strip ... present]`,
+  milliseconds per frame) - the machine's console is where a frame's cost is
+  read, and the test only insists the count is right.
 - `--scroll2test` checks the code pane's scroll: twenty lines down a thirty-line
   program, the cursor's row has to be six rows short of the pane's last, and the
   six rows under it have to carry the next lines.

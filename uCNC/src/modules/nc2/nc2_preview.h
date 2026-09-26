@@ -26,6 +26,9 @@
 typedef struct {
     bool busy;                      /* it is doing anything at all */
     bool screen_run;                /* the RUN screen is the one being drawn */
+    /* The screen painted the whole pane this frame (a different band, a mode
+       change): the mask has to be drawn whole again, not only where it moved. */
+    bool full;
     float x;
     float z;
     /* The tool the program is using, for the glyph that rides the cut: the
@@ -36,6 +39,12 @@ typedef struct {
 
 void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
                       int x, int y, int w, int h);
+
+/* What the last drawing spent its time in, in microseconds: the stock and the
+   mask's scan, then the geometry (dimensions, contour, the emitted part, the
+   tool). The screen's frame meter logs them, which is what says where a slow
+   frame goes (bench: "12 fps only. why ..."). */
+void nc2_preview_times(uint32_t *stock_us, uint32_t *geom_us);
 
 /* The stock's diameter, as the drawing reads it out of the setup rows. The path
    builder starts an axis the program has not given yet at the stock's corner,

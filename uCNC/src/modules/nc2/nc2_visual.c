@@ -16,6 +16,7 @@
 #include "../../cnc.h"
 #include "../../core/interpolator.h"
 #include "../../core/parser.h"
+#include "../../interface/grbl_stream.h"
 #include "../lvds_renderer/lvds_hstx.h"
 #include "../g7x/g7x.h"
 
@@ -50,6 +51,23 @@ static uint16_t g_nc2_fps;
 static uint16_t g_nc2_fps_frames;
 static uint32_t g_nc2_fps_start_ms;
 
+/* Where a frame's time goes: the whole drawing, the bands that do not move on
+   their own (the header, the rows, the notes, the pad), the machine's strip, and
+   the hand-off to the panel. Once a second they are averaged and logged to the
+   console - the glass has room for the frame count, and the breakdown is what
+   answers "why" (bench: "12 fps only. why ..."). */
+static uint32_t g_nc2_acc_draw_us;
+static uint32_t g_nc2_acc_screen_us;
+static uint32_t g_nc2_acc_stock_us;
+static uint32_t g_nc2_acc_geom_us;
+static uint32_t g_nc2_acc_strip_us;
+static uint32_t g_nc2_acc_present_us;
+
+static unsigned nc2_ms_of(uint32_t us, uint16_t frames)
+{
+    return frames ? ((us / frames) + 500u) / 1000u : 0u;
+}
+
 static void nc2_fps_tick(void)
 {
     uint32_t now = mcu_millis();
@@ -62,6 +80,24 @@ static void nc2_fps_tick(void)
     elapsed = now - g_nc2_fps_start_ms;
     if (elapsed >= 1000u) {
         g_nc2_fps = (uint16_t)(((uint32_t)g_nc2_fps_frames * 1000u) / elapsed);
+        if (g_nc2_fps_frames) {
+            grbl_stream_printf("[MSG:NC2 fps %u draw %u screen %u stock %u "
+                               "geom %u strip %u present %u]\r\n",
+                               (unsigned)g_nc2_fps,
+                               nc2_ms_of(g_nc2_acc_draw_us, g_nc2_fps_frames),
+                               nc2_ms_of(g_nc2_acc_screen_us, g_nc2_fps_frames),
+                               nc2_ms_of(g_nc2_acc_stock_us, g_nc2_fps_frames),
+                               nc2_ms_of(g_nc2_acc_geom_us, g_nc2_fps_frames),
+                               nc2_ms_of(g_nc2_acc_strip_us, g_nc2_fps_frames),
+                               nc2_ms_of(g_nc2_acc_present_us,
+                                         g_nc2_fps_frames));
+        }
+        g_nc2_acc_draw_us = 0u;
+        g_nc2_acc_screen_us = 0u;
+        g_nc2_acc_stock_us = 0u;
+        g_nc2_acc_geom_us = 0u;
+        g_nc2_acc_strip_us = 0u;
+        g_nc2_acc_present_us = 0u;
         g_nc2_fps_frames = 0u;
         g_nc2_fps_start_ms = now;
     }
@@ -1415,7 +1451,7 @@ static void nc2_draw_dro(void)
    making a part, and the part belongs at the top where the operator looks. What
    the machine is doing is read once, and the tool the program has chosen is what
    the glyph rides the cut with. */
-static void nc2_draw_preview(void)
+static void nc2_draw_preview(bool full)
 {
     nc2_runtime_state_t rt;
     nc2_preview_run_t run;
@@ -1424,6 +1460,7 @@ static void nc2_draw_preview(void)
     nc2_state_runtime(&rt);
     run.busy = nc2_state_busy() || nc2_run_active() || nc2_run_hold();
     run.screen_run = g_mode == NC2_MODE_RUN;
+    run.full = full;
     run.x = rt.x;
     run.z = rt.z;
     run.tool = 0;
@@ -1434,10 +1471,12 @@ static void nc2_draw_preview(void)
                      NC2_PREVIEW_PANE_H);
 }
 
-/* What the last frame showed that does not move on its own. While none of this
-   changes, only the drawing and the machine's strip are painted again - the
-   header, the rows, the notes and the pad keep the pixels they already have.
-   The bench: "fps is dead slow - again full screen is refreshed not only
+/* What the last frame showed that does not move on its own, in two bands: the
+   rows of the file the pane draws, and what the screen wears around them (the
+   header, the notes, the pad and its caption). While neither changes, only the
+   drawing and the machine's strip are painted again; when only the *mark* moves
+   - which is what a run does - the rows are painted and the chrome is left
+   alone. The bench: "fps is dead slow - again full screen is refreshed not only
    preview area?" */
 typedef struct {
     nc2_mode_t mode;
@@ -1446,39 +1485,57 @@ typedef struct {
     size_t mark;                /* the line the rows draw their mark on */
     int field;
     size_t lines;
+    char address[NC2_ADDR_MAX + 1];
+} nc2_rows_key_t;
+
+typedef struct {
+    nc2_mode_t mode;
+    bool list;
     bool fault;
     char pad_hot;               /* MANUAL's key flash, and the run's hold */
     char status[64];
     char address[NC2_ADDR_MAX + 1];
     uint16_t fps;
-} nc2_frame_key_t;
+} nc2_chrome_key_t;
 
-static nc2_frame_key_t g_frame_key;
+static nc2_rows_key_t g_rows_key;
+static nc2_chrome_key_t g_chrome_key;
 static bool g_frame_key_valid;
 
-static void nc2_frame_key_of(nc2_frame_key_t *key)
+static void nc2_frame_keys_of(nc2_rows_key_t *rows, nc2_chrome_key_t *chrome)
 {
     nc2_runtime_state_t rt;
 
-    memset(key, 0, sizeof(*key));
-    key->mode = g_mode;
-    key->list = g_list;
-    key->cursor = g_doc.cursor;
-    key->mark = (g_mode == NC2_MODE_RUN) ? nc2_visual_run_line() : g_doc.cursor;
-    key->field = g_doc.field;
-    key->lines = g_doc.line_count;
+    memset(rows, 0, sizeof(*rows));
+    rows->mode = g_mode;
+    rows->list = g_list;
+    rows->cursor = g_doc.cursor;
+    rows->mark = (g_mode == NC2_MODE_RUN) ? nc2_visual_run_line()
+                                          : g_doc.cursor;
+    rows->field = g_doc.field;
+    rows->lines = g_doc.line_count;
+    snprintf(rows->address, sizeof(rows->address), "%s", g_address);
+
+    memset(chrome, 0, sizeof(*chrome));
+    chrome->mode = g_mode;
+    chrome->list = g_list;
     nc2_state_runtime(&rt);
-    key->fault = nc2_state_is_fault(&rt);
-    key->pad_hot = nc2_pad_hot();
-    snprintf(key->status, sizeof(key->status), "%s", g_status);
-    snprintf(key->address, sizeof(key->address), "%s", g_address);
-    key->fps = g_nc2_fps;
+    chrome->fault = nc2_state_is_fault(&rt);
+    chrome->pad_hot = nc2_pad_hot();
+    snprintf(chrome->status, sizeof(chrome->status), "%s", g_status);
+    snprintf(chrome->address, sizeof(chrome->address), "%s", g_address);
+    chrome->fps = g_nc2_fps;
 }
 
 void nc2_visual_draw(void)
 {
-    nc2_frame_key_t key;
+    nc2_rows_key_t rows_key;
+    nc2_chrome_key_t chrome_key;
+    uint32_t t_start;
+    uint32_t t_band;
     bool full;
+    bool rows;
+    bool chrome;
 
     if (nc2_boot_active()) {
         nc2_boot_draw();
@@ -1489,57 +1546,105 @@ void nc2_visual_draw(void)
         lvds_hstx_present();
         return;
     }
-    nc2_frame_key_of(&key);
+    t_start = mcu_micros();
+    t_band = t_start;
+    nc2_frame_keys_of(&rows_key, &chrome_key);
+    /* A mode or a screen change paints the lot: the bands are in different
+       places then. Anything else is per band. */
     full = g_dirty || !g_frame_key_valid ||
-           memcmp(&key, &g_frame_key, sizeof(key)) != 0;
+           rows_key.mode != g_rows_key.mode || rows_key.list != g_rows_key.list;
+    rows = full || memcmp(&rows_key, &g_rows_key, sizeof(rows_key)) != 0;
+    chrome = full ||
+             memcmp(&chrome_key, &g_chrome_key, sizeof(chrome_key)) != 0;
     if (full) {
         nc2_fill(0, 0, LVDS_VIEW_WIDTH, LVDS_VIEW_HEIGHT, nc2_col_bg());
+    }
+    t_band = mcu_micros();
+    if (full || chrome) {
         nc2_draw_header();
     }
+    g_nc2_acc_screen_us += mcu_micros() - t_band;   /* the header */
     /* The two bands that move on their own: the drawing (the machine's own
        position, and the tool with it) and the strip's figures. Everything else
        is drawn when something it shows has changed. */
-    nc2_draw_preview();
-    nc2_draw_dro();
-    if (!full) {
-        nc2_fps_tick();
-        lvds_hstx_present();
-        return;
+    nc2_draw_preview(full);
+    {
+        uint32_t stock_us = 0u;
+        uint32_t geom_us = 0u;
+
+        /* What the drawing itself spent its time in (the preview knows). */
+        nc2_preview_times(&stock_us, &geom_us);
+        g_nc2_acc_stock_us += stock_us;
+        g_nc2_acc_geom_us += geom_us;
     }
+    t_band = mcu_micros();
+    nc2_draw_dro();
+    g_nc2_acc_strip_us += mcu_micros() - t_band;
     if (g_list) {
         /* The list is one column, not the editor's pane: it takes the whole
            bottom band while it is up, the way a picker does. */
-        nc2_fill(NC2_TEXT_X, NC2_TEXT_Y,
-                 NC2_PAD_X + NC2_PAD_W - NC2_TEXT_X, NC2_TEXT_H, nc2_col_bg());
-        nc2_draw_list();
+        if (rows) {
+            nc2_fill(NC2_TEXT_X, NC2_TEXT_Y,
+                     NC2_PAD_X + NC2_PAD_W - NC2_TEXT_X, NC2_TEXT_H,
+                     nc2_col_bg());
+            nc2_draw_list();
+        }
     } else if (g_mode == NC2_MODE_MANUAL) {
         /* MANUAL is a machine panel: the pane carries the stops and the value
            the keys change and the pad its jog keys. */
-        nc2_manual_draw_pane(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H);
-        nc2_draw_notes();
-        nc2_draw_pad_band();
+        if (rows) {
+            nc2_fill(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H,
+                     nc2_col_bg());
+            nc2_manual_draw_pane(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W,
+                                 NC2_TEXT_H);
+        }
+        if (full || chrome) {
+            nc2_draw_notes();
+            nc2_draw_pad_band();
+        }
     } else if (g_mode == NC2_MODE_TOOLS) {
         /* The tools screen: the table's own rows in the pane under the header -
            they are the text the operator edits, and the top half is where the
            eye reads it - and the tool the cursor is on drawn in the pane below
            (bench: "on tools - bring it back just fit into current screen so top
            one is text lines, bottom one is tool view"). */
-        nc2_fill(NC2_PREVIEW_X, NC2_PREVIEW_Y, NC2_PREVIEW_W,
-                 NC2_PREVIEW_PANE_H, nc2_col_bg());
-        nc2_draw_rows(NC2_PREVIEW_X, NC2_PREVIEW_Y, NC2_PREVIEW_W,
-                      NC2_PREVIEW_PANE_H);
-        nc2_draw_tool_view(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H);
-        nc2_draw_notes();
-        nc2_draw_pad_band();
+        if (full) {
+            nc2_fill(NC2_PREVIEW_X, NC2_PREVIEW_Y, NC2_PREVIEW_W,
+                     NC2_PREVIEW_PANE_H, nc2_col_bg());
+        }
+        if (rows) {
+            nc2_fill(NC2_PREVIEW_X, NC2_PREVIEW_Y, NC2_PREVIEW_W,
+                     NC2_PREVIEW_PANE_H, nc2_col_bg());
+            nc2_draw_rows(NC2_PREVIEW_X, NC2_PREVIEW_Y, NC2_PREVIEW_W,
+                          NC2_PREVIEW_PANE_H);
+            nc2_fill(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H,
+                     nc2_col_bg());
+            nc2_draw_tool_view(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H);
+        }
+        if (full || chrome) {
+            nc2_draw_notes();
+            nc2_draw_pad_band();
+        }
     } else {
-        nc2_draw_rows(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H);
-        nc2_draw_notes();
-        nc2_draw_pad_band();
+        if (rows) {
+            nc2_fill(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H,
+                     nc2_col_bg());
+            nc2_draw_rows(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H);
+        }
+        if (full || chrome) {
+            nc2_draw_notes();
+            nc2_draw_pad_band();
+        }
     }
-    g_frame_key = key;
+    g_nc2_acc_screen_us += mcu_micros() - t_band;   /* the bands around it */
+    g_rows_key = rows_key;
+    g_chrome_key = chrome_key;
     g_frame_key_valid = true;
     nc2_visual_clear_dirty();
+    t_band = mcu_micros();
+    g_nc2_acc_draw_us += t_band - t_start;
     lvds_hstx_present();
+    g_nc2_acc_present_us += mcu_micros() - t_band;
     nc2_fps_tick();
 }
 

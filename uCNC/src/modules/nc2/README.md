@@ -100,6 +100,28 @@ message, the cursor); a frame that changes nothing paints the drawing and the
 machine's strip and leaves the rest of the pixels alone - the bench: *"fps is
 dead slow - again full screen is refreshed not only preview area?"*
 
+Inside the drawing it is the same rule: the pane is cleared only on a frame that
+paints it whole, and the live stock's mask is painted over the rows the cut
+actually took material from - not the whole mask, and not the band below a cut
+that was painted when it was cut. The mask's own scan (516x165 bytes at this
+size) is what the first version read every frame.
+
+**Where a frame's time goes** is on the console, once a second, whenever the
+screen is drawing:
+
+```text
+[MSG:NC2 fps 12 draw 79 screen 3 stock 41 geom 28 strip 2 present 1]
+```
+
+`draw` is the whole frame, `screen` the bands that do not move on their own
+(the header, the rows, the notes, the pad), `stock` and `geom` the drawing's two
+halves (the mask and the stock, then the dimensions, contour, emitted part and
+tool), `strip` the machine's own line, `present` the hand-off to the panel. All
+in milliseconds, averaged over the frames of that second; the glass keeps the
+frame count alone (`12 FPS`). The bench asked for the meter back to test the
+panel: *"give me back fps meter it need to be tested"*, and a number without a
+breakdown cannot say what to fix - *"12 fps only. why ..."*.
+
 **A refused line is said, not just flagged.** When the controller refuses a line
 the strip says `uCNC ERROR` - a glance - and the notes say the sentence: which
 line of the program it was, the code, and what it means (`Line 8 error 2: Invalid

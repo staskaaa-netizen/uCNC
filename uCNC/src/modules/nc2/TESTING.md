@@ -99,7 +99,10 @@ cannot have the spindle, the travel or the panel's glass.
    it against the last build before a change to the drawing or the live stock.
   With the tool glyph on the drawing and the live stock under it, a cut is the
   heaviest frame the panel draws: if the meter drops below the panel's own
-  period there, the next change is in the drawing, not in the layout.
+  period there, the next change is in the drawing, not in the layout. The
+  console line that goes with it (`[MSG:NC2 fps ... draw ... stock ... geom
+  ...]`, once a second) is what says *which* half - read it with the console
+  open, or the number on the glass cannot say what to fix.
 - The drawing is on every screen, MANUAL included: start a jog and the part is
   in view above the strip.
 - Read the code pane outdoors and with the panel at an angle: the selected row,

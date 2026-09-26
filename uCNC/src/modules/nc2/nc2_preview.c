@@ -585,6 +585,29 @@ static float g_nc2_live_setup_i;
 static float g_nc2_live_last_x;         /* diameters, as the program reads them */
 static float g_nc2_live_last_z;
 
+/* The mask rows the last frame changed, and whether the pane was painted whole
+   (a mode change, the first frame after one): the drawing then has to paint
+   every row, otherwise only the band the tool moved through - the mask is
+   500x200 bytes and reading it whole every frame is the first thing the frame
+   meter shows. */
+static int g_nc2_live_dirty_y0;
+static int g_nc2_live_dirty_y1;
+static bool g_nc2_live_draw_all;
+
+/* The parts of a frame, for the screen's meter. */
+static uint32_t g_nc2_preview_stock_us;
+static uint32_t g_nc2_preview_geom_us;
+
+void nc2_preview_times(uint32_t *stock_us, uint32_t *geom_us)
+{
+    if (stock_us) {
+        *stock_us = g_nc2_preview_stock_us;
+    }
+    if (geom_us) {
+        *geom_us = g_nc2_preview_geom_us;
+    }
+}
+
 static bool nc2_live_alloc(void)
 {
     if (g_nc2_live_mask) {
@@ -640,6 +663,9 @@ static void nc2_live_reset(const nc2_preview_info_t *p, int stock_w, int stock_h
     g_nc2_live_setup_x = p->stock_x;
     g_nc2_live_setup_z = p->visible_z;
     g_nc2_live_setup_i = p->stock_i;
+    g_nc2_live_dirty_y0 = 0;
+    g_nc2_live_dirty_y1 = g_nc2_live_h - 1;
+    g_nc2_live_draw_all = true;
     g_nc2_live_ready = true;
 }
 
@@ -666,8 +692,30 @@ static void nc2_live_remove(int x0, int y0, int x1, int y1)
         y1 = t;
     }
     for (y = y0; y <= y1; y++) {
-        memset(g_nc2_live_mask + (size_t)y * NC2_LIVE_STOCK_MAX_W + x0, 0,
-               (size_t)(x1 - x0 + 1));
+        uint8_t *slice = g_nc2_live_mask + (size_t)y * NC2_LIVE_STOCK_MAX_W + x0;
+        int span = x1 - x0 + 1;
+        int i;
+        bool was_material = false;
+
+        /* What the drawing has to paint again is what actually changed: the
+           material the tool took off, not everything below it - the band below
+           the cut was painted when it was cut. */
+        for (i = 0; i < span; i++) {
+            if (slice[i]) {
+                was_material = true;
+                break;
+            }
+        }
+        if (!was_material) {
+            continue;
+        }
+        memset(slice, 0, (size_t)span);
+        if (y < g_nc2_live_dirty_y0) {
+            g_nc2_live_dirty_y0 = y;
+        }
+        if (y > g_nc2_live_dirty_y1) {
+            g_nc2_live_dirty_y1 = y;
+        }
     }
 }
 
@@ -727,17 +775,32 @@ static void nc2_live_update(const nc2_preview_info_t *p,
 }
 
 /* What is left of the stock, drawn: the material in the stock's own colour and
-   the cut away part in the pane's ground. */
-static void nc2_live_draw(int stock_left, int stock_top)
+   the cut away part in the pane's ground. Only the rows the cut went through
+   are painted; the rest of the mask is already on the glass - except after a
+   frame that painted the pane whole (`full`), when every row is painted again. */
+static void nc2_live_draw(int stock_left, int stock_top, bool full)
 {
+    int y0;
+    int y1;
     int y;
 
     if (!g_nc2_live_mask || !g_nc2_live_ready) {
         return;
     }
-    nc2_fill(stock_left, stock_top, g_nc2_live_w, g_nc2_live_h,
+    y0 = (full || g_nc2_live_draw_all) ? 0 : g_nc2_live_dirty_y0;
+    y1 = (full || g_nc2_live_draw_all) ? g_nc2_live_h - 1
+                                        : g_nc2_live_dirty_y1;
+    g_nc2_live_draw_all = false;
+    g_nc2_live_dirty_y0 = g_nc2_live_h;
+    g_nc2_live_dirty_y1 = -1;
+    if (y1 < y0) {
+        return;                 /* nothing moved: the glass is already right */
+    }
+    y0 = nc2_clampi(y0, 0, g_nc2_live_h - 1);
+    y1 = nc2_clampi(y1, y0, g_nc2_live_h - 1);
+    nc2_fill(stock_left, stock_top + y0, g_nc2_live_w, y1 - y0 + 1,
              nc2_col_prev_bg());
-    for (y = 0; y < g_nc2_live_h; y++) {
+    for (y = y0; y <= y1; y++) {
         const uint8_t *row = g_nc2_live_mask + (size_t)y * NC2_LIVE_STOCK_MAX_W;
         int x = 0;
 
@@ -774,7 +837,12 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
     int stock_top;
     int z0_x;
 
-    nc2_fill(x, y, w, h, nc2_col_prev_bg());
+    /* The pane is cleared when it is painted whole - and only then: on a frame
+       that repaints what moved (the live stock's band) the rest of the pane is
+       already right, and clearing it here would take the part off the glass. */
+    if (!run || run->full) {
+        nc2_fill(x, y, w, h, nc2_col_prev_bg());
+    }
     if (doc && doc->path[0] && !nc2_path_is_program(doc->path)) {
         nc2_preview_text_file(doc, x, y, w, h);
         return;
@@ -797,11 +865,20 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
     stock_top = y + NC2_PREVIEW_TOP_BAND;
     z0_x = stock_left + (int)(preview.stock_z * scale + 0.5f);
     z0_x = nc2_clampi(z0_x, stock_left, stock_left + stock_w);
+    g_nc2_preview_stock_us = 0u;
+    g_nc2_preview_geom_us = 0u;
 
     /* The stock: the plain block, or - while the machine is cutting, and on the
        run screen afterwards - what is left of it, from the live mask. */
     {
+        uint32_t t0 = mcu_micros();
         bool live = run && run->busy;
+        /* What the pane is wearing this frame: after a frame that painted the
+           pane whole (a mode change, the first frame) the stock is painted from
+           nothing; otherwise only what the cut changed, because the rest of the
+           pixels are already right (the chuck is part of the still picture, and
+           is under the stock in any case - nc drew it that way). */
+        bool paint_all = run ? run->full : true;
         bool context_changed = nc2_live_context_changed(&preview, stock_w,
                                                        stock_h);
         bool keep = run && run->screen_run && !run->busy && g_nc2_live_ready &&
@@ -813,6 +890,7 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
            the drawing is asked for something else). */
         if (live && (!g_nc2_live_was_cutting || context_changed)) {
             nc2_live_reset(&preview, stock_w, stock_h);
+            paint_all = true;
         }
         g_nc2_live_was_cutting = live || keep;
         if ((live || keep) && g_nc2_live_ready) {
@@ -820,20 +898,24 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
                 nc2_live_update(&preview, run, z0_x, stock_left, stock_w,
                                 stock_top, stock_h);
             }
-            nc2_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
-            nc2_live_draw(stock_left, stock_top);
+            if (paint_all) {
+                nc2_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
+            }
+            nc2_live_draw(stock_left, stock_top, paint_all);
         } else {
-            nc2_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
-            nc2_fill(stock_left, stock_top, stock_w, stock_h,
-                     nc2_col_prev_stock());
-            if (preview.stock_i > 0.0f) {
-                int id_h =
-                    nc2_map_x(&preview, stock_top, stock_h, preview.stock_i) -
-                    stock_top;
+            if (paint_all) {
+                nc2_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
+                nc2_fill(stock_left, stock_top, stock_w, stock_h,
+                         nc2_col_prev_stock());
+                if (preview.stock_i > 0.0f) {
+                    int id_h = nc2_map_x(&preview, stock_top, stock_h,
+                                         preview.stock_i) -
+                               stock_top;
 
-                if (id_h > 0 && id_h < stock_h) {
-                    nc2_fill(stock_left, stock_top, stock_w, id_h,
-                             nc2_col_prev_bg());
+                    if (id_h > 0 && id_h < stock_h) {
+                        nc2_fill(stock_left, stock_top, stock_w, id_h,
+                                 nc2_col_prev_bg());
+                    }
                 }
             }
             if (live) {
@@ -844,7 +926,11 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
                               nc2_col_prev_bg(), LVDS_FONT_NORMAL);
             }
         }
+        g_nc2_preview_stock_us = mcu_micros() - t0;
     }
+    {
+        uint32_t t0 = mcu_micros();
+
     nc2_din_layer(&preview, stock_left, stock_top, stock_w, stock_h, z0_x);
     nc2_contour_points(doc, &preview, z0_x, stock_left, stock_left + stock_w,
                        stock_w, stock_top, stock_h);
@@ -864,5 +950,7 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
             nc2_draw_tool_glyph(tx, ty, NC2_LIVE_TOOL_GLYPH, run->tool,
                                 nc2_col_prev_bg());
         }
+    }
+        g_nc2_preview_geom_us = mcu_micros() - t0;
     }
 }

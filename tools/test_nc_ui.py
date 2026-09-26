@@ -227,6 +227,8 @@ if __name__ == "__main__":
          "nc2's sender does not make what nc made"),
         ("--run2test", "run2test: PASS",
          "nc2's run does not hand over what the program means"),
+        ("--live2test", "live2test: PASS",
+         "nc2's RUN does not show the tool taking the stock off"),
         ("--manual2test", "manual2test: PASS",
          "nc2's MANUAL does not jog, stop or run the spindle"),
         ("--tools2test", "tools2test: PASS",

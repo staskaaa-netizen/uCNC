@@ -39,6 +39,13 @@ cannot have the spindle, the travel or the panel's glass.
   stays on the row the operator stepped from.
 - `# RELOAD` after a fault: the fault clears, the file is read back off the
   card, and the run is over.
+- **The live stock**, on the glass: start a run with the tool parked off the
+  stock and watch the material come off from the tool's X down as the cut
+  travels - the first frame must not read the parking position as a cut, and a
+  run that parks must leave the finished part on the RUN screen. Switch to EDIT
+  and the stock is whole again. This is the one place the mask's timing can be
+  seen: `--live2test` proves the same rule over frames the host draws, but not
+  the panel's frame rate or what a long program costs a frame.
 - Feed hold, Stop during queued motion, and a run that walks off the end of the
   card's file are bench items - the suites prove targets and ordering, not
   motion.

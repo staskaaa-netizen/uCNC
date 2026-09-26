@@ -32,11 +32,24 @@ screen is left where it is for now.
 - A DRO that is **not on screen unless the machine is doing something**: in RUN
   it floats over the preview; idle, the pane has the whole body.
 - **One band, and only at the top.** It carries the four screens - MANUAL,
-  EDIT, TOOLS, RUN - with the one in play bright and underlined, the file (the
+  EDIT, TOOLS, RUN - with the one in play **wearing the block** its name is on
+  (the panel's own selection colour, the way nc's tabs did), the file (the
   folder, while the card's list is up), and what the panel has to say at the
   right end. There is no footer and no status strip along the bottom: what a
   footer said is one line, and one line belongs where the operator is already
   looking (bench: *"i do not need any footer here. put messages into header"*).
+  A mark drawn as a line under the name was an invention of the port and the
+  bench caught it: *"marking manual tools run with line but not with full yellow
+  background as it was before"*.
+- **A drawing that is the part.** While the tool moves, the stock is drawn from
+  what the tool has taken off (nc's live stock): the machine's own position,
+  frame by frame, painted as the material still there. A run that has parked
+  keeps the finished part on the RUN screen until the drawing is asked for
+  something else; EDIT draws the stock whole again.
+- **The word under the cursor is named**, on the row above it, in EDIT and
+  TOOLS: `>  X position`, `>  Depth/pass`, from the same table nc kept
+  (`nc2_vocab.c`). The pane's own top line is used when the cursor is on the
+  first row - the row nc's legend sat on.
 
 ## The keys, all of them
 
@@ -148,7 +161,7 @@ as a target to squeeze into.
 | `nc2_text.c` | 300 | typing into the picked word |
 | `nc2_vocab.c` | 220 | the G-code templates and the legends |
 | `nc2_visual.c` | 850 | the screen: code pane, the 3x3, the floating DRO |
-| `nc2_preview.c` | 1 100 | stock, contour, dimensions, the live tool |
+| `nc2_preview.c` | 1 100 | stock, the live stock's mask, contour, dimensions |
 | `nc2_draw.c` | 450 | primitives, glyphs, the 3x3 grid |
 | headers, `nc2_layout.h` | 350 | the boundary and the shared numbers |
 | **total** | **~7 000** | the block scan is g7x's now, and the helper is kept - and neither figure is a ceiling |
@@ -274,8 +287,10 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built (13) | the path builder, which the port had dropped: G7X's `7` (the address `47`) turns the pad into nc's nine contour directions and stays until `5`, one `G1` row per press with the axis that does not move carried over - and the pad's rows run up (`7 8 9` on top), as nc's did. `--contour2test` pins both. Two things it also fixed on the way: a picked value now takes `0` as a digit (`0` is the exit only when nothing is being typed), and the pad's order is one function both the drawing and the checks ask |
 | built (14) | the card's own names: a FAT card read without long filenames gives `LATHE-~1.NC` - 8.3, capitals - so the extension question is case-insensitive now (`nc2_path_has_suffix()`, the same answer nc's `nc_has_suffix_ci()` gave). nc2 compared with strcmp and dropped every program the operator had: the list showed none of them and RUN would not open one. The preset scan asks the same question the same way, or a card in use gets seeded again on every boot. `--case2test` writes the shapes a real card has (`.NC`, `.TXT`, `41.TXT`) and insists they are offered. A remembered file that cannot be opened now says so instead of leaving an empty program |
 | built (15) | the list survived the card: the entries the driver hands over are checked before they reach the glass (`nc2_name_is_usable()` - printable ASCII, not `.` or `/`, nc's `nc_files_valid_entry_name()`), the info block is cleared before every `fs_next_file()` (a driver that only appends to the name would grow a path out of the last entry - nc cleared it and nc2 did not), and `nc2_file_selected_path()` is a question again: `..` answers the folder above instead of scanning it and returning nothing, which had the caller scan an uninitialised path (`"it is stuck"`). The scan logs what it saw - `[MSG:NC2 list + name]` / `- name` for the first 20 entries and a summary line - because the list a card hands back is the one thing the panel cannot show the operator. `--walk2test` walks into a folder and back out |
+| built (16) | the three things the port had invented or dropped, from one bench pass: the drawing's X is a **diameter** again (`nc_preview_map_x()`'s halving - the stock came out right and the profile twice its size), the screen in play wears the **block**, and the **legend** is back (`nc2_vocab.c`, nc's own table). `--vocab2test` insists every word the panel can write is named |
+| built (17) | the live stock, the one thing the port had not carried over: while the tool moves, `nc2_preview.c` paints the material still there from the machine's own position, one sample per turn of the screen's loop, into a one-byte-per-pixel mask in PSRAM (nc's own offset, 512 KiB). The tool takes the material off from its X down to the axis, so what is left of a column still starts where the whole stock did; the stock's bore is not material; a run that parks keeps the part on RUN and EDIT draws the stock whole. `--live2test` reads the glass column by column: the cut is where nc's mask puts it, the tops are untouched, the parked screen holds the part, and the editor has the whole stock again |
 | **switched over** | `nc` is retired: `module.c` loads `nc2`, `rp2350.ini` compiles `modules/nc2/`, and the station builds and drives nc2 (`tools/nc_ui_win/`, `tools/test_nc_ui.py`). nc's sources stay in the tree, unbuilt, as the record of the dialect nc2 replaces (`nc/TODO.md` says so at the top) |
-| next | the drawing's tool panel and live tip (they need the tool table parsed, which is its own module later) |
+| next | the drawing's tool panel and the tool glyph that rides the live stock (they need the tool table parsed, which is its own module later) |
 
 One upstream landmine was found on the way, in `file_system.c`: `fs_opendir()`
 writes into the string it is handed to drop a trailing `/` (`char *newpath =
@@ -289,8 +304,17 @@ The bench, on nc's `DIN` preview layer: *"Din must stay here too. it is nice
 feature ... then do it as is and then we will see how it will look."* So the
 preview is not the place to save lines: `nc2_preview.c` carries the stock, the
 chuck, the dimension and ruler layer (DIN), the contour points, the generated
-motion of the cycles, and the live tool - as nc has them - which is ~1 700 lines
-and takes the estimate for the finished module from ~5 700 to **~6 300**.
+motion of the cycles, and the live stock - as nc has them - which is ~1 700 lines
+and takes the estimate for the finished module from ~5 700 to **~6 300**. The
+live stock's mask is one byte per pixel of the drawing's stock, held at the PSRAM
+offset nc held it at (512 KiB, the live-sim region `docs` names); a pane that is
+200 pixels wide and 100 tall costs 20 KB, and the module's ceiling of 680x380
+is 258 KB.
+
+The one part of nc's live layer not carried over is the **tool glyph** that rode
+the stock: it is drawn from the tool table (`nc_tool_t`), and the tool table is
+its own module's business before it is the preview's. Until then the DRO's X and
+Z are the tool's position on the glass, which is what a run is followed by.
 
 ## The run, and the DRO
 

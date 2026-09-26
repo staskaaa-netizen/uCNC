@@ -6,6 +6,13 @@
 
 #include "../g7x/g7x_contour.h"
 #include "../../cnc.h"
+#include "../lvds_renderer/lvds_hstx.h"
+#if __has_include("../lvds_renderer/lvds_psram.h")
+#include "../lvds_renderer/lvds_psram.h"
+#define NC2_PREVIEW_HAVE_PSRAM 1
+#else
+#define NC2_PREVIEW_HAVE_PSRAM 0
+#endif
 
 #include <math.h>
 #include <stdio.h>
@@ -550,7 +557,206 @@ static void nc2_preview_text_file(const nc2_document_t *doc, int x, int y, int w
     }
 }
 
-void nc2_preview_draw(const nc2_document_t *doc, int x, int y, int w, int h)
+/* --- the live stock -------------------------------------------------------
+
+   The mask of what is still there while a run is cutting, so the operator sees
+   the material the program has taken off: nc's own layer, kept whole (the stock's
+   own colour for what is left, the pane's ground where the tool has been). The
+   mask is one byte per pixel and lives in PSRAM on the machine; the desktop has
+   no PSRAM, so the station's own backend hands out a scratch region of the same
+   size (`lvds_host.c`) and the two draw the same picture. */
+#define NC2_LIVE_STOCK_MAX_W 680
+#define NC2_LIVE_STOCK_MAX_H 380
+#define NC2_LIVE_STOCK_PSRAM_OFFSET (512u * 1024u)
+
+static uint8_t *g_nc2_live_mask;
+static bool g_nc2_live_ready;
+static bool g_nc2_live_was_cutting;
+static bool g_nc2_live_has_last;
+static int g_nc2_live_w;
+static int g_nc2_live_h;
+static float g_nc2_live_setup_x;
+static float g_nc2_live_setup_z;
+static float g_nc2_live_setup_i;
+static float g_nc2_live_last_x;         /* diameters, as the program reads them */
+static float g_nc2_live_last_z;
+
+static bool nc2_live_alloc(void)
+{
+    if (g_nc2_live_mask) {
+        return true;
+    }
+#if NC2_PREVIEW_HAVE_PSRAM
+    if (!lvds_psram_available()) {
+        (void)lvds_psram_init();
+    }
+    if (lvds_psram_available()) {
+        g_nc2_live_mask = (uint8_t *)lvds_psram_ptr(NC2_LIVE_STOCK_PSRAM_OFFSET);
+    }
+#endif
+    return g_nc2_live_mask != 0;
+}
+
+/* The stock the mask was made for: a different stock, a different box or a
+   different setup and the mask means nothing - it is made again. */
+static bool nc2_live_context_changed(const nc2_preview_info_t *p, int stock_w,
+                                     int stock_h)
+{
+    return !g_nc2_live_ready || g_nc2_live_w != stock_w ||
+           g_nc2_live_h != stock_h || g_nc2_live_setup_x != p->stock_x ||
+           g_nc2_live_setup_z != p->visible_z ||
+           g_nc2_live_setup_i != p->stock_i;
+}
+
+static void nc2_live_reset(const nc2_preview_info_t *p, int stock_w, int stock_h)
+{
+    int material_top = 0;
+    int y;
+
+    g_nc2_live_ready = false;
+    g_nc2_live_has_last = false;
+    if (!p || !nc2_live_alloc()) {
+        return;                     /* no room: the drawing stays the static one */
+    }
+    g_nc2_live_w = nc2_clampi(stock_w, 1, NC2_LIVE_STOCK_MAX_W);
+    g_nc2_live_h = nc2_clampi(stock_h, 1, NC2_LIVE_STOCK_MAX_H);
+    memset(g_nc2_live_mask, 0,
+           (size_t)NC2_LIVE_STOCK_MAX_W * NC2_LIVE_STOCK_MAX_H);
+    /* The bore is not material: the mask starts below it, as the stock's own
+       inner diameter does. */
+    if (p->stock_i > 0.0f && p->stock_x > 0.0f) {
+        material_top = nc2_clampi(
+            (int)((p->stock_i / p->stock_x) * (float)g_nc2_live_h), 0,
+            g_nc2_live_h - 1);
+    }
+    for (y = material_top; y < g_nc2_live_h; y++) {
+        memset(g_nc2_live_mask + (size_t)y * NC2_LIVE_STOCK_MAX_W, 1,
+               (size_t)g_nc2_live_w);
+    }
+    g_nc2_live_setup_x = p->stock_x;
+    g_nc2_live_setup_z = p->visible_z;
+    g_nc2_live_setup_i = p->stock_i;
+    g_nc2_live_ready = true;
+}
+
+/* Take a rectangle of material away. */
+static void nc2_live_remove(int x0, int y0, int x1, int y1)
+{
+    int y;
+
+    if (!g_nc2_live_mask || !g_nc2_live_ready) {
+        return;
+    }
+    x0 = nc2_clampi(x0, 0, g_nc2_live_w - 1);
+    x1 = nc2_clampi(x1, 0, g_nc2_live_w - 1);
+    y0 = nc2_clampi(y0, 0, g_nc2_live_h - 1);
+    y1 = nc2_clampi(y1, 0, g_nc2_live_h - 1);
+    if (x1 < x0) {
+        int t = x0;
+        x0 = x1;
+        x1 = t;
+    }
+    if (y1 < y0) {
+        int t = y0;
+        y0 = y1;
+        y1 = t;
+    }
+    for (y = y0; y <= y1; y++) {
+        memset(g_nc2_live_mask + (size_t)y * NC2_LIVE_STOCK_MAX_W + x0, 0,
+               (size_t)(x1 - x0 + 1));
+    }
+}
+
+/* The cut between two points: a turning tool takes a band off, so the removal is
+   walked along the move at the drawing's own resolution - the samples are what
+   keeps a fast move from leaving gaps. */
+static void nc2_live_sweep(const nc2_preview_info_t *p, int z0_x, int stock_left,
+                           int stock_w, int stock_top, int stock_h, float x0,
+                           float z0, float x1, float z1)
+{
+    int sx0;
+    int sx1;
+    int sy0;
+    int sy1;
+    int samples;
+    int i;
+
+    if (!p || !g_nc2_live_ready) {
+        return;
+    }
+    sx0 = nc2_map_z(p, z0_x, stock_w, z0) - stock_left;
+    sx1 = nc2_map_z(p, z0_x, stock_w, z1) - stock_left;
+    sy0 = nc2_map_x(p, stock_top, stock_h, x0) - stock_top;
+    sy1 = nc2_map_x(p, stock_top, stock_h, x1) - stock_top;
+    samples = nc2_clampi((sx1 - sx0) < 0 ? sx0 - sx1 : sx1 - sx0, 1, 80);
+    if ((sy1 - sy0) < 0 ? (sy0 - sy1) > samples : (sy1 - sy0) > samples) {
+        samples = nc2_clampi((sy1 - sy0) < 0 ? sy0 - sy1 : sy1 - sy0, 1, 80);
+    }
+    for (i = 0; i <= samples; i++) {
+        float t = (float)i / (float)samples;
+        int sx = sx0 + (int)((float)(sx1 - sx0) * t);
+        int sy = sy0 + (int)((float)(sy1 - sy0) * t);
+
+        nc2_live_remove(sx - 1, sy, sx + 1, g_nc2_live_h - 1);
+    }
+}
+
+static void nc2_live_update(const nc2_preview_info_t *p,
+                            const nc2_preview_run_t *run, int z0_x,
+                            int stock_left, int stock_w, int stock_top,
+                            int stock_h)
+{
+    /* The machine's X is a radius; the mask is in the program's own frame, so
+       the walk is in diameters and the mapping halves it back. */
+    float diam_x = (run->x < 0.0f ? -run->x : run->x) * 2.0f;
+
+    if (g_nc2_live_has_last) {
+        nc2_live_sweep(p, z0_x, stock_left, stock_w, stock_top, stock_h,
+                       g_nc2_live_last_x, g_nc2_live_last_z, diam_x, run->z);
+    } else {
+        nc2_live_sweep(p, z0_x, stock_left, stock_w, stock_top, stock_h, diam_x,
+                       run->z, diam_x, run->z);
+    }
+    g_nc2_live_last_x = diam_x;
+    g_nc2_live_last_z = run->z;
+    g_nc2_live_has_last = true;
+}
+
+/* What is left of the stock, drawn: the material in the stock's own colour and
+   the cut away part in the pane's ground. */
+static void nc2_live_draw(int stock_left, int stock_top)
+{
+    int y;
+
+    if (!g_nc2_live_mask || !g_nc2_live_ready) {
+        return;
+    }
+    nc2_fill(stock_left, stock_top, g_nc2_live_w, g_nc2_live_h,
+             nc2_col_prev_bg());
+    for (y = 0; y < g_nc2_live_h; y++) {
+        const uint8_t *row = g_nc2_live_mask + (size_t)y * NC2_LIVE_STOCK_MAX_W;
+        int x = 0;
+
+        while (x < g_nc2_live_w) {
+            int start;
+
+            while (x < g_nc2_live_w && !row[x]) {
+                x++;
+            }
+            start = x;
+            while (x < g_nc2_live_w && row[x]) {
+                x++;
+            }
+            if (x > start) {
+                nc2_fill(stock_left + start, stock_top + y, x - start, 1,
+                         nc2_col_prev_stock());
+            }
+        }
+    }
+}
+
+void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
+                      int x, int y, int w, int h)
 {
     nc2_preview_info_t preview;
     float usable_w;
@@ -588,14 +794,51 @@ void nc2_preview_draw(const nc2_document_t *doc, int x, int y, int w, int h)
     z0_x = stock_left + (int)(preview.stock_z * scale + 0.5f);
     z0_x = nc2_clampi(z0_x, stock_left, stock_left + stock_w);
 
-    nc2_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
-    nc2_fill(stock_left, stock_top, stock_w, stock_h, nc2_col_prev_stock());
-    if (preview.stock_i > 0.0f) {
-        int id_h = nc2_map_x(&preview, stock_top, stock_h, preview.stock_i) -
-                   stock_top;
+    /* The stock: the plain block, or - while the machine is cutting, and on the
+       run screen afterwards - what is left of it, from the live mask. */
+    {
+        bool live = run && run->busy;
+        bool context_changed = nc2_live_context_changed(&preview, stock_w,
+                                                       stock_h);
+        bool keep = run && run->screen_run && !run->busy && g_nc2_live_ready &&
+                    !context_changed;
 
-        if (id_h > 0 && id_h < stock_h) {
-            nc2_fill(stock_left, stock_top, stock_w, id_h, nc2_col_prev_bg());
+        /* A cut starts a part, and nothing else does: the mask is made again
+           when the machine starts cutting, and a run that has parked keeps what
+           it made (`nc`'s own rule - the finished part stays on the glass until
+           the drawing is asked for something else). */
+        if (live && (!g_nc2_live_was_cutting || context_changed)) {
+            nc2_live_reset(&preview, stock_w, stock_h);
+        }
+        g_nc2_live_was_cutting = live || keep;
+        if ((live || keep) && g_nc2_live_ready) {
+            if (live) {
+                nc2_live_update(&preview, run, z0_x, stock_left, stock_w,
+                                stock_top, stock_h);
+            }
+            nc2_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
+            nc2_live_draw(stock_left, stock_top);
+        } else {
+            nc2_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
+            nc2_fill(stock_left, stock_top, stock_w, stock_h,
+                     nc2_col_prev_stock());
+            if (preview.stock_i > 0.0f) {
+                int id_h =
+                    nc2_map_x(&preview, stock_top, stock_h, preview.stock_i) -
+                    stock_top;
+
+                if (id_h > 0 && id_h < stock_h) {
+                    nc2_fill(stock_left, stock_top, stock_w, id_h,
+                             nc2_col_prev_bg());
+                }
+            }
+            if (live) {
+                /* The mask is what shows the cut; with nowhere to put it, say so
+                   rather than drawing a stock that never changes. */
+                nc2_text_clip(stock_left + 4, stock_top + 16,
+                              "Live stock needs PSRAM", 28, nc2_col_error(),
+                              nc2_col_prev_bg(), LVDS_FONT_NORMAL);
+            }
         }
     }
     nc2_din_layer(&preview, stock_left, stock_top, stock_w, stock_h, z0_x);

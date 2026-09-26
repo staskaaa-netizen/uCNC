@@ -1147,8 +1147,21 @@ void nc2_visual_draw(void)
         /* The drawing goes on after the panes and before the pad: the pad is the
            machine's keys and sits in the drawing's corner, so it is drawn last
            of the three. */
-        nc2_preview_draw(&g_doc, NC2_RIGHT_PANE_X, NC2_PANE_Y, NC2_RIGHT_PANE_W,
-                         NC2_PANE_H);
+        {
+            /* What the machine is doing, for the live stock: the DRO's own
+               numbers, read once. */
+            nc2_runtime_state_t rt;
+            nc2_preview_run_t run;
+
+            nc2_state_runtime(&rt);
+            run.busy = nc2_state_busy() || nc2_run_active() ||
+                       nc2_run_hold();
+            run.screen_run = g_mode == NC2_MODE_RUN;
+            run.x = rt.x;
+            run.z = rt.z;
+            nc2_preview_draw(&g_doc, &run, NC2_RIGHT_PANE_X, NC2_PANE_Y,
+                             NC2_RIGHT_PANE_W, NC2_PANE_H);
+        }
         /* The DRO floats over the drawing and only while the machine has
            something to say; the pad is the machine's keys and is drawn last. */
         if (nc2_state_busy() || nc2_run_active() || nc2_run_hold() ||

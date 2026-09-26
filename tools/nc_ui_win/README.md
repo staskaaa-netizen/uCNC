@@ -54,6 +54,7 @@ build\nc_ui.exe --screen2test                    # nc2's screen draws and writes
 build\nc_ui.exe --file2test                      # nc2's card list walks and opens
 build\nc_ui.exe --emit2test                      # the sender still makes what nc made
 build\nc_ui.exe --run2test                       # nc2's run and its floating DRO
+build\nc_ui.exe --live2test                      # the tool takes the stock off
 build\nc_ui.exe --manual2test                    # nc2's jog panel
 build\nc_ui.exe --tools2test                     # nc2's tool table is a file
 build\nc_ui.exe --contour2test                   # nc2's path builder (4 then 7)
@@ -360,6 +361,14 @@ python tools\test_nc_ui.py
   so the machine's figure is half - and the floating DRO is on the glass while
   the run is busy and gone when it is not. `1 SINGLE` sends the unit the mark is
   on and leaves the mark on the line the operator stepped from.
+- `--live2test` checks the live stock, off the glass: the tool is parked off the
+  stock with the panel's own sender, the idle RUN screen is read column by
+  column for the stock's colour, a taper is cut with the machine running and the
+  screen drawing every turn of its loop, and the stock's columns are read again
+  - the cut is where the mask puts it (material gone from the bottom, the top of
+  every column where it was), the parked RUN screen still holds the part, and
+  EDIT draws the whole stock. No picture is compared: the counts of the stock's
+  own pixels are.
 - `--manual2test` checks nc2's MANUAL: the digits jog the axis each names (X is
   a diameter, so a 0.100 mm step is written `X0.200`), a jog is always the
   `G91 G1 ...` block followed by the `G90` that puts the machine back, `1`/`3`

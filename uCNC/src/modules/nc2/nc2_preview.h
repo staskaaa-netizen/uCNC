@@ -15,7 +15,22 @@
    no keys here: the footer is gone, so the drawing shows what `nc`'s defaults
    showed - all of it - and the switches wait for a home if they are wanted. */
 
-void nc2_preview_draw(const nc2_document_t *doc, int x, int y, int w, int h);
+/* What the machine is doing, for the live stock: while the tool moves, the
+   drawing shows the material it has taken off - the mask of what is still
+   there, drawn in the stock's own colour over the pane's background. `x` is the
+   machine's X in the axis frame (a **radius**, as the DRO reads it) and `z` the
+   same as the program's, so nothing here has to know the diameter mode. A run
+   that has parked leaves its mask on the glass (`nc` kept it the same way) so
+   the finished part stays until something else is drawn. */
+typedef struct {
+    bool busy;                      /* it is doing anything at all */
+    bool screen_run;                /* the RUN screen is the one being drawn */
+    float x;
+    float z;
+} nc2_preview_run_t;
+
+void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
+                      int x, int y, int w, int h);
 
 /* The stock's diameter, as the drawing reads it out of the setup rows. The path
    builder starts an axis the program has not given yet at the stock's corner,

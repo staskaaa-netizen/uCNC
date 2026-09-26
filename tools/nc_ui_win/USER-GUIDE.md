@@ -39,10 +39,10 @@ folder), and nothing else on the PC is touched.
 **The panel (left)** is the machine. It has just three things:
 
 - the band across the top: the four screens - MANUAL, EDIT, TOOLS, RUN - with
-  the one you are on bright and underlined, the file it has open, and whatever
-  the panel has to say at the right end (a run starting, a stop, a key you
-  pressed, a fault). Everything the panel tells you appears there and nowhere
-  else; there is no strip along the bottom;
+  the one you are on wearing the yellow block, the file it has open, and
+  whatever the panel has to say at the right end (a run starting, a stop, a key
+  you pressed, a fault). Everything the panel tells you appears there and
+  nowhere else; there is no strip along the bottom;
 - the body: the program down the left, the drawing of the part on the right;
 - the 3x3 pad in the bottom-right corner of the drawing, which is the machine's
   own nine keys.
@@ -52,6 +52,13 @@ floats over the top of the drawing with the work position, the feed, the spindle
 and the controller's state word (`uCNC RUN`, `HOLD`, `JOG`, `ALARM`). It leaves
 with the motion, so a machine standing still gives the whole drawing back. That
 word is the only place the state is said.
+
+The drawing is the part, not a picture of the stock: while the tool is moving,
+the material it has taken off is shown where it went - the tool clears the stock
+from its own X down to the axis, so you watch the profile appear as the run
+goes. When the run stops, the part stays on the RUN screen, and EDIT shows the
+stock whole again. In EDIT and TOOLS the word the cursor is on is named on the
+row above it (`>  X position`, `>  Depth/pass`).
 
 **The strip (right)** is not a second menu:
 

@@ -1402,6 +1402,245 @@ static int host_run2test(void)
     return 0;
 }
 
+/* How many pixels of one colour a rectangle of the frame holds. */
+static int host_count_rect(int x0, int y0, int x1, int y1, uint32_t rgb)
+{
+    int count = 0;
+    int x;
+    int y;
+
+    for (y = y0; y < y1; y++) {
+        for (x = x0; x < x1; x++) {
+            if (host_frame_at(x, y) == rgb) {
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
+/* The stock's own colour down one column of the preview: how many pixels carry
+   it, and the first and last row they sit on. A column with none writes
+   nothing into `top`/`bottom`. */
+static int host_stock_column(int x, uint32_t rgb, int *top, int *bottom)
+{
+    int count = 0;
+    int y;
+
+    for (y = NC2_PANE_Y; y < NC2_PANE_BOTTOM; y++) {
+        if (host_frame_at(x, y) != rgb) {
+            continue;
+        }
+        if (count == 0 && top) {
+            *top = y;
+        }
+        if (bottom) {
+            *bottom = y;
+        }
+        count++;
+    }
+    return count;
+}
+
+/* The live stock: while the machine cuts, the drawing shows the material the
+   tool has taken off, made from the machine's own position as the panel reads
+   it every turn of its loop. The check turns a taper and reads the glass: the
+   material below the tool is gone, its top is where it was, the RUN screen keeps
+   the part while the machine is parked, and the editor draws the stock whole.
+
+   This is a comparison of the stock's own colour per column, not a picture: the
+   cut is where nc's mask says it is or the counts say so. */
+static int host_live2test(void)
+{
+    static const char *const program = "/D/nc/files/live2.nc";
+    static const char *const text =
+        "G0 X50 Z-70\n"
+        "G1 X10 Z-18 F200\n"
+        "M5\n";
+    static int before_col[NC2_RIGHT_PANE_W];
+    static int before_top[NC2_RIGHT_PANE_W];
+    static int before_bottom[NC2_RIGHT_PANE_W];
+    int before_total = 0;
+    int cut_columns = 0;
+    int cut_top = 0;
+    int cut_bottom = 0;
+    int lost = 0;
+    int stock_left = -1;
+    int stock_right = -1;
+    int rect_top = NC2_PANE_BOTTOM;
+    int rect_bottom = NC2_PANE_Y;
+    int kept;
+    int whole;
+    uint32_t stock_rgb;
+    int x;
+    unsigned i;
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!host_fs_write_text(program, text)) {
+        puts("live2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    if (!nc2_visual_open(program)) {
+        puts("live2test: FAIL the fixture does not load");
+        return 1;
+    }
+    nc2_visual_select_mode(NC2_MODE_RUN);
+
+    /* The tool is where the operator left it, and that is where the mask starts:
+       parked off the stock, not sitting on the axis, or the first frame's own
+       position would read as a cut. */
+    if (!nc2_run_send_line("G0 X60 Z10")) {
+        puts("live2test: FAIL the panel will not park the tool");
+        return 1;
+    }
+    host_pump(1u);
+    for (i = 0u; i < 200000u; i++) {
+        if (host_machine_idle()) {
+            break;
+        }
+        host_pump(1u);
+    }
+    nc2_visual_draw();
+
+    /* The stock, off the idle RUN screen: its colour's own columns, and the
+       band of rows they sit in - the rectangle every count below is taken in. */
+    stock_rgb = host_panel_rgb(nc2_col_prev_stock());
+    for (x = NC2_RIGHT_PANE_X; x < NC2_RIGHT_PANE_X + NC2_RIGHT_PANE_W; x++) {
+        int col = x - NC2_RIGHT_PANE_X;
+        int top = 0;
+        int bottom = 0;
+
+        before_top[col] = 0;
+        before_bottom[col] = 0;
+        before_col[col] = host_stock_column(x, stock_rgb, &top, &bottom);
+        if (before_col[col] <= 0) {
+            continue;
+        }
+        before_top[col] = top;
+        before_bottom[col] = bottom;
+        before_total += before_col[col];
+        if (stock_left < 0) {
+            stock_left = x;
+        }
+        stock_right = x;
+        if (top < rect_top) {
+            rect_top = top;
+        }
+        if (bottom > rect_bottom) {
+            rect_bottom = bottom;
+        }
+    }
+    if (stock_left < 0 || stock_right - stock_left < 100 ||
+        rect_bottom - rect_top < 60) {
+        printf("live2test: FAIL the idle RUN screen shows no stock "
+               "(columns %d..%d, rows %d..%d)\n", stock_left, stock_right,
+               rect_top, rect_bottom);
+        return 1;
+    }
+    /* The run, drawn the way the panel draws it - once per turn of its loop, so
+       the mask comes off as the tool moves and not in one bite at the end. */
+    nc2_run_reset();
+    host_pump_idle(64u);
+    nc2_visual_key('3');                    /* FULL */
+    host_pump(1u);
+    nc2_visual_draw();
+    for (i = 0u; i < 200000u; i++) {
+        if (host_machine_idle() && !nc2_run_streaming()) {
+            break;
+        }
+        host_pump(1u);
+        nc2_visual_draw();
+    }
+    host_pump_idle(64u);
+    nc2_visual_draw();
+
+    cut_top = NC2_PANE_BOTTOM;
+    cut_bottom = NC2_PANE_Y;
+    for (x = NC2_RIGHT_PANE_X; x < NC2_RIGHT_PANE_X + NC2_RIGHT_PANE_W; x++) {
+        int col = x - NC2_RIGHT_PANE_X;
+        int top = 0;
+        int bottom = 0;
+        int count = host_stock_column(x, stock_rgb, &top, &bottom);
+
+        if (count >= before_col[col]) {
+            continue;
+        }
+        cut_columns++;
+        lost += before_col[col] - count;
+        if (x < cut_top) {
+            cut_top = x;
+        }
+        cut_bottom = x;
+        /* The tool takes the material off from its own X down to the axis, so a
+           column the cut reached is either shorter or empty - never one that
+           lost its top and still holds material, which would be an erase, not a
+           cut. A column the dimension layer already covered when the stock was
+           whole can come out empty, which is why empty passes here. */
+        if (count == 0) {
+            continue;
+        }
+        if (top != before_top[col] || bottom >= before_bottom[col]) {
+            printf("live2test: FAIL column %d is rows %d..%d, was %d..%d\n", x,
+                   top, bottom, before_top[col], before_bottom[col]);
+            failures++;
+        }
+    }
+    if (cut_columns < 10 || lost < 500) {
+        printf("live2test: FAIL the run took nothing off the stock "
+               "(%d columns, %d pixels)\n", cut_columns, lost);
+        failures++;
+    }
+    if (cut_bottom <= cut_top) {
+        printf("live2test: FAIL the cut is a single column (%d)\n", cut_top);
+        failures++;
+    }
+    if (cut_top < stock_left + 4 || cut_bottom > stock_right) {
+        printf("live2test: FAIL the cut runs %d..%d, the stock %d..%d\n",
+               cut_top, cut_bottom, stock_left, stock_right);
+        failures++;
+    }
+
+    /* The RUN screen keeps the part: the machine is parked, and the second frame
+       is the one the operator left on the glass. */
+    kept = host_count_rect(stock_left, rect_top, stock_right + 1, rect_bottom + 1,
+                           stock_rgb);
+    nc2_visual_draw();
+    if (host_count_rect(stock_left, rect_top, stock_right + 1, rect_bottom + 1,
+                        stock_rgb) != kept) {
+        puts("live2test: FAIL the part moves under the parked machine");
+        failures++;
+    }
+    if (kept >= before_total) {
+        printf("live2test: FAIL the parked RUN screen shows the stock whole "
+               "(%d of %d)\n", kept, before_total);
+        failures++;
+    }
+
+    /* The editor draws the stock whole again: the mask is the RUN screen's. */
+    nc2_visual_select_mode(NC2_MODE_PROGRAM);
+    nc2_visual_draw();
+    whole = host_count_rect(stock_left, rect_top, stock_right + 1, rect_bottom + 1,
+                            stock_rgb);
+    if (whole != before_total) {
+        printf("live2test: FAIL the editor shows %d stock pixels, wanted %d\n",
+               whole, before_total);
+        failures++;
+    }
+
+    if (failures) {
+        printf("live2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    printf("live2test: PASS the run takes the stock off (%d columns, %d "
+           "pixels), the top stays, and the editor draws it whole\n",
+           cut_columns, lost);
+    return 0;
+}
+
 /* Drain what the panel queued for the controller, one line after another, into
    one string separated by `|`. Nothing here pumps the machine: these are the
    blocks the panel sends on its own (a jog, a zero, a spindle start). */
@@ -3388,6 +3627,8 @@ int host_tests_run(int argc, char **argv)
             return host_emit2test();
         if (strcmp(argv[i], "--run2test") == 0)
             return host_run2test();
+        if (strcmp(argv[i], "--live2test") == 0)
+            return host_live2test();
         if (strcmp(argv[i], "--manual2test") == 0)
             return host_manual2test();
         if (strcmp(argv[i], "--tools2test") == 0)

@@ -47,7 +47,6 @@ static g7x_history_t g7x_parser_history;
 static g7x_contour_region_t g7x_parser_kept_region;
 static uint32_t g7x_parser_kept_p;
 static uint32_t g7x_parser_kept_q;
-static float g7x_parser_kept_feed;
 static bool g7x_parser_kept_valid;
 /* Why the line being parsed was refused, for the caller that shows errors on a
    screen rather than a terminal. Set on the way out of a refusal, cleared at
@@ -1929,7 +1928,6 @@ static void g7x_parser_region_complete(gcode_exec_args_t *ptr)
         g7x_parser_kept_region = g7x_parser_stream.region;
         g7x_parser_kept_p = g7x_parser_pq_p;
         g7x_parser_kept_q = g7x_parser_pq_q;
-        g7x_parser_kept_feed = g7x_parser_stream.feed;
         g7x_parser_kept_valid = true;
     }
     g7x_result_t result = g7x_stream_add_parsed(&g7x_parser_stream,
@@ -2391,8 +2389,17 @@ bool g7x_exec_modifier(void *args)
         uint32_t pq_q = 0u;
         float retract = CHECKFLAG(ptr->cmd->words, GCODE_WORD_R) ?
                         ptr->words->r : g7x_parser_kept_region.retract;
+        /* No `F` on the `G70` means the feed in force: the `F500` on the `G71`
+           header above it, or whatever the program last named. That is the
+           parser's own modal feedrate, and it is the only copy of it -
+           `kept_feed` was a second one, filled only by the `G80` path, so a
+           range closed by its `N(Q)` row left it at zero and the finish ran at
+           the 120 fallback (bench: "we have no f in our g70. so add it"). */
         float feed = CHECKFLAG(ptr->cmd->words, GCODE_WORD_F) ?
-                     ptr->words->f : g7x_parser_kept_feed;
+                     ptr->words->f :
+                     ptr->new_state->feedrate /
+                         (ptr->new_state->groups.units == G20 ? INCH_MM_MULT
+                                                              : 1.0f);
         g7x_result_t result;
 
         if (!has_p || !has_q ||

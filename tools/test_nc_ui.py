@@ -413,6 +413,17 @@ if __name__ == "__main__":
         fail("FAIL nc2's MANUAL does not jog, stop or run the spindle",
              run.stdout[-1500:] or run.stderr[-1500:])
 
+    # nc2's TOOLS: the tool table is a file the editor writes, with the shipped
+    # row when the card has none, and a look at it does not lose the program.
+    root = OUT / "tools2-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--tools2test"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "tools2test: PASS" not in run.stdout:
+        fail("FAIL nc2's TOOLS does not edit the tool table as a file",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
     # The operator's own program and tool table, kept with the NC module
     # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
     # the firmware writes its state next to them, then checked through the

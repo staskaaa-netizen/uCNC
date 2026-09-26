@@ -20,6 +20,10 @@ extern "C" {
 
 #define NC2_STATE_PATH "/D/nc_state.txt"
 
+/* The tool table, which nc2's TOOLS screen edits like any other file: the same
+   path nc uses, so the two modules read one table. */
+#define NC2_TOOL_PATH "/D/nc/files/tool.t"
+
 /* nc2's screens, and the keys nc's state file uses for them, so a card written
    by one module reads in the other. The card's list is a view, not a mode, and
    is not remembered. */

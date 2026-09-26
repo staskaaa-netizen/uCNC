@@ -29,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_nc_ui as station  # noqa: E402  (the build is the station's)
 
 CHECKS = ("--seedtest", "--edit2test", "--pad2test", "--screen2test",
-          "--file2test", "--emit2test", "--run2test", "--manual2test")
+          "--file2test", "--emit2test", "--run2test", "--manual2test",
+          "--tools2test")
 
 
 def main():

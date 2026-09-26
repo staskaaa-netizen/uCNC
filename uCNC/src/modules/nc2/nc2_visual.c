@@ -27,6 +27,8 @@ static bool g_dirty;
 static bool g_list;                 /* the file list is the screen */
 static nc2_mode_t g_mode = NC2_MODE_PROGRAM;
 
+static void nc2_visual_load_tools(void);
+
 static void nc2_statusf(const char *text)
 {
     snprintf(g_status, sizeof(g_status), "%s", text ? text : "");
@@ -72,6 +74,7 @@ void nc2_visual_init(void)
     switch (nc2_state_mode()) {
     case NC2_MODE_MANUAL:
     case NC2_MODE_RUN:
+    case NC2_MODE_TOOLS:
         g_mode = nc2_state_mode();
         break;
     default:
@@ -83,20 +86,46 @@ void nc2_visual_init(void)
     (void)nc2_boot_seed();
     /* Onto the file the panel had open, and where it was in it. A card that
        remembers nothing opens on an empty program, which is a program. */
-    if (!nc2_state_load_document(g_mode, &g_doc)) {
+    if (g_mode == NC2_MODE_TOOLS) {
+        nc2_visual_load_tools();
+    } else if (!nc2_state_load_document(g_mode, &g_doc)) {
         nc2_document_init(&g_doc);
         (void)nc2_insert_line(&g_doc, 0u, "");
     }
     nc2_labels_at(g_address);
 }
 
-/* Jump to a screen. The program, the run and MANUAL are built; TOOLS brings its
-   own module (the tool table is a file like any other) and is refused until it
-   does. */
+/* The tool table nc2 ships when the card has none: the same row nc's default
+   writes, because TOOLS edits one table whichever module is driving. */
+#define NC2_TOOL_DEFAULT "T1 R0.8 O3 F120 Q60 D2.0 E0.5 S800 X0 Z0"
+
+/* TOOLS is the tool table, and the table is a file like any other: the screen is
+   the editor on `/D/nc/files/tool.t`, with the table's own first row when the
+   card has none. */
+static void nc2_visual_load_tools(void)
+{
+    const char *path = nc2_state_path(NC2_MODE_TOOLS);
+
+    if (!path[0]) {
+        path = NC2_TOOL_PATH;
+    }
+    if (!nc2_file_load(&g_doc, path)) {
+        nc2_document_init(&g_doc);
+        (void)nc2_insert_line(&g_doc, 0u, NC2_TOOL_DEFAULT);
+        snprintf(g_doc.path, sizeof(g_doc.path), "%s", path);
+        (void)nc2_file_save(&g_doc);
+        nc2_statusf("New tool table");
+    }
+    nc2_state_remember_path(NC2_MODE_TOOLS, g_doc.path);
+}
+
+/* Jump to a screen: the program (and the run, which shows the same file), the
+   tool table, and MANUAL. Each keeps what it had open, so a look at the tools
+   does not lose the program's place. */
 void nc2_visual_select_mode(nc2_mode_t mode)
 {
     if (mode != NC2_MODE_PROGRAM && mode != NC2_MODE_RUN &&
-        mode != NC2_MODE_MANUAL) {
+        mode != NC2_MODE_MANUAL && mode != NC2_MODE_TOOLS) {
         return;
     }
     if (mode == g_mode) {
@@ -105,15 +134,22 @@ void nc2_visual_select_mode(nc2_mode_t mode)
     if (g_mode == NC2_MODE_MANUAL) {
         nc2_manual_feed_cancel();      /* a jog must not run behind the next screen */
     }
-    if (g_mode == NC2_MODE_PROGRAM) {
-        nc2_state_remember_path(NC2_MODE_PROGRAM, g_doc.path);
+    if (g_mode == NC2_MODE_PROGRAM || g_mode == NC2_MODE_TOOLS) {
+        (void)nc2_visual_save();       /* whatever this screen had open */
     }
     g_list = false;
     g_mode = mode;
     nc2_state_set_mode(mode);
     nc2_address_reset(g_address);
     nc2_labels_at(g_address);
-    if (mode == NC2_MODE_RUN && !nc2_run_active()) {
+    if (mode == NC2_MODE_TOOLS) {
+        nc2_visual_load_tools();
+    } else if (mode == NC2_MODE_PROGRAM) {
+        if (!nc2_state_load_document(NC2_MODE_PROGRAM, &g_doc)) {
+            nc2_document_init(&g_doc);
+            (void)nc2_insert_line(&g_doc, 0u, "");
+        }
+    } else if (mode == NC2_MODE_RUN && !nc2_run_active()) {
         nc2_run_set_line(&g_doc, g_doc.cursor);
     }
     nc2_statusf("");
@@ -133,6 +169,9 @@ static void nc2_visual_next_mode(void)
         nc2_visual_select_mode(NC2_MODE_PROGRAM);
         break;
     case NC2_MODE_PROGRAM:
+        nc2_visual_select_mode(NC2_MODE_TOOLS);
+        break;
+    case NC2_MODE_TOOLS:
         nc2_visual_select_mode(NC2_MODE_RUN);
         break;
     case NC2_MODE_RUN:
@@ -170,7 +209,10 @@ const char *nc2_visual_screen_name(void)
     if (g_mode == NC2_MODE_RUN) {
         return "RUN";
     }
-    return g_mode == NC2_MODE_MANUAL ? "MANUAL" : "EDIT";
+    if (g_mode == NC2_MODE_MANUAL) {
+        return "MANUAL";
+    }
+    return g_mode == NC2_MODE_TOOLS ? "TOOLS" : "EDIT";
 }
 
 bool nc2_visual_save(void)
@@ -181,6 +223,9 @@ bool nc2_visual_save(void)
         return false;
     }
     g_doc.dirty = false;
+    nc2_state_remember_path(g_mode == NC2_MODE_TOOLS ? NC2_MODE_TOOLS
+                                                      : NC2_MODE_PROGRAM,
+                            g_doc.path);
     nc2_state_remember_cursor(&g_doc);
     nc2_state_flush();
     g_dirty = true;
@@ -931,6 +976,14 @@ size_t nc2_visual_usage(const char *const **lines)
         "* types the stops, D touches off,",
         "0 zeroes the axis, B/C pick it."
     };
+    static const char *const tools[] = {
+        "The tool table, one tool a line.",
+        "D walks a line's fields.",
+        "A digit types the value, B is the",
+        "sign and C the point.",
+        "1-9 press the pad's entries.",
+        "A leaves, 0 opens the card."
+    };
     static const char *const files[] = {
         "Pick a program from the card.",
         "B/C step the list, D opens.",
@@ -949,6 +1002,9 @@ size_t nc2_visual_usage(const char *const **lines)
     } else if (g_mode == NC2_MODE_MANUAL) {
         table = manual;
         count = sizeof(manual) / sizeof(manual[0]);
+    } else if (g_mode == NC2_MODE_TOOLS) {
+        table = tools;
+        count = sizeof(tools) / sizeof(tools[0]);
     } else if (g_mode == NC2_MODE_RUN) {
         table = run;
         count = sizeof(run) / sizeof(run[0]);

@@ -56,6 +56,7 @@ build\nc_ui.exe --screen2test                    # nc2's screen draws and writes
 build\nc_ui.exe --file2test                      # nc2's card list walks and opens
 build\nc_ui.exe --run2test                       # nc2's run and its floating DRO
 build\nc_ui.exe --manual2test                    # nc2's jog panel
+build\nc_ui.exe --tools2test                     # nc2's tool table is a file
 build\nc_ui.exe --dump-nc2 screen.bmp            # nc2's screen on its own
 python tools\test_nc2.py                         # nc2's own target (AGENTS.md 8)
 build\nc_ui.exe --dirtytest                      # a key repaints what it changed

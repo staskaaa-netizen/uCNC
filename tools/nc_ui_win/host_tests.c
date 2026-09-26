@@ -2751,6 +2751,74 @@ static int host_manual2test(void)
     return 0;
 }
 
+/* nc2's TOOLS: the tool table is a file like any other, so the screen is the
+   editor on it. A card with no table gets the shipped row and the file is
+   written; the pad inserts into the table the same way it inserts into a
+   program; and a look at the tools does not lose the program's place. */
+static int host_tools2test(void)
+{
+    static const char *const program = "/D/nc/files/one.nc";
+    static const char *const tool = "/D/nc/files/tool.t";
+    char text[512];
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!host_fs_write_text(program, "G0 X1 Z1\n")) {
+        puts("tools2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    (void)nc2_visual_open(program);
+
+    /* TOOLS makes the table when the card has none. */
+    nc2_visual_select_mode(NC2_MODE_TOOLS);
+    if (strcmp(nc2_visual_screen_name(), "TOOLS") != 0 ||
+        strcmp(nc2_visual_path(), tool) != 0) {
+        printf("tools2test: FAIL TOOLS is \"%s\" at \"%s\"\n",
+               nc2_visual_screen_name(), nc2_visual_path());
+        return 1;
+    }
+    if (!nc2_visual_save() || !host_fs_read_text(tool, text, sizeof(text)) ||
+        !strstr(text, "T1 ")) {
+        printf("tools2test: FAIL the new table reads \"%s\"\n", text);
+        failures++;
+    }
+
+    /* The pad inserts into the table like it inserts into a program: `4` walks
+       into the G7X group and `1` writes its entry where the pad's name stands. */
+    nc2_visual_key('4');
+    if (strcmp(nc2_visual_address(), "4") != 0) {
+        printf("tools2test: FAIL the pad address is \"%s\"\n",
+               nc2_visual_address());
+        failures++;
+    }
+    nc2_visual_key('1');
+    if (!nc2_visual_save() || !host_fs_read_text(tool, text, sizeof(text)) ||
+        !strstr(text, "G71")) {
+        printf("tools2test: FAIL the inserted row is not in \"%s\"\n", text);
+        failures++;
+    }
+
+    /* Back to the program: it is the one that was open. */
+    nc2_visual_select_mode(NC2_MODE_PROGRAM);
+    if (strcmp(nc2_visual_screen_name(), "EDIT") != 0 ||
+        strcmp(nc2_visual_path(), program) != 0) {
+        printf("tools2test: FAIL leaving TOOLS left \"%s\" at \"%s\"\n",
+               nc2_visual_screen_name(), nc2_visual_path());
+        failures++;
+    }
+
+    if (failures) {
+        printf("tools2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("tools2test: PASS the tool table is a file the editor writes, and the "
+         "program keeps its place");
+    return 0;
+}
+
 /* nc2's value editor: a line is cut into fields at its letters, the keys walk
    them, and what is typed replaces the value that was there. The dumb editor the
    bench asked for, so the checks are about its two rules - where a field begins
@@ -5460,6 +5528,8 @@ int host_tests_run(int argc, char **argv)
             return host_run2test();
         if (strcmp(argv[i], "--manual2test") == 0)
             return host_manual2test();
+        if (strcmp(argv[i], "--tools2test") == 0)
+            return host_tools2test();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

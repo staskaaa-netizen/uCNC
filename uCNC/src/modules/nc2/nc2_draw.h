@@ -26,7 +26,7 @@ lvds_color_t nc2_col_field_fg(void);
    that line heads. */
 lvds_color_t nc2_col_block(void);
 /* The run's own colours: the panel's green while the machine is moving, and its
-   red for a fault - the two things the floating DRO can say. */
+   red for a fault - the two things the machine's strip can say. */
 lvds_color_t nc2_col_run(void);
 lvds_color_t nc2_col_error(void);
 lvds_color_t nc2_col_prev_bg(void);

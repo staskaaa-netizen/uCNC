@@ -20,36 +20,51 @@ screen is left where it is for now.
 
 ## What the operator sees
 
-- The program, one word picked at a time.
-- **One 3x3 pad, pinned in the bottom right.** It is the only menu there is: no
-  footer strip and no submenu tables, and **no borders around the panes** - the
-  one line between them is the whole of the layout's furniture (the bench: *"only
-  middle line is need, not borders from all sides"*). The pad's keys keep their
-  own outlines, because they are buttons. The pad keeps the helper's own trick -
-  opening it writes its name as a line at the cursor, which is both the title
-  and the place the entry lands (the bench kept this one: *"this one is not big
-  and we may preserve it"*).
-- A DRO that is **not on screen unless the machine is doing something**: in RUN
-  it floats over the preview; idle, the pane has the whole body.
-- **One band, and only at the top.** It carries the four screens - MANUAL,
-  EDIT, TOOLS, RUN - with the one in play **wearing the block** its name is on
-  (the panel's own selection colour, the way nc's tabs did), the file (the
-  folder, while the card's list is up), and what the panel has to say at the
-  right end. There is no footer and no status strip along the bottom: what a
-  footer said is one line, and one line belongs where the operator is already
-  looking (bench: *"i do not need any footer here. put messages into header"*).
-  A mark drawn as a line under the name was an invention of the port and the
-  bench caught it: *"marking manual tools run with line but not with full yellow
-  background as it was before"*.
-- **A drawing that is the part.** While the tool moves, the stock is drawn from
-  what the tool has taken off (nc's live stock): the machine's own position,
-  frame by frame, painted as the material still there. A run that has parked
-  keeps the finished part on the RUN screen until the drawing is asked for
-  something else; EDIT draws the stock whole again.
-- **The word under the cursor is named**, on the row above it, in EDIT and
-  TOOLS: `>  X position`, `>  Depth/pass`, from the same table nc kept
-  (`nc2_vocab.c`). The pane's own top line is used when the cursor is on the
-  first row - the row nc's legend sat on.
+**A 600x800 screen read upright.** The panel is mounted turned a quarter
+(`lvds_hstx.h` owns the turn, so nothing here knows about it), and the bench laid
+the screen out for it: *"rotate screen at 90 degree. and make layout different
+this time."* Five bands, top to bottom:
+
+1. **The header**, across the top: the four screens - MANUAL, EDIT, TOOLS, RUN -
+   with the one in play **wearing the block** its name is on (the panel's own
+   selection colour, the way nc's tabs did), the file (the folder, while the
+   card's list is up), and what the panel has to say at the right end. There is
+   no footer and no status strip: what a footer said is one line, and one line
+   belongs where the operator is already looking (bench: *"i do not need any
+   footer here. put messages into header"*). A mark drawn as a line under the
+   name was an invention of the port and the bench caught it: *"marking manual
+   tools run with line but not with full yellow background as it was before"*.
+2. **The drawing**, under the header and over the whole width: the stock, the
+   contour and the dimensions, as nc drew them. **Every screen has it**,
+   MANUAL included - the part is what the machine is making, and a jog is worth
+   watching against it.
+3. **The strip in the middle**, edge to edge: the machine's own numbers on one
+   line - work X and Z, the feed, the spindle's speed, and the state word at the
+   far end. It is the DRO *and* the one line the layout has between the two
+   halves; it never moves, and its colour is the machine's (the panel's grey
+   idle, the run's green, the fault's red).
+4. **The text pane**, on the left of the band under the strip: the program (or
+   the tool table, or the card's list, or MANUAL's own stops and values), one
+   word picked at a time.
+5. **The 3x3 pad**, pinned in the bottom-right corner. It is the only menu there
+   is: no footer strip and no submenu tables, and no borders anywhere - the strip
+   above it is the whole of the layout's furniture (the bench: *"only middle
+   line is need, not borders from all sides"*). The pad's keys keep their own
+   outlines, because they are buttons. The pad keeps the helper's own trick -
+   opening it writes its name as a line at the cursor, which is both the title
+   and the place the entry lands (the bench kept this one: *"this one is not big
+   and we may preserve it"*).
+
+**A drawing that is the part.** While the tool moves, the stock is drawn from
+what the tool has taken off (nc's live stock): the machine's own position, frame
+by frame, painted as the material still there. A run that has parked keeps the
+finished part on the RUN screen until the drawing is asked for something else;
+EDIT draws the stock whole again.
+
+**The word under the cursor is named**, on the row above it, in EDIT and TOOLS:
+`>  X position`, `>  Depth/pass`, from the same table nc kept (`nc2_vocab.c`).
+The pane's own top line is used when the cursor is on the first row - the row
+nc's legend sat on.
 
 ## The keys, all of them
 
@@ -131,13 +146,19 @@ rather than writes - and it is files too (see *Settled from the bench*, 4).
 
 ## The layout, and what it is worth in lines
 
-**The layout is nc's, unchanged:** the code pane on the left, the drawing on the
-right, the same split (`NC2_LEFT_PANE_X` and `NC2_SPLIT_X` are nc's numbers), and
-the pad pinned in the bottom-right corner of the drawing's pane. What is gone is
-the footer strip and the DRO band - the pad is the keys and the machine's numbers
-wait for the run - so the two panes are taller by exactly what those bands took.
-The bench was plain about this: *"no do not change it. only 3x3 in place corner,
-same dual screen as before and no footer or dro."*
+**The layout is `nc2`'s own now** (`nc2_layout.h`), and it is the shape of a
+turned screen: the header, the drawing, the one strip, then the text and the pad
+side by side (the five bands above). nc's split is gone with the glass's
+orientation - the bench's earlier *"no do not change it. only 3x3 in place
+corner, same dual screen as before and no footer or dro"* was about a landscape
+panel, and the turn replaced it: *"make layout different this time."*
+
+What survives from that instruction is the part that was about *furniture and
+nothing else*: the pad is still the only menu, it is still pinned in a corner,
+and the layout still draws **one line and no borders** - that line is now the
+machine's own strip, which carries something instead of just separating. The
+drawing kept its nc numbers (`nc2_preview.c` is the same picture), it just sits
+in a wider, shorter pane.
 
 The bench's own estimate of what that is worth, after the first three pieces
 landed: *"we will have less line of code, but not by that much; my guesstimate is
@@ -160,7 +181,7 @@ as a target to squeeze into.
 | `nc2_tools.c` | 250 | the tool table |
 | `nc2_text.c` | 300 | typing into the picked word |
 | `nc2_vocab.c` | 220 | the G-code templates and the legends |
-| `nc2_visual.c` | 850 | the screen: code pane, the 3x3, the floating DRO |
+| `nc2_visual.c` | 850 | the screen: the header, the drawing, the strip, the text and the 3x3 |
 | `nc2_preview.c` | 1 100 | stock, the live stock's mask, contour, dimensions |
 | `nc2_draw.c` | 450 | primitives, glyphs, the 3x3 grid |
 | headers, `nc2_layout.h` | 350 | the boundary and the shared numbers |
@@ -275,12 +296,12 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built | `nc2_presets.c` (address -> file, read, write), `nc2_boot.c` (the shipped entries, the one-time seed, the logo), `nc2.c` (the document, the fields, the value editor's keys, the pad's helper and its label line), `--seedtest` and `--edit2test` |
 | built (2) | the pad's tree: `nc2_address_*` and `nc2_slot()` in `nc2_presets.c`, `nc2_pad_open/write/close()` in `nc2.c`, `--pad2test` |
 | built (3) | the screen: `nc2_draw.c` (colours, text, the 3x3) and `nc2_visual.c` (the program down the left, the pad's corner on the right, no footer), the program read and written back (`nc2_files.c`), `--screen2test`, `--dump-nc2` |
-| built (4) | the two panes as nc has them (the same split, no footer, no DRO), and the card's file list: `0` opens `/D`, folders are entered, a program opens into the editor, `5` + digits + `#` makes a numbered one, `6` deletes, `8` re-reads, `*`/`0` come back - `--file2test` |
+| built (4) | the drawing and the text as nc has them (the picture unchanged, no footer, no floating DRO), and the card's file list: `0` opens `/D`, folders are entered, a program opens into the editor, `5` + digits + `#` makes a numbered one, `6` deletes, `8` re-reads, `*`/`0` come back - `--file2test` |
 | built (5) | the cycle/block scan moved out of NC and into g7x (`g7x_blocks.c`, over a line provider), so nc2 will have **no scan file at all** - and the duplication the bench asked about is gone from nc too (`nc_g7x.c` is an adapter now) |
 | built (6) | the sender: `nc2_emit.c` (the stream, the G7x feeding, the numbered range above a `G70`, `U`/`W` written out as the absolutes they mean) - `--emit2test` runs **both** modules' senders over the same programs and requires the same output, from the top and from a run started in the middle |
 | built (7) | the preview: `nc2_preview.c` drew the stock, the chuck, the DIN rulers and callouts, the contour's point dimensions and the emitted path - the drawing pane is nc's picture, checked for ink and looked at against nc's own frame |
 | built (8) | what the panel remembers: `nc2_state.c` reads and writes `/D/nc_state.txt` with nc's own keys (`MODE=`, `SPINDLE=`, one key per mode holding the file it had open), so a card carries its state across a reboot and across the panel switch - the cursor is the session's, the way nc keeps it. `nc2_visual_init()` loads the remembered program (an empty one on a card that remembers nothing) and `open`/`save` flush the path and cursor. `nc2_state_runtime()` reads the machine's own numbers, `nc2_state_busy()` answers whether it is doing anything |
-| built (9) | the run: `nc2_run.c` is the pacer over `nc2_emit` - the panel hands the machine one unit and waits, so the mark is the line the tool is on - with `1 SINGLE`/`2 FROM`/`3 FULL`, `4 HOLD`, `5 STOP` and `#` reload, and the floating DRO that appears only while the machine is busy (work X/Z, feed, spindle, and the machine's own state word). The generator's own notes (`(G71 rough X23.000)`) are a line of the stream but not a line of the program, so they are not sent. `--run2test` reads what the run hands over, requires the machine to arrive where the program says and the DRO to be up only while it is busy |
+| built (9) | the run: `nc2_run.c` is the pacer over `nc2_emit` - the panel hands the machine one unit and waits, so the mark is the line the tool is on - with `1 SINGLE`/`2 FROM`/`3 FULL`, `4 HOLD`, `5 STOP` and `#` reload, and the machine's own numbers on the glass (work X/Z, feed, spindle, and its state word; the floating box that carried them in this build became the middle strip in built (18)). The generator's own notes (`(G71 rough X23.000)`) are a line of the stream but not a line of the program, so they are not sent. `--run2test` reads what the run hands over and requires the machine to arrive where the program says |
 | built (10) | MANUAL, its own module: `nc2_manual.c` is the machine panel - the pad is the jog keys (`2`/`8` X, `4`/`6` Z, `7`/`9` the spindle, `5` its stop, `1`/`3` the value the pane shows, `#` swaps a step for feeding, `*` types the two stops of the picked axis, `D` touches off, `0` zeroes, `B`/`C` pick the axis) - and the pane carries the stops with the axis limit the setup states dimmer behind them and the STEP or FEED value. A jog is the `G91 G1` pair with the `G90` that puts the machine back, a held key feeds toward the stop, and the spindle starts at the speed the machine has. `--manual2test` checks what each key sends, that the axis moves, and that the stops and the value are the ones on the glass |
 | built (11) | TOOLS: the bench's "tool table is just as file as other ... basically just inserts" taken at its word, so the screen is the editor on `/D/nc/files/tool.t` - the same file `nc` wrote - with the shipped row as the table when the card has none, and the pad inserting into it like any program. A look at the tools does not lose the program's place. `--tools2test` checks the table is made, written, inserted into, and that the program is where it was |
 | built (12) | the four checks nc's suite had that nc2 did not: `--block2test` (the marks read off the glass), `--label2test` (the DRO, and the state said once), `--pace2test` (one unit at a time), `--demo2test` (the demo card). Writing `--block2test` found a real gap - EDIT marked only the cursor's row - so the editor colours the block pale too, from the same g7x answer RUN uses |
@@ -289,6 +310,7 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built (15) | the list survived the card: the entries the driver hands over are checked before they reach the glass (`nc2_name_is_usable()` - printable ASCII, not `.` or `/`, nc's `nc_files_valid_entry_name()`), the info block is cleared before every `fs_next_file()` (a driver that only appends to the name would grow a path out of the last entry - nc cleared it and nc2 did not), and `nc2_file_selected_path()` is a question again: `..` answers the folder above instead of scanning it and returning nothing, which had the caller scan an uninitialised path (`"it is stuck"`). The scan logs what it saw - `[MSG:NC2 list + name]` / `- name` for the first 20 entries and a summary line - because the list a card hands back is the one thing the panel cannot show the operator. `--walk2test` walks into a folder and back out |
 | built (16) | the three things the port had invented or dropped, from one bench pass: the drawing's X is a **diameter** again (`nc_preview_map_x()`'s halving - the stock came out right and the profile twice its size), the screen in play wears the **block**, and the **legend** is back (`nc2_vocab.c`, nc's own table). `--vocab2test` insists every word the panel can write is named |
 | built (17) | the live stock, the one thing the port had not carried over: while the tool moves, `nc2_preview.c` paints the material still there from the machine's own position, one sample per turn of the screen's loop, into a one-byte-per-pixel mask in PSRAM (nc's own offset, 512 KiB). The tool takes the material off from its X down to the axis, so what is left of a column still starts where the whole stock did; the stock's bore is not material; a run that parks keeps the part on RUN and EDIT draws the stock whole. `--live2test` reads the glass column by column: the cut is where nc's mask puts it, the tops are untouched, the parked screen holds the part, and the editor has the whole stock again |
+| built (18) | the turned screen and its layout: the renderer turns the picture a quarter (`lvds_hstx.h` states it once, `lvds_renderer/README.md` says why the scanout is untouched), and `nc2` is redrawn for a 600x800 screen - header, drawing, one strip, then the text with the pad beside it. The strip is the DRO: work X and Z, feed, spindle and the state word on one line, drawn on every screen, the machine's colour on it. The drawing is on every screen now, MANUAL's included. Two things the new shape exposed and this change fixes: the **run used to inherit the tool table** (the mode key walks EDIT, TOOLS, RUN, and TOOLS edits the table - so `3 FULL` straight after a look at the tools would have sent the table to the machine), and the station's window, its frames and every check now read the picture through the same turn. `--live2test` and `--label2test` are the two that read the new bands |
 | **switched over** | `nc` is retired: `module.c` loads `nc2`, `rp2350.ini` compiles `modules/nc2/`, and the station builds and drives nc2 (`tools/nc_ui_win/`, `tools/test_nc_ui.py`). nc's sources stay in the tree, unbuilt, as the record of the dialect nc2 replaces (`nc/TODO.md` says so at the top) |
 | next | the drawing's tool panel and the tool glyph that rides the live stock (they need the tool table parsed, which is its own module later) |
 
@@ -336,10 +358,10 @@ of the *stream* but not a line of the *program*, so the pacer does not hand them
 to the controller (it logs the skip) - the mistake that first stopped a run at
 the header of a cycle.
 
-The floating DRO is not a strip: it is drawn over the preview's top only while
-the machine has something to say - a run, a jog, a hold, a fault
-(`nc2_state_busy()` and the run's own state) - so a machine that is not moving
-keeps the whole drawing. It wears the panel's green while it runs and its red for
-a fault, and it carries the same state word (`uCNC RUN`, `HOLD`, `ALARM`) on
-every screen, which is why the tab strip above no longer repeats it: the bench
-asked for one place, and the DRO's corner is it.
+The DRO is the strip across the middle: one line, always there, carrying the work
+position in both axes, the feed, the spindle's speed and the state word (`uCNC
+RUN`, `HOLD`, `ALARM`). It wears the panel's grey while nothing is happening, its
+green while the machine runs and its red for a fault, and it is the only place
+the state is said - which is why the header above no longer repeats it (the
+bench: *"i do see idle in two places ... only this one should remain"*).
+`--label2test` reads all three colours off the glass.

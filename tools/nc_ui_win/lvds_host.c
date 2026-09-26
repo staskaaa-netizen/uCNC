@@ -54,9 +54,18 @@ static void host_pixel(int x, int y, uint32_t rgb)
     g_frame[(size_t)y * LVDS_HOST_WIDTH + (size_t)x] = rgb;
 }
 
+/* The picture's point, on the glass: the panel is mounted turned, and the
+   picture is turned back - the same transform the machine's backend does
+   (`lvds_hstx.h` owns it, so the two cannot drift apart). Every primitive that
+   touches a point goes through here. */
+static void host_view_pixel(int x, int y, uint32_t rgb)
+{
+    host_pixel(LVDS_PANEL_X(x, y), LVDS_PANEL_Y(x, y), rgb);
+}
+
 void lvds_hstx_pixel(int x, int y, lvds_color_t color)
 {
-    host_pixel(x, y, host_rgb888(color));
+    host_view_pixel(x, y, host_rgb888(color));
 }
 
 void lvds_hstx_clear(lvds_color_t color)
@@ -78,7 +87,7 @@ void lvds_hstx_line(int x1, int y1, int x2, int y2, lvds_color_t color)
     uint32_t rgb = host_rgb888(color);
 
     for (;;) {
-        host_pixel(x1, y1, rgb);
+        host_view_pixel(x1, y1, rgb);
         if (x1 == x2 && y1 == y2)
             break;
         {
@@ -120,10 +129,24 @@ void lvds_hstx_rect(int x, int y, int w, int h, lvds_color_t color)
 void lvds_hstx_fill_rect(int x, int y, int w, int h, lvds_color_t color)
 {
     uint32_t rgb = host_rgb888(color);
+    int px;
+    int py;
+    int pw;
+    int ph;
     int yy;
 
     if (w <= 0 || h <= 0)
         return;
+    /* A filled rectangle is still a rectangle after the turn: all four of its
+       numbers are read from the view's own before any of them is written. */
+    px = LVDS_PANEL_RECT_X(x, y, w, h);
+    py = LVDS_PANEL_RECT_Y(x, y, w, h);
+    pw = LVDS_PANEL_RECT_W(w, h);
+    ph = LVDS_PANEL_RECT_H(w, h);
+    x = px;
+    y = py;
+    w = pw;
+    h = ph;
     for (yy = y; yy < y + h; yy++) {
         int xx;
         if (yy < 0 || yy >= LVDS_HOST_HEIGHT)
@@ -144,9 +167,9 @@ void lvds_hstx_ellipse(int x, int y, int rx, int ry, lvds_color_t color)
         return;
     for (a = 0; a < 360; a++) {
         double rad = (double)a * 3.14159265358979 / 180.0;
-        host_pixel(x + (int)((double)rx * cos(rad)),
-                   y + (int)((double)ry * sin(rad)),
-                   host_rgb888(color));
+        host_view_pixel(x + (int)((double)rx * cos(rad)),
+                        y + (int)((double)ry * sin(rad)),
+                        host_rgb888(color));
     }
 }
 
@@ -281,9 +304,11 @@ bool lvds_host_save_bmp(const char *path)
     FILE *fp;
     uint8_t header[54];
     int row;
-    int stride = LVDS_HOST_WIDTH * 3;
+    /* The picture as the operator reads it: the frame holds the glass, which is
+       mounted turned, and a dump nobody can read upright is not a dump. */
+    int stride = LVDS_VIEW_WIDTH * 3;
     int pad = (4 - (stride % 4)) % 4;
-    uint32_t size = (uint32_t)(54 + (stride + pad) * LVDS_HOST_HEIGHT);
+    uint32_t size = (uint32_t)(54 + (stride + pad) * LVDS_VIEW_HEIGHT);
     uint8_t zeros[3] = { 0, 0, 0 };
 
     if (!path)
@@ -298,8 +323,8 @@ bool lvds_host_save_bmp(const char *path)
     {
         uint32_t offset = 54;
         uint32_t info = 40;
-        uint32_t w = LVDS_HOST_WIDTH;
-        uint32_t h = LVDS_HOST_HEIGHT;
+        uint32_t w = LVDS_VIEW_WIDTH;
+        uint32_t h = LVDS_VIEW_HEIGHT;
         uint16_t planes = 1;
         uint16_t bpp = 24;
         memcpy(header + 10, &offset, 4);
@@ -313,10 +338,12 @@ bool lvds_host_save_bmp(const char *path)
         fclose(fp);
         return false;
     }
-    for (row = LVDS_HOST_HEIGHT - 1; row >= 0; row--) {
+    for (row = LVDS_VIEW_HEIGHT - 1; row >= 0; row--) {
         int col;
-        for (col = 0; col < LVDS_HOST_WIDTH; col++) {
-            uint32_t rgb = g_frame[(size_t)row * LVDS_HOST_WIDTH + (size_t)col];
+        for (col = 0; col < LVDS_VIEW_WIDTH; col++) {
+            int px = LVDS_PANEL_X(col, row);
+            int py = LVDS_PANEL_Y(col, row);
+            uint32_t rgb = g_frame[(size_t)py * LVDS_HOST_WIDTH + (size_t)px];
             uint8_t bgr[3];
             bgr[0] = (uint8_t)(rgb & 0xFFu);
             bgr[1] = (uint8_t)((rgb >> 8) & 0xFFu);

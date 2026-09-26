@@ -166,13 +166,18 @@ void nc2_visual_select_mode(nc2_mode_t mode)
     nc2_labels_at(g_address);
     if (mode == NC2_MODE_TOOLS) {
         nc2_visual_load_tools();
-    } else if (mode == NC2_MODE_PROGRAM) {
+    } else if (mode == NC2_MODE_PROGRAM || mode == NC2_MODE_RUN) {
+        /* The run and the editor are the same file. The mode key walks EDIT,
+           TOOLS, RUN, and TOOLS holds the tool table - so a run that kept
+           whatever the screen before it had open would send the table to the
+           machine. What was left unsaved has been written by the `save` above. */
         if (!nc2_state_load_document(NC2_MODE_PROGRAM, &g_doc)) {
             nc2_document_init(&g_doc);
             (void)nc2_insert_line(&g_doc, 0u, "");
         }
-    } else if (mode == NC2_MODE_RUN && !nc2_run_active()) {
-        nc2_run_set_line(&g_doc, g_doc.cursor);
+        if (mode == NC2_MODE_RUN && !nc2_run_active()) {
+            nc2_run_set_line(&g_doc, g_doc.cursor);
+        }
     }
     nc2_statusf("");
     g_dirty = true;
@@ -719,7 +724,7 @@ static void nc2_draw_header(void)
     int x = 8;
     int i;
 
-    nc2_fill(0, 0, LVDS_HSTX_WIDTH, NC2_HEADER_H, nc2_col_header());
+    nc2_fill(0, 0, LVDS_VIEW_WIDTH, NC2_HEADER_H, nc2_col_header());
     for (i = 0; i < 4; i++) {
         bool active = order[i] == g_mode;
         int w;
@@ -753,10 +758,10 @@ static void nc2_draw_header(void)
         int msg_x;
         int path_cols;
 
-        if (msg_cols > LVDS_HSTX_WIDTH / (2 * small_w)) {
-            msg_cols = LVDS_HSTX_WIDTH / (2 * small_w);
+        if (msg_cols > LVDS_VIEW_WIDTH / (2 * small_w)) {
+            msg_cols = LVDS_VIEW_WIDTH / (2 * small_w);
         }
-        msg_x = LVDS_HSTX_WIDTH - 8 - msg_cols * small_w;
+        msg_x = LVDS_VIEW_WIDTH - 8 - msg_cols * small_w;
         path_cols = (msg_x - 12 - x) / small_w;
         if (path_cols > 0 && path[0]) {
             char line[NC2_PATH_MAX + 4];
@@ -772,21 +777,6 @@ static void nc2_draw_header(void)
     }
 }
 
-/* The two panes: the program on the left, the drawing on the right, and the line
-   between them - the *only* line, because a border on all four sides of each pane
-   is four lines saying what one already says. The preview's own drawing is the
-   next piece of the module, so its pane is here and the pad sits in its corner
-   meanwhile. */
-static void nc2_draw_panes(void)
-{
-    nc2_fill(NC2_LEFT_PANE_X, NC2_PANE_Y, NC2_LEFT_PANE_W, NC2_PANE_H,
-             nc2_col_bg());
-    nc2_fill(NC2_RIGHT_PANE_X, NC2_PANE_Y, NC2_RIGHT_PANE_W, NC2_PANE_H,
-             nc2_col_bg());
-    lvds_draw_line(NC2_SPLIT_X, NC2_PANE_Y, NC2_SPLIT_X, NC2_PANE_BOTTOM,
-                   nc2_col_dim());
-}
-
 /* One row of the program: its number, then the text. The row the cursor (or the
    run) is on wears the selection colour, the rows of the block it heads wear
    the pale one, and the picked field is drawn as the box being typed into -
@@ -799,20 +789,20 @@ static void nc2_draw_row(size_t index, int y, bool selected, bool path)
                              : (path ? nc2_col_block() : nc2_col_bg());
     int col_w = nc2_col_width(LVDS_FONT_NORMAL);
     char number[8];
-    int x = NC2_LEFT_PANE_X + NC2_LINE_NO_PAD;
+    int x = NC2_TEXT_X + NC2_LINE_NO_PAD;
     int cols;
     nc2_field_t fields[NC2_MAX_FIELDS];
     int count;
     int picked = -1;
 
     if (cursor || path) {
-        nc2_fill(NC2_LEFT_PANE_X, y - 2, NC2_LEFT_PANE_W - 2, NC2_ROW_H - 2,
+        nc2_fill(NC2_TEXT_X, y - 2, NC2_TEXT_W - 2, NC2_ROW_H - 2,
                  cursor ? nc2_col_select() : nc2_col_block());
     }
     snprintf(number, sizeof(number), "%3u", (unsigned)(index + 1u));
     nc2_text(x, y, number, nc2_col_dim(), bg, LVDS_FONT_NORMAL);
     x += 4 * col_w;
-    cols = (NC2_LEFT_PANE_W - (x - NC2_LEFT_PANE_X) - 4) / col_w;
+    cols = (NC2_TEXT_W - (x - NC2_TEXT_X) - 4) / col_w;
     if (cols <= 0) {
         return;
     }
@@ -872,7 +862,8 @@ static void nc2_draw_program(void)
         bool selected = i == mark;
         bool path = have_path && i >= path_first && i <= path_last && !selected;
 
-        nc2_draw_row(i, NC2_PANE_Y + 4 + (int)(i - first) * NC2_ROW_H, selected, path);
+        nc2_draw_row(i, NC2_TEXT_Y + 4 + (int)(i - first) * NC2_ROW_H, selected,
+                     path);
     }
     /* The legend of the word being read, on the row above the cursor's - the
        row the operator's eye is already on, so the meaning of the word they are
@@ -886,48 +877,50 @@ static void nc2_draw_program(void)
 
         if (g_doc.field < count) {
             int at = (int)(g_doc.cursor - first);
-            int hint_y = at > 0 ? NC2_PANE_Y + 4 + (at - 1) * NC2_ROW_H
-                                : NC2_PANE_Y + 4;
+            int hint_y = at > 0 ? NC2_TEXT_Y + 4 + (at - 1) * NC2_ROW_H
+                                : NC2_TEXT_Y + 4;
             char text[48];
-            int cols = (NC2_LEFT_PANE_W - NC2_LINE_TEXT_PAD - 4) /
+            int cols = (NC2_TEXT_W - NC2_LINE_TEXT_PAD - 4) /
                        nc2_col_width(LVDS_FONT_NORMAL);
 
             snprintf(text, sizeof(text), ">  %s",
                      nc2_vocab_label(g_doc.lines[g_doc.cursor],
                                      &fields[g_doc.field]));
-            nc2_fill(NC2_LEFT_PANE_X, hint_y - 2, NC2_LEFT_PANE_W - 2,
+            nc2_fill(NC2_TEXT_X, hint_y - 2, NC2_TEXT_W - 2,
                      NC2_ROW_H - 2, nc2_col_bg());
-            nc2_text_clip(NC2_LEFT_PANE_X + NC2_LINE_TEXT_PAD, hint_y, text, cols,
+            nc2_text_clip(NC2_TEXT_X + NC2_LINE_TEXT_PAD, hint_y, text, cols,
                           nc2_col_accent(), nc2_col_bg(), LVDS_FONT_NORMAL);
         }
     }
 }
 
 /* The card: what is in the folder the operator is looking at, the one picked lit,
-   and the name being typed for a new file. It is the whole screen while it is up -
-   a picker, with no pad: the digits are the new file's name there. */
+   and the name being typed for a new file. It is the whole bottom band while it
+   is up - a picker, with no pad: the digits are the new file's name there. */
 static void nc2_draw_list(void)
 {
-    int rows = (NC2_PANE_H - 40) / NC2_ROW_H;
+    const int list_x = NC2_TEXT_X;
+    const int list_y = NC2_TEXT_Y;
+    const int list_w = NC2_PAD_X + NC2_PAD_W - NC2_TEXT_X;
+    const int list_h = NC2_TEXT_H;
+    int rows = (list_h - 40) / NC2_ROW_H;
     int i;
 
-    nc2_text_clip(NC2_LEFT_PANE_X + 4, NC2_PANE_Y + 6, nc2_file_dir(),
-                  (NC2_LEFT_PANE_W + NC2_RIGHT_PANE_W - 20) /
-                  nc2_col_width(LVDS_FONT_NORMAL),
+    nc2_text_clip(list_x + 4, list_y + 6, nc2_file_dir(),
+                  (list_w - 12) / nc2_col_width(LVDS_FONT_NORMAL),
                   nc2_col_text(), nc2_col_bg(), LVDS_FONT_NORMAL);
     for (i = 0; i < nc2_file_count() && i < rows; i++) {
         const nc2_file_entry_t *entry = nc2_file_entry(i);
-        int y = NC2_PANE_Y + 30 + i * NC2_ROW_H;
+        int y = list_y + 30 + i * NC2_ROW_H;
         char line[NC2_NAME_MAX + 4];
 
         if (i == nc2_file_selected()) {
-            nc2_fill(NC2_LEFT_PANE_X + 2, y - 2,
-                     NC2_LEFT_PANE_W + NC2_RIGHT_PANE_W - 24, NC2_ROW_H - 2,
+            nc2_fill(list_x + 2, y - 2, list_w - 6, NC2_ROW_H - 2,
                      nc2_col_select());
         }
         snprintf(line, sizeof(line), "%s%s", entry->name,
                  entry->is_dir ? "/" : "");
-        nc2_text_clip(NC2_LEFT_PANE_X + 8, y, line, 48, nc2_col_text(),
+        nc2_text_clip(list_x + 8, y, line, (list_w - 16) / 8, nc2_col_text(),
                       i == nc2_file_selected() ? nc2_col_select() : nc2_col_bg(),
                       LVDS_FONT_NORMAL);
     }
@@ -936,7 +929,7 @@ static void nc2_draw_list(void)
 
         snprintf(line, sizeof(line), "NEW  %s.nc",
                  nc2_file_new_name()[0] ? nc2_file_new_name() : "_");
-        nc2_text_clip(NC2_LEFT_PANE_X + 8, NC2_PANE_BOTTOM - 24, line, 40,
+        nc2_text_clip(list_x + 8, list_y + list_h - 24, line, 40,
                       nc2_col_field_fg(), nc2_col_field_bg(), LVDS_FONT_NORMAL);
     }
 }
@@ -1060,10 +1053,13 @@ static bool nc2_state_is_fault(const nc2_runtime_state_t *rt)
            nc2_run_error();
 }
 
-/* The floating DRO: the work position, the feed and the spindle, and the
-   machine's own state word. It is drawn only while the machine has something to
-   say - a run, a jog, a hold, a fault - so a screen that is not running is all
-   drawing. */
+/* The machine's own strip, across the middle of the screen: the work position,
+   the feed and the spindle, and the state word, on one line. It is the DRO and
+   the line between the two halves at once - the top is what the machine is
+   making, the bottom is what the operator types - so it is drawn on every
+   screen and never moves. Its colour is the machine's: the panel's grey while
+   nothing is happening, the run's green while it moves, the fault's red when
+   something is wrong. */
 static void nc2_draw_dro(void)
 {
     nc2_runtime_state_t rt;
@@ -1072,7 +1068,8 @@ static void nc2_draw_dro(void)
     const char *state;
     bool fault;
     char buf[40];
-    int col_w = nc2_col_width(LVDS_FONT_NORMAL);
+    int x = NC2_DRO_X + 8;
+    int y = NC2_DRO_Y + (NC2_DRO_H - 14) / 2;
 
     nc2_state_runtime(&rt);
     work[AXIS_X] = rt.x;
@@ -1086,27 +1083,28 @@ static void nc2_draw_dro(void)
                       : nc2_col_header());
 
     nc2_fill(NC2_DRO_X, NC2_DRO_Y, NC2_DRO_W, NC2_DRO_H, bg);
-    nc2_text(NC2_DRO_X + 6, NC2_DRO_Y + 4, "X", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
+    /* The work position first, in the two axes a lathe hand reads - X a
+       diameter, Z the length - then the feed and the spindle's speed, and the
+       state word at the far end where it is out of the figures' way. */
+    nc2_text(x, y, "X", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
     snprintf(buf, sizeof(buf), "%9.3f", (double)work[AXIS_X]);
-    nc2_text_clip(NC2_DRO_X + 24, NC2_DRO_Y + 4, buf, 9, nc2_col_text(), bg,
-                  LVDS_FONT_NORMAL);
-    nc2_text(NC2_DRO_X + 6, NC2_DRO_Y + 22, "Z", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
+    nc2_text_clip(x + 16, y, buf, 9, nc2_col_text(), bg, LVDS_FONT_NORMAL);
+    x += 100;
+    nc2_text(x, y, "Z", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
     snprintf(buf, sizeof(buf), "%9.3f", (double)work[AXIS_Z]);
-    nc2_text_clip(NC2_DRO_X + 24, NC2_DRO_Y + 22, buf, 9, nc2_col_text(), bg,
-                  LVDS_FONT_NORMAL);
-
-    nc2_text(NC2_DRO_X + 120, NC2_DRO_Y + 4, "F", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
+    nc2_text_clip(x + 16, y, buf, 9, nc2_col_text(), bg, LVDS_FONT_NORMAL);
+    x += 100;
+    nc2_text(x, y, "F", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
     snprintf(buf, sizeof(buf), "%7.1f", (double)rt.feed);
-    nc2_text_clip(NC2_DRO_X + 138, NC2_DRO_Y + 4, buf, 7, nc2_col_text(), bg,
-                  LVDS_FONT_NORMAL);
-    nc2_text(NC2_DRO_X + 120, NC2_DRO_Y + 22, "S", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
+    nc2_text_clip(x + 16, y, buf, 7, nc2_col_text(), bg, LVDS_FONT_NORMAL);
+    x += 84;
+    nc2_text(x, y, "S", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
     snprintf(buf, sizeof(buf), "%7u", rt.spindle);
-    nc2_text_clip(NC2_DRO_X + 138, NC2_DRO_Y + 22, buf, 7, nc2_col_text(), bg,
-                  LVDS_FONT_NORMAL);
+    nc2_text_clip(x + 16, y, buf, 7, nc2_col_text(), bg, LVDS_FONT_NORMAL);
 
     snprintf(buf, sizeof(buf), "uCNC %s", state);
-    nc2_text_clip(NC2_DRO_X + 6, NC2_DRO_Y + 48, buf,
-                  (NC2_DRO_W - 12) / col_w, nc2_col_dim(), bg, LVDS_FONT_NORMAL);
+    nc2_text_clip(NC2_DRO_X + NC2_DRO_W - 8 - nc2_text_width(buf, LVDS_FONT_NORMAL),
+                  y, buf, 16, nc2_col_dim(), bg, LVDS_FONT_NORMAL);
 }
 
 void nc2_visual_draw(void)
@@ -1120,54 +1118,39 @@ void nc2_visual_draw(void)
         lvds_hstx_present();
         return;
     }
-    nc2_fill(0, 0, LVDS_HSTX_WIDTH, LVDS_HSTX_HEIGHT, nc2_col_bg());
+    nc2_fill(0, 0, LVDS_VIEW_WIDTH, LVDS_VIEW_HEIGHT, nc2_col_bg());
     nc2_draw_header();
+    /* The drawing, every screen and whatever the screen has open: the machine
+       is making a part, and the part belongs at the top where the operator
+       looks. What the machine is doing is read once, for the live stock. */
+    {
+        nc2_runtime_state_t rt;
+        nc2_preview_run_t run;
+
+        nc2_state_runtime(&rt);
+        run.busy = nc2_state_busy() || nc2_run_active() || nc2_run_hold();
+        run.screen_run = g_mode == NC2_MODE_RUN;
+        run.x = rt.x;
+        run.z = rt.z;
+        nc2_preview_draw(&g_doc, &run, NC2_PREVIEW_X, NC2_PREVIEW_Y,
+                         NC2_PREVIEW_W, NC2_PREVIEW_PANE_H);
+    }
+    /* The strip under the drawing, and then the bottom band: the text on the
+       left, the keys in the corner. */
+    nc2_draw_dro();
     if (g_list) {
-        /* The list is one column, not the editor's two panes: it takes the whole
-           body while it is up, the way a picker does. */
-        nc2_fill(NC2_LEFT_PANE_X, NC2_PANE_Y,
-                 NC2_RIGHT_PANE_X + NC2_RIGHT_PANE_W - NC2_LEFT_PANE_X, NC2_PANE_H,
-                 nc2_col_bg());
+        /* The list is one column, not the editor's pane: it takes the whole
+           bottom band while it is up, the way a picker does. */
+        nc2_fill(NC2_TEXT_X, NC2_TEXT_Y,
+                 NC2_PAD_X + NC2_PAD_W - NC2_TEXT_X, NC2_TEXT_H, nc2_col_bg());
         nc2_draw_list();
     } else if (g_mode == NC2_MODE_MANUAL) {
         /* MANUAL is a machine panel: the pane carries the stops and the value
-           the keys change, the pad its jog keys, and there is no drawing - the
-           machine's own figures are the DRO's. */
-        nc2_draw_panes();
-        nc2_manual_draw_pane(NC2_LEFT_PANE_X, NC2_PANE_Y, NC2_LEFT_PANE_W,
-                             NC2_PANE_H);
-        if (nc2_state_busy() || nc2_run_active() || nc2_run_hold() ||
-            nc2_run_error()) {
-            nc2_draw_dro();
-        }
+           the keys change and the pad its jog keys. */
+        nc2_manual_draw_pane(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H);
         nc2_draw_pad_band();
     } else {
-        nc2_draw_panes();
         nc2_draw_program();
-        /* The drawing goes on after the panes and before the pad: the pad is the
-           machine's keys and sits in the drawing's corner, so it is drawn last
-           of the three. */
-        {
-            /* What the machine is doing, for the live stock: the DRO's own
-               numbers, read once. */
-            nc2_runtime_state_t rt;
-            nc2_preview_run_t run;
-
-            nc2_state_runtime(&rt);
-            run.busy = nc2_state_busy() || nc2_run_active() ||
-                       nc2_run_hold();
-            run.screen_run = g_mode == NC2_MODE_RUN;
-            run.x = rt.x;
-            run.z = rt.z;
-            nc2_preview_draw(&g_doc, &run, NC2_RIGHT_PANE_X, NC2_PANE_Y,
-                             NC2_RIGHT_PANE_W, NC2_PANE_H);
-        }
-        /* The DRO floats over the drawing and only while the machine has
-           something to say; the pad is the machine's keys and is drawn last. */
-        if (nc2_state_busy() || nc2_run_active() || nc2_run_hold() ||
-            nc2_run_error()) {
-            nc2_draw_dro();
-        }
         nc2_draw_pad_band();
     }
     nc2_visual_clear_dirty();

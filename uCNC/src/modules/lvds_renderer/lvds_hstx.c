@@ -613,7 +613,9 @@ static bool hstx_rect_sane(int x, int y, int w, int h)
     if (!hstx_coord_sane(x) || !hstx_coord_sane(y) ||
         !hstx_coord_sane(w) || !hstx_coord_sane(h))
         return false;
-    return x < LVDS_HSTX_WIDTH && y < LVDS_HSTX_HEIGHT &&
+    /* The screens draw the view, so it is the view's bounds that decide; the
+       turn onto the glass happens once, below. */
+    return x < LVDS_VIEW_WIDTH && y < LVDS_VIEW_HEIGHT &&
            x + w > 0 && y + h > 0;
 }
 
@@ -674,7 +676,9 @@ void lvds_hstx_pixel(int x, int y, lvds_color_t color)
     if (!hstx_ready_for_draw()) {
         return;
     }
-    put_pixel_raw(x, y, (uint8_t)color);
+    /* The view's point, on the glass: the panel is mounted turned, and the
+       picture is turned back (see `lvds_hstx.h`). */
+    put_pixel_raw(LVDS_PANEL_X(x, y), LVDS_PANEL_Y(x, y), (uint8_t)color);
 }
 
 void lvds_hstx_line(int x1, int y1, int x2, int y2, lvds_color_t color)
@@ -689,8 +693,8 @@ void lvds_hstx_line(int x1, int y1, int x2, int y2, lvds_color_t color)
         !hstx_coord_sane(x2) || !hstx_coord_sane(y2)) {
         return;
     }
-    if ((x1 < 0 && x2 < 0) || (x1 >= LVDS_HSTX_WIDTH && x2 >= LVDS_HSTX_WIDTH) ||
-        (y1 < 0 && y2 < 0) || (y1 >= LVDS_HSTX_HEIGHT && y2 >= LVDS_HSTX_HEIGHT)) {
+    if ((x1 < 0 && x2 < 0) || (x1 >= LVDS_VIEW_WIDTH && x2 >= LVDS_VIEW_WIDTH) ||
+        (y1 < 0 && y2 < 0) || (y1 >= LVDS_VIEW_HEIGHT && y2 >= LVDS_VIEW_HEIGHT)) {
         return;
     }
     while (1) {
@@ -736,13 +740,29 @@ void lvds_hstx_rect(int x, int y, int w, int h, lvds_color_t color)
 
 void lvds_hstx_fill_rect(int x, int y, int w, int h, lvds_color_t color)
 {
-    int x2 = x + w;
-    int y2 = y + h;
+    int x2;
+    int y2;
     uint8_t c = (uint8_t)(color & 0x0f);
     uint8_t packed = (uint8_t)((c << 4) | c);
     if (!hstx_rect_sane(x, y, w, h)) {
         return;
     }
+    /* A filled rectangle is still a rectangle after a quarter turn, so the
+       whole fill turns with two numbers and one swap - a screen clear is one
+       call, not one pixel at a time. */
+    {
+        int px = LVDS_PANEL_RECT_X(x, y, w, h);
+        int py = LVDS_PANEL_RECT_Y(x, y, w, h);
+        int pw = LVDS_PANEL_RECT_W(w, h);
+        int ph = LVDS_PANEL_RECT_H(w, h);
+
+        x = px;
+        y = py;
+        w = pw;
+        h = ph;
+    }
+    x2 = x + w;
+    y2 = y + h;
     if (x < 0) x = 0;
     if (y < 0) y = 0;
     if (x2 > LVDS_HSTX_WIDTH) x2 = LVDS_HSTX_WIDTH;
@@ -776,7 +796,7 @@ void lvds_hstx_fill_rect(int x, int y, int w, int h, lvds_color_t color)
 void lvds_hstx_ellipse(int x, int y, int rx, int ry, lvds_color_t color)
 {
     if (!hstx_ready_for_draw() || rx <= 0 || ry <= 0 ||
-        rx > LVDS_HSTX_WIDTH || ry > LVDS_HSTX_HEIGHT ||
+        rx > LVDS_VIEW_WIDTH || ry > LVDS_VIEW_HEIGHT ||
         !hstx_coord_sane(x) || !hstx_coord_sane(y)) return;
     for (int a = 0; a < 360; a += 2) {
         float rad = (float)a * 0.01745329252f;
@@ -787,7 +807,7 @@ void lvds_hstx_ellipse(int x, int y, int rx, int ry, lvds_color_t color)
 void lvds_hstx_fill_ellipse(int x, int y, int rx, int ry, lvds_color_t color)
 {
     if (!hstx_ready_for_draw() || rx <= 0 || ry <= 0 ||
-        rx > LVDS_HSTX_WIDTH || ry > LVDS_HSTX_HEIGHT ||
+        rx > LVDS_VIEW_WIDTH || ry > LVDS_VIEW_HEIGHT ||
         !hstx_coord_sane(x) || !hstx_coord_sane(y)) return;
     for (int yy = -ry; yy <= ry; yy++) {
         int span = (int)(rx * sqrtf(1.0f - ((float)(yy * yy) / (float)(ry * ry))));

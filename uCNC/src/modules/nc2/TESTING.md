@@ -66,10 +66,21 @@ cannot have the spindle, the travel or the panel's glass.
 
 ## The panel itself
 
-- The floating DRO has to be **up while the machine is busy and gone when it is
-  not**, on every screen, and its corner has to say `uCNC RUN`, `HOLD`, `JOG`,
-  `ALARM` as the machine does them. A fault wears the red.
+- **Read the screen turned**, as it is bolted: the header at the top, the drawing
+  under it, the machine's strip across the middle and the program with the 3x3
+  beside it. If the picture comes out upside down, `LVDS_PANEL_TURN` in
+  `lvds_hstx.h` is the wrong quarter - one number, and the station's window and
+  dumps follow it.
+- The strip has to say `uCNC IDLE`, `RUN`, `HOLD`, `JOG`, `ALARM` as the machine
+  does them, on every screen: the panel's grey while nothing happens, the run's
+  green while it moves, the red for a fault. It is the only place the state is
+  said - the header must not repeat it.
+- The drawing is on every screen, MANUAL included: start a jog and the part is
+  in view above the strip.
 - Read the code pane outdoors and with the panel at an angle: the selected row,
   the pale block path and the background have to stay distinguishable.
+- A run entered straight after a look at TOOLS must send the **program**: walk
+  EDIT to TOOLS to RUN with the mode key and press `3 FULL` - the machine has to
+  cut the program, not the tool table.
 - The spindle has to read off the machine's own signals; the host station has no
   encoder and must not need one.

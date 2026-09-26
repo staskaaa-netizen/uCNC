@@ -53,7 +53,7 @@ build\nc_ui.exe --pad2test                       # nc2's pad is the file tree
 build\nc_ui.exe --screen2test                    # nc2's screen draws and writes
 build\nc_ui.exe --file2test                      # nc2's card list walks and opens
 build\nc_ui.exe --emit2test                      # the sender still makes what nc made
-build\nc_ui.exe --run2test                       # nc2's run and its floating DRO
+build\nc_ui.exe --run2test                       # nc2's run and its own strip
 build\nc_ui.exe --live2test                      # the tool takes the stock off
 build\nc_ui.exe --manual2test                    # nc2's jog panel
 build\nc_ui.exe --tools2test                     # nc2's tool table is a file
@@ -136,8 +136,9 @@ Every line in the demo is short enough for the panel's own line width
 (`NC_WRAP_LINE_LEN`, 46 characters): a longer line is wrapped with a tab and the
 screen shows two rows, which is fine for a program and ugly for a sample.
 
-`--dump out.bmp` writes the 800x600 panel frame - the firmware layout, nothing
-of the shell. `--dump-bench out.bmp` writes the whole 1100x600 bench: the panel
+`--dump out.bmp` writes the 600x800 panel frame - the firmware layout as the
+operator reads it, nothing of the shell. `--dump-bench out.bmp` writes the whole
+900x800 bench: the panel
 plus the machine keys, so the key row is reviewable (and diffable) without
 opening the window.
 
@@ -188,18 +189,20 @@ build\nc_ui.exe
 
 ## Window layout
 
-The window is the emulated panel (800x600, exactly as the panel draws) with the
-machine's keypad attached to the right side, the way the proprietary keyboard
-sits next to the display. This is the *programming station* side of the tool:
-the panel is the machine, and the strip beside it is the desk. The keys are the
-hardware's, not a second menu:
+The window is the emulated panel with the machine's keypad attached to the right
+side, the way the proprietary keyboard sits next to the display. This is the
+*programming station* side of the tool: the panel is the machine, and the strip
+beside it is the desk. The keys are the hardware's, not a second menu:
 
-The panel itself is three things: the band across the top - the four screens
-with the one in play bright and underlined, the file, and everything the screen
-has to say at the right end - the program and the drawing below it, and the 3x3
-pad in the drawing's bottom-right corner. Nothing runs along the bottom: what a
-footer would say is one line, and it belongs in the band the operator is already
-looking at.
+The panel half is **600x800**: the glass is 800x600 and is mounted turned a
+quarter, so the window shows the picture the operator reads, not the framebuffer
+the scanout reads (`lvds_hstx.h` owns the turn, and `lvds_host.c` and this window
+go through the same statement - a `--dump` is written upright for the same
+reason). On that picture: the header band across the top - the four screens with
+the one in play wearing its block, the file, and everything the screen has to
+say at the right end - the drawing under it, the machine's own strip across the
+middle (work X and Z, feed, spindle, and the state word), and then the program
+on the left with the 3x3 in the corner beside it.
 
 | Keys | Function |
 | --- | --- |
@@ -358,9 +361,11 @@ python tools\test_nc_ui.py
   notes are a line of the stream, not a line of the program, so they are not
   sent), the machine really runs it one unit at a time and arrives where the
   program says - the program's X is a diameter and the axis works in the radius,
-  so the machine's figure is half - and the floating DRO is on the glass while
-  the run is busy and gone when it is not. `1 SINGLE` sends the unit the mark is
-  on and leaves the mark on the line the operator stepped from.
+  so the machine's figure is half - the strip wears the machine's grey while
+  nothing happens and the run's green while it is armed, and the run entered
+  through the mode key (EDIT, TOOLS, RUN) holds the *program*, not the tool
+  table the screen before it had open. `1 SINGLE` sends the unit the mark is on
+  and leaves the mark on the line the operator stepped from.
 - `--live2test` checks the live stock, off the glass: the tool is parked off the
   stock with the panel's own sender, the idle RUN screen is read column by
   column for the stock's colour, a taper is cut with the machine running and the
@@ -402,11 +407,11 @@ python tools\test_nc_ui.py
   the pale one, and everything outside both is the pane's own ground. A mark the
   snapshot carries but the pane never paints passes a check on the document and
   still is not there, so this reads the glass.
-- `--label2test` checks the floating DRO: absent on an idle machine, green over
-  the preview while a run is going, and taken over in red by a fault with the
-  state word still drawn on it. It also pins the bench's "i do see idle in two
-  places ... only this one should remain": the header band never wears the DRO's
-  colour, so the state is said once.
+- `--label2test` checks the machine's strip: the panel's own colour with `IDLE`
+  on it while nothing happens, green while a run is armed, and the fault's red
+  with the state word still drawn on it when the machine faults. It also pins the
+  bench's "i do see idle in two places ... only this one should remain": the
+  header band never wears the strip's colour, so the state is said once.
 - `--pace2test` checks the pacer: a line may only be handed over while the
   machine is still running when it belongs to a block the sender is expanding (a
   contour is one cut), the mark never names a line the sender has not handed

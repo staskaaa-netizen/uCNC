@@ -54,6 +54,8 @@ static void host_press(char key);
 
 static uint32_t host_frame_at(int x, int y);
 static uint32_t host_panel_rgb(lvds_color_t color);
+static uint32_t host_view_at(int x, int y);
+static int host_view_ink_in(int x, int y, int w, int h);
 
 
 
@@ -364,7 +366,44 @@ static void host_press(char key)
 }
 
 /* Is anything in the region different from its own background (the pixel in its
-   top-left corner)? */
+   top-left corner)? The region is the *picture's*, not the glass's: the panel is
+   mounted turned, and a check that asks about a screen coordinate asks it in the
+   picture the screen drew. */
+static int host_view_ink_in(int x, int y, int w, int h)
+{
+    uint32_t bg = host_view_at(x, y);
+    int r;
+    int c;
+
+    for (r = 0; r < h; r++) {
+        for (c = 0; c < w; c++) {
+            if (host_view_at(x + c, y + r) != bg) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Is there ink on the machine's strip - a pixel that is not the strip's own
+   colour - in the last 120 columns of it? That is where the state word is
+   drawn. */
+static int host_strip_has_ink(int x, uint32_t strip_rgb)
+{
+    int row;
+    int col;
+
+    for (row = 0; row < NC2_DRO_H; row++) {
+        for (col = 0; col < 120; col++) {
+            if (host_view_at(x + col, NC2_DRO_Y + row) != strip_rgb) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* The raw buffer, for the few readers that work in the glass's own order. */
 static int host_ink_in(const uint32_t *px, int x, int y, int w, int h)
 {
     uint32_t bg = px[(size_t)y * (size_t)lvds_host_width() + (size_t)x];
@@ -566,13 +605,9 @@ static int host_file2test(void)
 
     /* And the list draws. */
     nc2_visual_draw();
-    {
-        const uint32_t *px = (const uint32_t *)lvds_host_pixels();
-
-        if (!host_ink_in(px, NC2_LEFT_PANE_X + 4, NC2_PANE_Y + 30, 300, 200)) {
-            puts("file2test: FAIL the list drew nothing");
-            failures++;
-        }
+    if (!host_view_ink_in(NC2_TEXT_X + 4, NC2_TEXT_Y + 30, 300, 200)) {
+        puts("file2test: FAIL the list drew nothing");
+        failures++;
     }
 
     if (failures) {
@@ -626,20 +661,21 @@ static int host_screen2test(void)
         return 1;
     }
 
-    /* 1. it draws, and where the footer used to be there is program. */
+    /* 1. it draws: the program in the bottom band, the part in the drawing
+       above it, the keys in the corner. */
     nc2_visual_draw();
-    px = (const uint32_t *)lvds_host_pixels();
-    if (!host_ink_in(px, 20, 40, 480, 400)) {
+    if (!host_view_ink_in(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, 240)) {
         puts("screen2test: FAIL the code pane drew nothing");
         failures++;
     }
-    if (!host_ink_in(px, LVDS_HSTX_WIDTH - 240, LVDS_HSTX_HEIGHT - 240, 230, 230)) {
+    if (!host_view_ink_in(NC2_PAD_X, NC2_PAD_Y, NC2_PAD_W, NC2_PAD_H)) {
         puts("screen2test: FAIL the pad's corner drew nothing");
         failures++;
     }
     /* The drawing pane has the part in it - the stock, the chuck and the DIN
        rulers - and none of that is the pad. */
-    if (!host_ink_in(px, NC2_RIGHT_PANE_X + 20, NC2_PANE_Y + 90, 320, 160)) {
+    if (!host_view_ink_in(NC2_PREVIEW_X + 10, NC2_PREVIEW_Y + 60,
+                          NC2_PREVIEW_W - 20, 200)) {
         puts("screen2test: FAIL the drawing pane drew nothing");
         failures++;
     }
@@ -655,15 +691,16 @@ static int host_screen2test(void)
         failures++;
     }
     nc2_visual_draw();
-    px = (const uint32_t *)lvds_host_pixels();
-    if (!host_ink_in(px, 20, 40, 480, 400)) {
+    if (!host_view_ink_in(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, 240)) {
         puts("screen2test: FAIL the program does not show the pad's name");
         failures++;
     }
-    /* The two panes are told apart by the line between them and nothing else: no
-       box around either, so the split is the one line the layout draws. */
-    if (!host_ink_in(px, NC2_SPLIT_X - 1, NC2_PANE_Y + 8, 3, 40)) {
-        puts("screen2test: FAIL the line between the panes is not drawn");
+    /* The one line the layout has is the strip between the drawing and the
+       keys: it is the machine's own colour, so it is told apart from the page
+       on either side of it. */
+    if (host_view_at(NC2_DRO_X + 2, NC2_DRO_Y + NC2_DRO_H / 2) !=
+        host_panel_rgb(nc2_col_header())) {
+        puts("screen2test: FAIL the strip between the halves is not drawn");
         failures++;
     }
 
@@ -1277,8 +1314,8 @@ static void host_read_run2(char *sent, size_t sent_cap, size_t *sent_len)
    time, and the machine really runs it. The check reads the same reader the
    controller reads, compares the lines with the expansion `nc2_emit` produces,
    requires the machine to have arrived where the program says, and looks at the
-   glass for the floating DRO - which is there while the machine is busy and gone
-   when it is not. */
+   picture for the machine's strip - which is there on every screen, wears the
+   machine's grey while nothing happens and its green while the run is armed. */
 static int host_run2test(void)
 {
     static const char *const program = "/D/nc/files/run2.nc";
@@ -1317,13 +1354,27 @@ static int host_run2test(void)
                nc2_visual_screen_name());
         failures++;
     }
+    /* The mode key walks EDIT, TOOLS, RUN, and TOOLS holds the tool table: the
+       run has to end up with the program, not with the table the screen before
+       it had open. */
+    nc2_visual_select_mode(NC2_MODE_TOOLS);
+    nc2_visual_key('A');
+    if (strcmp(nc2_visual_screen_name(), "RUN") != 0 ||
+        strcmp(nc2_visual_path(), program) != 0) {
+        printf("run2test: FAIL RUN holds \"%s\" after TOOLS\n",
+               nc2_visual_path());
+        failures++;
+    }
 
-    /* Nothing running: the DRO is not there, so the whole drawing is the
-       screen. */
+    /* Nothing running: the strip is up - it is the layout's own line between
+       the drawing and the keys - and it wears the machine's grey, not the
+       run's green. */
     nc2_visual_draw();
-    if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) ==
-        host_panel_rgb(nc2_col_run())) {
-        puts("run2test: FAIL the DRO is up on an idle machine");
+    if (host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) !=
+        host_panel_rgb(nc2_col_header())) {
+        printf("run2test: FAIL the idle strip is 0x%06lX, not the machine's "
+               "own colour\n",
+               (unsigned long)host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3));
         failures++;
     }
 
@@ -1345,16 +1396,17 @@ static int host_run2test(void)
     }
 
     /* The same program again, but this time the lines are left to the machine:
-       the run has to arrive where the expansion left the tool, the DRO has to be
-       on the glass while it is busy, and gone when it is over. */
+       the run has to arrive where the expansion left the tool, and the strip has
+       to say so - green while it runs, back to the machine's grey when it is
+       over. */
     nc2_run_reset();
     host_pump_idle(64u);
     nc2_visual_key('3');
     host_pump(1u);
     nc2_visual_draw();
-    if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) !=
+    if (host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) !=
         host_panel_rgb(nc2_col_run())) {
-        puts("run2test: FAIL no DRO while the run is armed");
+        puts("run2test: FAIL the strip is not green while the run is armed");
         failures++;
     }
     for (n = 0u; n < 200000u; n++) {
@@ -1374,9 +1426,9 @@ static int host_run2test(void)
         failures++;
     }
     nc2_visual_draw();
-    if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) ==
+    if (host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) ==
         host_panel_rgb(nc2_col_run())) {
-        puts("run2test: FAIL the DRO stayed after the run");
+        puts("run2test: FAIL the strip is still green after the run");
         failures++;
     }
 
@@ -1398,11 +1450,11 @@ static int host_run2test(void)
         return 1;
     }
     puts("run2test: PASS the run hands over what the program means, the "
-         "machine arrives, and the DRO floats only while it is busy");
+         "machine arrives, and the strip is green only while it runs");
     return 0;
 }
 
-/* How many pixels of one colour a rectangle of the frame holds. */
+/* How many pixels of one colour a rectangle of the picture holds. */
 static int host_count_rect(int x0, int y0, int x1, int y1, uint32_t rgb)
 {
     int count = 0;
@@ -1411,7 +1463,7 @@ static int host_count_rect(int x0, int y0, int x1, int y1, uint32_t rgb)
 
     for (y = y0; y < y1; y++) {
         for (x = x0; x < x1; x++) {
-            if (host_frame_at(x, y) == rgb) {
+            if (host_view_at(x, y) == rgb) {
                 count++;
             }
         }
@@ -1419,7 +1471,7 @@ static int host_count_rect(int x0, int y0, int x1, int y1, uint32_t rgb)
     return count;
 }
 
-/* The stock's own colour down one column of the preview: how many pixels carry
+/* The stock's own colour down one column of the drawing: how many pixels carry
    it, and the first and last row they sit on. A column with none writes
    nothing into `top`/`bottom`. */
 static int host_stock_column(int x, uint32_t rgb, int *top, int *bottom)
@@ -1427,8 +1479,8 @@ static int host_stock_column(int x, uint32_t rgb, int *top, int *bottom)
     int count = 0;
     int y;
 
-    for (y = NC2_PANE_Y; y < NC2_PANE_BOTTOM; y++) {
-        if (host_frame_at(x, y) != rgb) {
+    for (y = NC2_PREVIEW_Y; y < NC2_PREVIEW_BOTTOM; y++) {
+        if (host_view_at(x, y) != rgb) {
             continue;
         }
         if (count == 0 && top) {
@@ -1444,12 +1496,12 @@ static int host_stock_column(int x, uint32_t rgb, int *top, int *bottom)
 
 /* The live stock: while the machine cuts, the drawing shows the material the
    tool has taken off, made from the machine's own position as the panel reads
-   it every turn of its loop. The check turns a taper and reads the glass: the
+   it every turn of its loop. The check turns a taper and reads the picture: the
    material below the tool is gone, its top is where it was, the RUN screen keeps
    the part while the machine is parked, and the editor draws the stock whole.
 
-   This is a comparison of the stock's own colour per column, not a picture: the
-   cut is where nc's mask says it is or the counts say so. */
+   This is a comparison of the stock's own colour per column of the drawing, not
+   a picture: the cut is where nc's mask says it is or the counts say so. */
 static int host_live2test(void)
 {
     static const char *const program = "/D/nc/files/live2.nc";
@@ -1457,9 +1509,9 @@ static int host_live2test(void)
         "G0 X50 Z-70\n"
         "G1 X10 Z-18 F200\n"
         "M5\n";
-    static int before_col[NC2_RIGHT_PANE_W];
-    static int before_top[NC2_RIGHT_PANE_W];
-    static int before_bottom[NC2_RIGHT_PANE_W];
+    static int before_col[NC2_PREVIEW_W];
+    static int before_top[NC2_PREVIEW_W];
+    static int before_bottom[NC2_PREVIEW_W];
     int before_total = 0;
     int cut_columns = 0;
     int cut_top = 0;
@@ -1467,8 +1519,8 @@ static int host_live2test(void)
     int lost = 0;
     int stock_left = -1;
     int stock_right = -1;
-    int rect_top = NC2_PANE_BOTTOM;
-    int rect_bottom = NC2_PANE_Y;
+    int rect_top = NC2_PREVIEW_BOTTOM;
+    int rect_bottom = NC2_PREVIEW_Y;
     int kept;
     int whole;
     uint32_t stock_rgb;
@@ -1509,8 +1561,8 @@ static int host_live2test(void)
     /* The stock, off the idle RUN screen: its colour's own columns, and the
        band of rows they sit in - the rectangle every count below is taken in. */
     stock_rgb = host_panel_rgb(nc2_col_prev_stock());
-    for (x = NC2_RIGHT_PANE_X; x < NC2_RIGHT_PANE_X + NC2_RIGHT_PANE_W; x++) {
-        int col = x - NC2_RIGHT_PANE_X;
+    for (x = NC2_PREVIEW_X; x < NC2_PREVIEW_X + NC2_PREVIEW_W; x++) {
+        int col = x - NC2_PREVIEW_X;
         int top = 0;
         int bottom = 0;
 
@@ -1558,10 +1610,10 @@ static int host_live2test(void)
     host_pump_idle(64u);
     nc2_visual_draw();
 
-    cut_top = NC2_PANE_BOTTOM;
-    cut_bottom = NC2_PANE_Y;
-    for (x = NC2_RIGHT_PANE_X; x < NC2_RIGHT_PANE_X + NC2_RIGHT_PANE_W; x++) {
-        int col = x - NC2_RIGHT_PANE_X;
+    cut_top = NC2_PREVIEW_X + NC2_PREVIEW_W;
+    cut_bottom = NC2_PREVIEW_X;
+    for (x = NC2_PREVIEW_X; x < NC2_PREVIEW_X + NC2_PREVIEW_W; x++) {
+        int col = x - NC2_PREVIEW_X;
         int top = 0;
         int bottom = 0;
         int count = host_stock_column(x, stock_rgb, &top, &bottom);
@@ -1903,13 +1955,13 @@ static uint32_t host_pane2_row_bg(int row)
     int counts[8];
     int distinct = 0;
     int best = -1;
-    int y = NC2_PANE_Y + 4 + row * NC2_ROW_H + NC2_ROW_H / 2;
-    int x0 = NC2_LEFT_PANE_X + NC2_LINE_NO_PAD +
+    int y = NC2_TEXT_Y + 4 + row * NC2_ROW_H + NC2_ROW_H / 2;
+    int x0 = NC2_TEXT_X + NC2_LINE_NO_PAD +
              4 * nc2_col_width(LVDS_FONT_NORMAL);
     int x;
 
-    for (x = x0; x < NC2_LEFT_PANE_X + NC2_LEFT_PANE_W - 6; x++) {
-        uint32_t c = host_frame_at(x, y);
+    for (x = x0; x < NC2_TEXT_X + NC2_TEXT_W - 6; x++) {
+        uint32_t c = host_view_at(x, y);
         int i;
 
         for (i = 0; i < distinct; i++) {
@@ -2051,11 +2103,12 @@ static int host_block2test(void)
     return 0;
 }
 
-/* nc2's DRO, read off the glass: it is a band floating over the preview that is
-   there only while the machine has something to say, it wears the panel's green
-   while it runs and its red for a fault, and the machine's state word is on it.
-   The state is said *once* - the header band never carries it (the bench's "i do
-   see idle in two places ... only this one should remain"). */
+/* nc2's DRO, read off the picture: the strip across the middle is the machine's
+   own - the panel's grey while nothing is happening, the run's green while it
+   moves, the fault's red when something is wrong - and the machine's state word
+   is on it. The state is said *once*: the header band never carries it (the
+   bench's "i do see idle in two places ... only this one should remain"), and
+   the strip is a band of the layout, so it never moves. */
 static int host_label2test(void)
 {
     static const char *const program = "/D/nc/files/label2.nc";
@@ -2065,6 +2118,7 @@ static int host_label2test(void)
         "M5\n";
     uint32_t run_rgb = host_panel_rgb(nc2_col_run());
     uint32_t err_rgb = host_panel_rgb(nc2_col_error());
+    uint32_t machine_rgb = host_panel_rgb(nc2_col_header());
     int failures = 0;
 
     host_fs_mount(g_files_root[0] ? g_files_root : NULL);
@@ -2082,32 +2136,38 @@ static int host_label2test(void)
     nc2_visual_select_mode(NC2_MODE_RUN);
     host_pump_idle(32u);
 
-    /* Idle: there is no DRO at all, so the drawing keeps the whole preview. */
+    /* Idle: the strip is up - it is the line between the two halves - and it
+       wears the machine's own grey, with the state word on it. */
     nc2_visual_draw();
-    if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) == run_rgb ||
-        host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) == err_rgb) {
-        puts("label2test: FAIL the DRO is up on an idle machine");
+    if (host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) != machine_rgb) {
+        printf("label2test: FAIL an idle strip is 0x%06lX, not the machine's "
+               "own colour\n",
+               (unsigned long)host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3));
         failures++;
+    } else if (!host_strip_has_ink(NC2_DRO_X + NC2_DRO_W - 120, machine_rgb)) {
+        puts("label2test: FAIL the idle strip has no state word");
+        failures++;
+    } else {
+        puts("label2test: the strip says IDLE in the machine's own colour");
     }
 
-    /* Running: the band is green, it is inside the preview pane (the header band
-       keeps its own colour - the state is not said twice), and the word is
-       drawn on it. */
+    /* Running: the strip is green, the header band keeps its own colour (the
+       state is not said twice), and the word is still on it. */
     nc2_visual_key('3');
     host_pump(1u);
     nc2_visual_draw();
-    if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) != run_rgb) {
-        puts("label2test: FAIL a running DRO is not green");
+    if (host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) != run_rgb) {
+        puts("label2test: FAIL a running strip is not green");
         failures++;
-    } else if (host_frame_at(2, 2) == run_rgb ||
-               host_frame_at(2, 2) == err_rgb) {
-        puts("label2test: FAIL the header band wears the DRO's colour");
+    } else if (host_view_at(2, 2) == run_rgb ||
+               host_view_at(2, 2) == err_rgb) {
+        puts("label2test: FAIL the header band wears the strip's colour");
         failures++;
     } else {
-        puts("label2test: the DRO is green while the machine is in a run");
+        puts("label2test: the strip is green while the machine is in a run");
     }
 
-    /* A fault takes the band over: red with the state word still on it, and the
+    /* A fault takes the strip over: red with the state word still on it, and the
        green gone - a machine stopped by a problem must not still say "running".
        The alarm is the machine's own, raised here rather than read from a run
        that has to be timed. */
@@ -2118,34 +2178,19 @@ static int host_label2test(void)
     if (!cnc_has_alarm()) {
         puts("label2test: FAIL the alarm did not hold");
         failures++;
-    } else if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) != err_rgb) {
-        printf("label2test: FAIL a faulted DRO is 0x%06lX, not the fault "
+    } else if (host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) != err_rgb) {
+        printf("label2test: FAIL a faulted strip is 0x%06lX, not the fault "
                "colour\n",
-               (unsigned long)host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3));
+               (unsigned long)host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3));
         failures++;
-    } else if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) == run_rgb) {
-        puts("label2test: FAIL the faulted DRO is still green");
+    } else if (host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) == run_rgb) {
+        puts("label2test: FAIL the faulted strip is still green");
+        failures++;
+    } else if (!host_strip_has_ink(NC2_DRO_X + NC2_DRO_W - 120, err_rgb)) {
+        puts("label2test: FAIL the faulted strip lost its state word");
         failures++;
     } else {
-        int x;
-        bool ink = false;
-
-        /* The state word is drawn on the red: any pixel in the band that is not
-           the fault colour is the word's ink - the DRO has no other content on
-           its last row. */
-        for (x = NC2_DRO_X + 6; x < NC2_DRO_X + NC2_DRO_W - 6; x++) {
-            if (host_frame_at(x, NC2_DRO_Y + 50) != err_rgb ||
-                host_frame_at(x, NC2_DRO_Y + 54) != err_rgb) {
-                ink = true;
-                break;
-            }
-        }
-        if (!ink) {
-            puts("label2test: FAIL the faulted DRO lost its state word");
-            failures++;
-        } else {
-            puts("label2test: the fault takes the DRO over in red");
-        }
+        puts("label2test: the fault takes the strip over in red");
     }
     cnc_alarm(EXEC_ALARM_NOALARM);
 
@@ -2153,8 +2198,8 @@ static int host_label2test(void)
         printf("label2test: FAILED (%d)\n", failures);
         return 1;
     }
-    puts("label2test: PASS the DRO is up only while the machine is busy, and "
-         "the state is said once");
+    puts("label2test: PASS the strip is the machine's own, green in a run and "
+         "red in a fault, and the state is said once");
     return 0;
 }
 
@@ -2541,7 +2586,7 @@ static int host_pump2test(void)
     }
 
     /* And a screen with something of its own to show keeps the frames coming:
-       MANUAL's held feed and the floating DRO need them, at the period and no
+       MANUAL's held feed and the machine's strip need them, at the period and no
        faster. */
     nc2_visual_select_mode(NC2_MODE_MANUAL);
     if (!host_pump2(2000u)) {
@@ -3276,8 +3321,7 @@ static int host_seedtest(void)
        and the seconds it stands are the seed's, not the screen's, so a station
        that had nothing to write never shows it at all. */
     nc2_boot_draw();
-    px = (const uint32_t *)lvds_host_pixels();
-    if (!host_ink_in(px, 300, 240, 200, 120)) {
+    if (!host_view_ink_in(200, 340, 200, 120)) {
         puts("seedtest: FAIL the logo drew nothing");
         failures++;
     }
@@ -3411,6 +3455,15 @@ static uint32_t host_frame_at(int x, int y)
     return px[(size_t)y * (size_t)stride + (size_t)x] & 0xFFFFFFu;
 }
 
+/* The picture the screen drew, read at one of its own points: the glass is
+   mounted turned, so this is where a check looks to see what the operator
+   reads (`lvds_hstx.h` owns the turn, and the panel's own drawing puts every
+   primitive through it too). */
+static uint32_t host_view_at(int x, int y)
+{
+    return host_frame_at(LVDS_PANEL_X(x, y), LVDS_PANEL_Y(x, y));
+}
+
 /* A panel colour as the frame holds it: the renderer keeps 16 bits per colour
    and the backend expands them back to eight per channel, so what is drawn is
    the quantised value, not the hex the palette was written with. */
@@ -3505,8 +3558,8 @@ static int host_dump_nc2(const char *path)
         fprintf(stderr, "nc_ui: cannot write %s\n", path);
         return 1;
     }
-    printf("nc_ui: wrote nc2's %dx%d screen to %s\n", lvds_host_width(),
-           lvds_host_height(), path);
+    printf("nc_ui: wrote nc2's %dx%d screen to %s\n", LVDS_VIEW_WIDTH,
+           LVDS_VIEW_HEIGHT, path);
     return 0;
 }
 

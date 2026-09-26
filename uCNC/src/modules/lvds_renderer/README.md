@@ -18,6 +18,32 @@ renderer API, but they must not reach into HSTX internals.
 - Scanout framebuffer and realtime line/descriptor state live in SRAM.
 - Optional PSRAM draw backbuffer is copied into SRAM by `lvds_hstx_present()`.
 
+## The Panel's Mounting, and the Turn
+
+The glass is 800x600 and the machine is built with it **turned a quarter**: the
+operator reads a 600x800 picture. That turn is this module's business - it owns
+the pixels - and it changes nothing about the scanout:
+
+- the HSTX timing, the active-line LUT, the DMA ring and
+  `lvds_hstx_present()` are untouched: the same 800x600 frame goes to the panel
+  at the same rate, and Core1 still prepares the same lines;
+- what turns is where a *drawing* puts its pixels. `lvds_hstx_pixel()` and
+  `lvds_hstx_fill_rect()` are the only two primitives that write, and both map
+  the picture's coordinates onto the glass through `LVDS_PANEL_X/Y` and
+  `LVDS_PANEL_RECT_*`. Lines, rectangles, ellipses and **text** reach the glass
+  through those two, so they turn for free - a glyph is filled rectangles, and
+  the text code never touches a pixel itself;
+- `LVDS_VIEW_WIDTH`/`LVDS_VIEW_HEIGHT` (600x800 while turned) is what the
+  screens draw in, and `LVDS_PANEL_TURN` (90 by default) says which way round
+  the glass is bolted. `270` is the other way round, `0` is an unturned panel;
+  a build can set it with `-DLVDS_PANEL_TURN=...`.
+
+The rule that keeps this honest: the turn is stated **once**, in `lvds_hstx.h`,
+and every backend and every reader goes through it. The station's own backend
+(`tools/nc_ui_win/lvds_host.c`), its window and its frame dumps all read that
+one statement, so the bench cannot drift from the machine. A picture that comes
+out upside down is `LVDS_PANEL_TURN` set to the wrong quarter - one number.
+
 ## PlatformIO Target
 
 - env: `RP2350-LEANCAM-LVDS`

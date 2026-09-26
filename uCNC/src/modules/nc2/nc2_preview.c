@@ -348,7 +348,7 @@ static void nc2_din_layer(const nc2_preview_info_t *p, int stock_left,
     int dim_x = stock_right + 14;
     int id_y;
 
-    if (dim_x > LVDS_HSTX_WIDTH - 24) {
+    if (dim_x > LVDS_VIEW_WIDTH - 24) {
         dim_x = stock_right - 18;
     }
     nc2_dashdot(stock_left - 34, stock_top, stock_right + 18, stock_top,

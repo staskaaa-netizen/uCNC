@@ -51,7 +51,7 @@
    nc_ui --manual2test    the jog keys, the stops and the spindle
    nc_ui --tools2test     the tool table is a file the editor writes
    nc_ui --block2test     the line in play and the pale block around it
-   nc_ui --label2test     the floating DRO, and the state said once
+   nc_ui --label2test     the machine's strip, and the state said once
    nc_ui --pace2test      one unit at a time, and the mark never ahead
    nc_ui --demo2test      the demo card seeds once, and expands
    nc_ui --dump-presets DIR
@@ -87,6 +87,7 @@
 #include "host_shell.h"
 #include "host_tests.h"
 #include "lvds_host.h"
+#include "lvds_hstx.h"
 #include "modules/cam_keyboard/cam_keyboard.h"
 
 
@@ -537,22 +538,38 @@ static void host_draw_side(HDC dc)
 }
 
 /* The emulated panel on its own: one 32bpp top-down buffer handed to GDI, which
-   is why the panel never tears. */
+   is why the panel never tears. The buffer holds the glass, which is mounted
+   turned, so the panel is copied out in the picture's own order - the window
+   shows the screen the operator reads, not the framebuffer the scanout reads. */
 static void host_draw_panel(HDC dc)
 {
+    static uint32_t view[LVDS_VIEW_WIDTH * LVDS_VIEW_HEIGHT];
+    const uint32_t *panel = (const uint32_t *)lvds_host_pixels();
     BITMAPINFO info;
+    int y;
+
+    for (y = 0; y < LVDS_VIEW_HEIGHT; y++) {
+        int x;
+
+        for (x = 0; x < LVDS_VIEW_WIDTH; x++) {
+            int px = LVDS_PANEL_X(x, y);
+            int py = LVDS_PANEL_Y(x, y);
+
+            view[(size_t)y * LVDS_VIEW_WIDTH + (size_t)x] =
+                panel[(size_t)py * (size_t)lvds_host_width() + (size_t)px];
+        }
+    }
 
     memset(&info, 0, sizeof(info));
     info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    info.bmiHeader.biWidth = lvds_host_width();
-    info.bmiHeader.biHeight = -lvds_host_height();
+    info.bmiHeader.biWidth = LVDS_VIEW_WIDTH;
+    info.bmiHeader.biHeight = -LVDS_VIEW_HEIGHT;
     info.bmiHeader.biPlanes = 1;
     info.bmiHeader.biBitCount = 32;
     info.bmiHeader.biCompression = BI_RGB;
 
-    SetDIBitsToDevice(dc, 0, 0, (DWORD)lvds_host_width(), (DWORD)lvds_host_height(),
-                      0, 0, 0, (UINT)lvds_host_height(), lvds_host_pixels(), &info,
-                      DIB_RGB_COLORS);
+    SetDIBitsToDevice(dc, 0, 0, LVDS_VIEW_WIDTH, LVDS_VIEW_HEIGHT, 0, 0, 0,
+                      LVDS_VIEW_HEIGHT, view, &info, DIB_RGB_COLORS);
 }
 
 /* The whole bench: the emulated panel, then the machine keys beside it. */
@@ -1121,8 +1138,10 @@ int host_dump(const char *path)
         fprintf(stderr, "nc_ui: cannot write %s\n", path);
         return 1;
     }
-    printf("nc_ui: wrote %dx%d frame to %s\n", lvds_host_width(),
-           lvds_host_height(), path);
+    /* The dump is the picture the operator reads, which is the turned screen:
+       the glass is 800x600 and the picture is 600x800 (`lvds_hstx.h`). */
+    printf("nc_ui: wrote %dx%d frame to %s\n", LVDS_VIEW_WIDTH,
+           LVDS_VIEW_HEIGHT, path);
     return 0;
 }
 

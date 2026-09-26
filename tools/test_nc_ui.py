@@ -287,10 +287,10 @@ if __name__ == "__main__":
         if run.returncode or not dump.exists() or dump.stat().st_size < 54:
             fail(f"FAIL the {name} spelling did not render",
                  run.stdout[-800:] or run.stderr[-800:])
-        # The drawing only: the code beside it is the operator's text, and the
-        # two spellings are different text by design. nc2's preview is the right
-        # pane - nc's own split, in `nc2_layout.h`.
-        dumps[name] = bmp_region(dump, 374, 26, 790, 596)
+        # The drawing only: the text below it is the operator's, and the two
+        # spellings are different text by design. nc2 draws the part in the pane
+        # under the header - `nc2_layout.h` is where its rectangle is stated.
+        dumps[name] = bmp_region(dump, 6, 32, 594, 332)
     if dumps["absolute"] != dumps["increments"]:
         fail("FAIL the increments and the absolutes draw different parts")
     print("nc_ui: the increments and the absolutes draw the same frame")

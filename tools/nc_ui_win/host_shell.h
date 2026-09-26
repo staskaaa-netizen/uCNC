@@ -23,10 +23,12 @@
    (with the FORCEINLINE dance) before the firmware headers, so reaching for it
    here again costs nothing. */
 
-/* The window is the emulated panel - the firmware layout, 800x600, exactly as
-   the LVDS panel draws it - with the operator's strip beside it. */
-#define PANEL_W 800
-#define PANEL_H 600
+/* The window is the emulated panel - the picture the screen draws, exactly as
+   the operator reads it - with the operator's own strip beside it. The glass is
+   800x600 and is mounted turned, so the panel half of the window is the turned
+   picture and `lvds_hstx.h` owns the turn between the two. */
+#define PANEL_W LVDS_VIEW_WIDTH
+#define PANEL_H LVDS_VIEW_HEIGHT
 #define SIDE_W 300
 #define WIN_W (PANEL_W + SIDE_W)
 #define WIN_H PANEL_H

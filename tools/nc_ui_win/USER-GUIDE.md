@@ -1,10 +1,10 @@
 # The uCNC programming station - how to use it
 
-This is the lathe's own NC panel running on a PC. The left 800x600 is exactly
-what the machine's screen shows - same layout, same fonts, same keys, same
-cycles - so what you learn here is what you do at the machine. The strip on the
-right is the desk's: the modes, what the screen you are looking at is for, the
-machine's keypad, the keys your PC keyboard adds, and the spindle.
+This is the lathe's own NC panel running on a PC. What you see on the left is
+exactly what the machine's screen shows - same layout, same fonts, same keys,
+same cycles - so what you learn here is what you do at the machine. The strip on
+the right is the desk's: the modes, what the screen you are looking at is for,
+the machine's keypad, the keys your PC keyboard adds, and the spindle.
 
 Today **RUN drives the built-in virtual machine**, not a real controller: the
 program is parsed, planned and executed, so a wrong move shows up here before it
@@ -36,22 +36,25 @@ folder), and nothing else on the PC is touched.
 
 ## The window
 
-**The panel (left)** is the machine. It has just three things:
+**The panel (left)** is the machine. The glass is mounted turned a quarter, so
+the panel is a tall screen and everything on it reads upright. It has five
+things, top to bottom:
 
 - the band across the top: the four screens - MANUAL, EDIT, TOOLS, RUN - with
   the one you are on wearing the yellow block, the file it has open, and
   whatever the panel has to say at the right end (a run starting, a stop, a key
   you pressed, a fault). Everything the panel tells you appears there and
   nowhere else; there is no strip along the bottom;
-- the body: the program down the left, the drawing of the part on the right;
-- the 3x3 pad in the bottom-right corner of the drawing, which is the machine's
-  own nine keys.
-
-While the machine is moving - a run, a jog, a held feed, an alarm - a small DRO
-floats over the top of the drawing with the work position, the feed, the spindle
-and the controller's state word (`uCNC RUN`, `HOLD`, `JOG`, `ALARM`). It leaves
-with the motion, so a machine standing still gives the whole drawing back. That
-word is the only place the state is said.
+- the drawing of the part, on every screen: the stock, the profile the program
+  cuts and its dimensions;
+- the machine's own strip across the middle: the work position in X and Z, the
+  feed, the spindle's speed, and the controller's state word (`uCNC IDLE`,
+  `RUN`, `HOLD`, `JOG`, `ALARM`). It is grey while nothing is happening, green
+  while the machine runs and red for a fault. That word is the only place the
+  state is said, and the strip is also the line between the top and the bottom;
+- the program (or the tool table, or the card's list, or MANUAL's stops and
+  values) on the left of the bottom band;
+- the 3x3 pad in its corner on the right, which is the machine's own nine keys.
 
 The drawing is the part, not a picture of the stock: while the tool is moving,
 the material it has taken off is shown where it went - the tool clears the stock
@@ -217,8 +220,8 @@ beside the programs - the entry files in `presets\` are text files - they open
 in the editor, but only program extensions are read as G-code, so a text file
 gets no drawing and no RUN.
 
-There is no whole-screen view: the drawing is always the right pane, and the
-code the left one.
+There is no whole-screen view: the drawing is always the band under the header,
+and the text (the program, or the card's list) the band under the strip.
 ## Writing a program
 
 The demo `lathe-demo.nc` is a complete, runnable example: open it and walk it.

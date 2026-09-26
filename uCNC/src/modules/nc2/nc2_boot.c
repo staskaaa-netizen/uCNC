@@ -138,10 +138,10 @@ void nc2_boot_draw(void)
     lvds_color_t ink = lvds_palette_color(white_warm);
     lvds_color_t mark = lvds_palette_color(green_bright);
     char line[48];
-    int cx = LVDS_HSTX_WIDTH / 2;
-    const int y0 = LVDS_HSTX_HEIGHT / 2 - 60;
+    int cx = LVDS_VIEW_WIDTH / 2;
+    const int y0 = LVDS_VIEW_HEIGHT / 2 - 60;
 
-    lvds_draw_fill_rect(0, 0, LVDS_HSTX_WIDTH, LVDS_HSTX_HEIGHT, bg);
+    lvds_draw_fill_rect(0, 0, LVDS_VIEW_WIDTH, LVDS_VIEW_HEIGHT, bg);
 
     /* The mark, then what happened. The name is drawn twice, a size apart, so
        the screen reads as a logo and not as a message box. */

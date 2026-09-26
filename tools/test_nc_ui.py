@@ -88,18 +88,14 @@ def core_sources():
 
 
 def module_sources():
-    nc = SRC / "modules" / "nc"
     g7x = SRC / "modules" / "g7x"
     lvds = SRC / "modules" / "lvds_renderer"
-    names = ["nc.c", "nc_emit.c", "nc_g7x.c", "nc_files.c", "nc_feedback.c",
-             "nc_draw.c", "nc_editor.c", "nc_manual.c", "nc_menu.c", "nc_palette.c",
-             "nc_presets.c", "nc_run.c", "nc_preview.c",
-             "nc_state.c", "nc_text.c", "nc_tools.c", "nc_vocab.c", "nc_visual.c"]
-    files = [nc / name for name in names]
-    # nc2 is the module that replaces nc; until the panel is switched over it is
-    # built here so its own checks run with the same machine and card.
+    # nc2 is the panel module now: nc is retired, and the station compiles the
+    # same screen the machine runs. `nc2_module.c` is the firmware's own module
+    # entry (the keypad and the LVDS boot), so it is not part of the tool - the
+    # station drives the screen itself.
     nc2 = SRC / "modules" / "nc2"
-    files += sorted(nc2.glob("*.c"))
+    files = [p for p in sorted(nc2.glob("*.c")) if p.name != "nc2_module.c"]
     files += [g7x / "g7x.c", g7x / "g7x_blocks.c", g7x / "g7x_contour.c", g7x / "g7x_source.c",
               SRC / "modules" / "cam_keyboard" / "cam_keyboard.c",
               SRC / "modules" / "g7_g8" / "parser_g7_g8.c"]
@@ -153,87 +149,38 @@ if __name__ == "__main__":
              run.stdout[-1500:] or run.stderr[-1500:])
     print(f"nc_ui: 3x3 helper rendered {modal}")
 
-    root = OUT / "presets-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--presettest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "presettest: PASS" not in run.stdout:
-        fail("FAIL preset file contract",
-             run.stdout[-1500:] or run.stderr[-1500:])
-    if not (root / "presets").is_dir():
-        fail(f"FAIL {root / 'presets'} was not created")
+    # The card, through the firmware's own fs_* API: it lists, and the root has
+    # the folders and files it should.
+    run = subprocess.run([str(exe), "--files", str(OUT / "fs-root"),
+                          "--fstest"], capture_output=True, text=True)
+    check(run, "nc_ui: fs root", "the card does not list through fs_*")
 
+    # The panel's one-shot blocks on the reader the run also uses.
     run = subprocess.run([str(exe), "--files", str(OUT / "stream-root"),
                           "--streamtest"], capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "streamtest: PASS" not in run.stdout:
-        fail("FAIL the panel's one-shot blocks did not reach the reader",
-             run.stdout[-1500:] or run.stderr[-1500:])
+    check(run, "streamtest: PASS",
+          "the panel's one-shot blocks do not reach the reader")
 
-    run = subprocess.run([str(exe), "--files", str(OUT / "pad-root"),
-                          "--padtest"], capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "padtest: PASS" not in run.stdout:
-        fail("FAIL the keypad does not match the machine's key row",
-             run.stdout[-1500:] or run.stderr[-1500:])
+    # Every keypad key decodes on both edges.
+    run = subprocess.run([str(exe), "--keytest"], capture_output=True, text=True)
+    check(run, "keytest: PASS", "a keypad key does not decode on both edges")
 
-    # The legend the editor shows for the word under the cursor: every word the
-    # panel writes into a line must say what it is, not "NC word".
-    run = subprocess.run([str(exe), "--vocabtest"], capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "vocabtest: PASS" not in run.stdout:
-        fail("FAIL a word the panel writes has no legend",
-             run.stdout[-1500:] or run.stderr[-1500:])
+    # The window composes the bench in one bitmap and blits it whole, and keeps
+    # the strip in it until the strip changes: that is what stopped it blinking
+    # while a feed or a run repainted.
+    run = subprocess.run([str(exe), "--files", str(OUT / "paint-root"),
+                          "--painttest"], capture_output=True, text=True)
+    check(run, "painttest: PASS",
+          "the bench is not composed once and blitted whole")
 
-    # The labels: a fault in the message area is white on red, and the
-    # controller's state sits in the DRO's bottom-right corner.
-    root = OUT / "label-root"
-    shutil.rmtree(root, ignore_errors=True)
-    (root / "nc" / "files").mkdir(parents=True, exist_ok=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--labeltest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "labeltest: PASS" not in run.stdout:
-        fail("FAIL the error label or the DRO state is not drawn",
-             run.stdout[-1500:] or run.stderr[-1500:])
+    run = subprocess.run([str(exe), "--version"], capture_output=True, text=True)
+    check(run, "nc_ui: uCNC programming station (PC), built",
+          "the station does not say which build it is")
 
-    run = subprocess.run([str(exe), "--files", str(OUT / "feed-root"),
-                          "--feedtest"], capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "feedtest: PASS" not in run.stdout:
-        fail("FAIL a held key does not feed to the stop",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # The station's spindle, off the machine's own signals (PWM0/DOUT0) rather
-    # than an encoder the desktop does not have.
-    run = subprocess.run([str(exe), "--files", str(OUT / "spindle-root"),
-                          "--spindletest"], capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "spindletest: PASS" not in run.stdout:
-        fail("FAIL the spindle does not run from the machine's own signals",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # The demo the station ships with (tools/nc_ui_win/examples): a fresh card
-    # is seeded from it once, and the sample program itself has to load, scan
-    # and expand the way the panel does it.
-    root = OUT / "demo-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--demotest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "demotest: PASS" not in run.stdout:
-        fail("FAIL the demo does not seed the card or expand as a program",
-             run.stdout[-1500:] or run.stderr[-1500:])
-    for name in ("lathe-demo.nc", "tool.t"):
-        if not (root / "nc" / "files" / name).exists():
-            fail(f"FAIL the demo card has no {name}")
-
-    # The entries ship as files too, one per address, and the card is seeded
-    # with them. They are generated from the compiled table by
-    # `--dump-presets`, so the shipped folder and the fallback the panel uses
-    # when a card has no file cannot drift: this regenerates the folder and
-    # compares it, byte for byte.
+    # The entries ship as files, one per address, and a fresh card is seeded with
+    # them. They are generated from the module's own table by `--dump-presets`,
+    # so the shipped folder and the first start cannot drift: this regenerates
+    # the folder and compares it, byte for byte.
     shipped = TOOL / "examples" / "presets"
     regenerated = OUT / "presets-dump"
     shutil.rmtree(regenerated, ignore_errors=True)
@@ -259,17 +206,57 @@ if __name__ == "__main__":
                  f"regenerate tools/nc_ui_win/examples/presets")
     print(f"nc_ui: {len(wanted)} preset files are the entries the panel writes")
 
-    # Fanuc's increments, `U` and `W`. `--uwtest` proves the collapse in the
-    # sender: the same profile written absolutely and written with increments
-    # leaves the stream as the same lines, inside a cycle as well as outside it.
-    run = subprocess.run([str(exe), "--files", str(OUT / "uw-root"),
-                          "--uwtest"], capture_output=True, text=True)
-    check(run, "uwtest: PASS", "the increments do not collapse to the lines they mean")
+    # nc2's own checks, each with the card it needs. They are the module's
+    # (`tools/test_nc2.py` runs the same list on its own), and the station runs
+    # them with the window's own build so a release is never a build that has not
+    # run its tests.
+    for flag, marker, message in (
+        ("--seedtest", "seedtest: PASS",
+         "nc2's first start does not seed the card"),
+        ("--edit2test", "edit2test: PASS",
+         "nc2's value editor does not walk the fields"),
+        ("--pad2test", "pad2test: PASS",
+         "nc2's pad does not answer with the file tree"),
+        ("--screen2test", "screen2test: PASS",
+         "nc2's screen does not draw or write the program"),
+        ("--file2test", "file2test: PASS",
+         "nc2's file list does not walk, open, make or delete"),
+        ("--emit2test", "emit2test: PASS",
+         "nc2's sender does not make what nc made"),
+        ("--run2test", "run2test: PASS",
+         "nc2's run does not hand over what the program means"),
+        ("--manual2test", "manual2test: PASS",
+         "nc2's MANUAL does not jog, stop or run the spindle"),
+        ("--tools2test", "tools2test: PASS",
+         "nc2's TOOLS does not edit the tool table as a file"),
+        ("--block2test", "block2test: PASS",
+         "nc2 does not mark the line and its block on the glass"),
+        ("--label2test", "label2test: PASS",
+         "nc2's DRO is not the one place the state is said"),
+        ("--pace2test", "pace2test: PASS",
+         "nc2's sender does not wait for the machine"),
+        ("--demo2test", "demo2test: PASS",
+         "nc2 does not read the demo it ships"),
+    ):
+        root = OUT / (flag.lstrip("-") + "-root")
+        shutil.rmtree(root, ignore_errors=True)
+        run = subprocess.run([str(exe), "--files", str(root), flag],
+                             capture_output=True, text=True)
+        check(run, marker, message)
 
-    # And the preview draws them: the same profile written both ways has to be
-    # the same picture, because the drawing reads the increments through the one
-    # rule the sender uses (nc_emit_line_point()).
+    # The demo card the release ships, and the seed it comes from: a fresh card
+    # gets the program and the table beside it exactly once.
+    root = OUT / "demo2-root"
+    for name in ("lathe-demo.nc", "tool.t"):
+        if not (root / "nc" / "files" / name).exists():
+            fail(f"FAIL the demo card has no {name}")
+    print("nc_ui: the demo card is seeded as the release ships it")
+
+    # Fanuc's increments, `U` and `W`: the same profile written absolutely and
+    # written with increments has to be the same picture, because the drawing
+    # reads the increments through the one rule the sender uses.
     uw_root = OUT / "uw-root"
+    shutil.rmtree(uw_root, ignore_errors=True)
     (uw_root / "nc" / "files").mkdir(parents=True, exist_ok=True)
     (uw_root / "nc" / "files" / "absolute.nc").write_text(
         "G970 X-5 U60 Z-60 W5\nG971 X50 Z50 I0 E0\nG0 X52 Z2\n"
@@ -291,279 +278,21 @@ if __name__ == "__main__":
             fail(f"FAIL the {name} spelling did not render",
                  run.stdout[-800:] or run.stderr[-800:])
         # The drawing only: the code beside it is the operator's text, and the
-        # two spellings are different text by design.
-        dumps[name] = bmp_region(dump, 0, 80, 400, 542)
+        # two spellings are different text by design. nc2's preview is the right
+        # pane - nc's own split, in `nc2_layout.h`.
+        dumps[name] = bmp_region(dump, 374, 26, 790, 596)
     if dumps["absolute"] != dumps["increments"]:
         fail("FAIL the increments and the absolutes draw different parts")
     print("nc_ui: the increments and the absolutes draw the same frame")
 
-    # The window composes the bench in one bitmap and blits it whole, and keeps
-    # the strip in it until the strip changes: that is what stopped it blinking
-    # while a feed or a run repainted. Both halves of the cache are checked.
-    run = subprocess.run([str(exe), "--files", str(OUT / "paint-root"),
-                          "--painttest"], capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "painttest: PASS" not in run.stdout:
-        fail("FAIL the bench is not composed once and blitted whole",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    run = subprocess.run([str(exe), "--keytest"], capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "keytest: PASS" not in run.stdout:
-        fail("FAIL a keypad key does not decode on both edges",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # The contour pad - `4 G7X`, then `7`: every press writes one row of the
-    # profile and the pad stays up until `5`. The check reads the program back
-    # off the card after each press, and its own fixture is written by the test.
-    root = OUT / "contour-root"
-    run = subprocess.run([str(exe), "--files", str(root), "--contourtest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "contourtest: PASS" not in run.stdout:
-        fail("FAIL the contour pad does not write the profile it walks",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's first start: the module that replaces nc writes the entries it ships
-    # onto a card that has none, once, with the logo up - and then they are files
-    # like every other, so deleting one is how an address stops being an entry.
-    root = OUT / "seed-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--seedtest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "seedtest: PASS" not in run.stdout:
-        fail("FAIL nc2's first start does not seed the card",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's value editor: the fields a line cuts into, what a keystroke does to
-    # the picked one, and the line the pad's name stands on.
-    run = subprocess.run([str(exe), "--edit2test"], capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "edit2test: PASS" not in run.stdout:
-        fail("FAIL nc2's value editor does not walk the fields",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's pad: the digits walked are the address, the file with that name is
-    # the slot, and pressing one writes where the pad's name stood.
-    root = OUT / "pad2-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--pad2test"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "pad2test: PASS" not in run.stdout:
-        fail("FAIL nc2's pad does not answer with the file tree",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's screen: the program down the left and the pad's corner on the right,
-    # with the pad walking the files and the program keeping what it wrote.
-    root = OUT / "screen2-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--screen2test"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "screen2test: PASS" not in run.stdout:
-        fail("FAIL nc2's screen does not draw or write the program",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's file list: `0` opens the card, and the picker walks, opens, makes and
-    # deletes - with the folders in it and no pad in the way.
-    root = OUT / "file2-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--file2test"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "file2test: PASS" not in run.stdout:
-        fail("FAIL nc2's file list does not walk, open, make or delete",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's sender against nc's: the same program has to leave as the same lines,
-    # from the top and from a run that starts in the middle, with the increments
-    # written out as the absolutes they mean.
-    root = OUT / "emit2-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--emit2test"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "emit2test: PASS" not in run.stdout:
-        fail("FAIL nc2's sender does not agree with nc's",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's run: the panel hands the machine what the program means one unit at
-    # a time, the machine arrives where the program says, and the floating DRO is
-    # up only while it is busy.
-    root = OUT / "run2-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--run2test"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "run2test: PASS" not in run.stdout:
-        fail("FAIL nc2's run does not hand over what the program means",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's MANUAL: the machine panel. The digits jog, the stops are typed, the
-    # spindle runs from the keys, and a jog is always the G91 pair with the G90
-    # that puts the machine back.
-    root = OUT / "manual2-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--manual2test"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "manual2test: PASS" not in run.stdout:
-        fail("FAIL nc2's MANUAL does not jog, stop or run the spindle",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's TOOLS: the tool table is a file the editor writes, with the shipped
-    # row when the card has none, and a look at it does not lose the program.
-    root = OUT / "tools2-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--tools2test"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "tools2test: PASS" not in run.stdout:
-        fail("FAIL nc2's TOOLS does not edit the tool table as a file",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's marks, read off the glass: the bright line and the pale block around
-    # it, on both code screens.
-    root = OUT / "block2-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--block2test"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "block2test: PASS" not in run.stdout:
-        fail("FAIL nc2 does not mark the line and its block on the glass",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's DRO: up only while the machine is busy, green while it runs, red for
-    # a fault, with the state said once.
-    root = OUT / "label2-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--label2test"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "label2test: PASS" not in run.stdout:
-        fail("FAIL nc2's DRO is not the one place the state is said",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # nc2's pacer: one unit at a time, and the mark never ahead of the sender.
-    root = OUT / "pace2-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--pace2test"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "pace2test: PASS" not in run.stdout:
-        fail("FAIL nc2's sender does not wait for the machine",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # the demo the release carries, read the way nc2 reads it.
-    root = OUT / "demo2-root"
-    shutil.rmtree(root, ignore_errors=True)
-    run = subprocess.run([str(exe), "--files", str(root), "--demo2test"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "demo2test: PASS" not in run.stdout:
-        fail("FAIL nc2 does not read the demo it ships",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # The operator's own program and tool table, kept with the NC module
-    # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
-    # the firmware writes its state next to them, then checked through the
-    # module's own code: the file, the tool table, the G71 block scan, the
-    # expansion RUN and the preview share, and the T word that links them.
+    # The operator's own program, on the glass: the real job the module's
+    # fixtures hold, rendered in EDIT and in the run.
     fixtures = SRC / "modules" / "nc" / "tests" / "fixtures"
     root = OUT / "file-root"
     shutil.rmtree(root, ignore_errors=True)
     (root / "nc" / "files").mkdir(parents=True, exist_ok=True)
     for name in ("facing.nc", "tool.t"):
         shutil.copy(fixtures / name, root / "nc" / "files" / name)
-
-    run = subprocess.run([str(exe), "--files", str(root), "--filetest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "filetest: PASS" not in run.stdout:
-        fail("FAIL the NC program and its tool table do not check out",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # The editor's new-file field: a path the frame dumps cannot see, because
-    # the field is only drawn while the file list is up.
-    run = subprocess.run([str(exe), "--files", str(root), "--newfiletest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "newfiletest: PASS" not in run.stdout:
-        fail("FAIL the new-file field does not take the typed name",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # The editor's typed-key paths - also invisible to a frame dump, and where
-    # an extraction can hand a handler the key instead of its character.
-    # It types into the program and saves it, and the new-file check above left
-    # the state pointing at the file it created, so both go back first.
-    (root / "nc" / "files" / "facing.nc").write_bytes(
-        (fixtures / "facing.nc").read_bytes())
-    (root / "nc" / "files" / "12.nc").unlink(missing_ok=True)
-    (root / "nc_state.txt").write_text(
-        "MODE=EDIT\nEDIT=/D/nc/files/facing.nc\n", encoding="utf-8")
-    run = subprocess.run([str(exe), "--files", str(root), "--editortest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "editortest: PASS" not in run.stdout:
-        fail("FAIL typed keys do not reach the word, the helper and the field",
-             run.stdout[-1500:] or run.stderr[-1500:])
-    (root / "nc" / "files" / "facing.nc").write_bytes(
-        (fixtures / "facing.nc").read_bytes())
-
-    # A key that changes the screen has to ask for a repaint (RUN's line keys
-    # did not, so the highlight only moved on the next footer key).
-    root = OUT / "file-root"
-    run = subprocess.run([str(exe), "--files", str(root), "--dirtytest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "dirtytest: PASS" not in run.stdout:
-        fail("FAIL a key that moves the RUN cursor does not ask for a repaint",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # RUN's FROM and FULL have to send the program: they only armed the run and
-    # the machine never received a character.
-    run = subprocess.run([str(exe), "--files", str(root), "--runtest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "runtest: PASS" not in run.stdout:
-        fail("FAIL RUN's FROM/FULL do not send the program",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # What RUN marks on the pane: the line the sender is on is bright and the
-    # cycle block it belongs to is pale, and both go away when the mark leaves
-    # the block. Read off the drawn frame - the snapshot can carry the mark
-    # while the pane paints every row flat.
-    run = subprocess.run([str(exe), "--files", str(root), "--blocktest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "blocktest: PASS" not in run.stdout:
-        fail("FAIL RUN does not mark the line and the block it belongs to",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # The sender is paced: one unit at a time, waiting for the machine. That is
-    # what keeps the mark on the code that is cutting instead of on the line the
-    # reader has already swallowed.
-    run = subprocess.run([str(exe), "--files", str(root), "--pacetest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "pacetest: PASS" not in run.stdout:
-        fail("FAIL RUN does not pace the program to the machine",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # The MANUAL stops: typed on the pad, taken from the setup with `D`, and
-    # respected by a step and a feed on both sides.
-    root = OUT / "file-root"
-    run = subprocess.run([str(exe), "--files", str(root), "--stoptest"],
-                         capture_output=True, text=True)
-    print(run.stdout.strip())
-    if run.returncode or "stoptest: PASS" not in run.stdout:
-        fail("FAIL the MANUAL stops are not typed, taken and respected",
-             run.stdout[-1500:] or run.stderr[-1500:])
-
-    # And the same file on screen. The remembered state points EDIT at it, which
-    # is also how the machine reopens the last program after a reboot.
     (root / "nc_state.txt").write_text(
         "MODE=EDIT\nEDIT=/D/nc/files/facing.nc\n", encoding="utf-8")
 
@@ -576,39 +305,44 @@ if __name__ == "__main__":
         fail("FAIL the program did not render in EDIT",
              run.stdout[-1500:] or run.stderr[-1500:])
 
-    view = OUT / "facing-view.bmp"
-    run = subprocess.run([str(exe), "--files", str(root), "--keys", "#",
-                          "--dump-bench", str(view)],
+    run_view = OUT / "facing-run.bmp"
+    run = subprocess.run([str(exe), "--files", str(root), "--keys", "F4",
+                          "--dump-bench", str(run_view)],
                          capture_output=True, text=True)
-    if run.returncode or not view.exists() or view.stat().st_size < 54:
+    if run.returncode or not run_view.exists() or run_view.stat().st_size < 54:
         print(run.stdout[-2000:])
-        fail("FAIL the program did not render on the panel",
+        fail("FAIL the program did not render on the run screen",
              run.stdout[-1500:] or run.stderr[-1500:])
     print(f"nc_ui: {fixtures / 'facing.nc'} rendered in EDIT {edit} "
-          f"and in the full-screen view {view}")
+          f"and in RUN {run_view}")
 
-    # `W` is the pad's `#` on a PC keyboard, and on EDIT that key is VIEW: the
-    # two frames have to be the same picture, down to the pixel (the panel and
-    # the strip both), or the key the operator presses is not the key the
-    # machine gets.
-    view_w = OUT / "facing-view-w.bmp"
-    run = subprocess.run([str(exe), "--files", str(root), "--keys", "W",
-                          "--dump-bench", str(view_w)],
-                         capture_output=True, text=True)
-    if run.returncode or not view_w.exists() or view_w.stat().st_size < 54:
-        print(run.stdout[-2000:])
-        fail("FAIL the PC key W did not render the view",
-             run.stdout[-1500:] or run.stderr[-1500:])
-    if view.read_bytes() != view_w.read_bytes():
-        fail("FAIL 'W' and '#' draw different frames on EDIT (VIEW)")
-    print(f"nc_ui: 'W' and '#' are the same key on EDIT: {view_w} is identical")
+    # `W` is the pad's `#` on a PC keyboard: opening the card's list and pressing
+    # the finish key has to open the file under the selection, and the picture
+    # `W` draws has to be the one `#` draws, down to the pixel (the panel and the
+    # strip both). A key the shell dropped would leave the list up instead.
+    frames = {}
+    for key, name in (("", "list"), ("#", "hash"), ("W", "w")):
+        keys = "0" + ("," + key if key else "")
+        out = OUT / f"pc-key-{name}.bmp"
+        run = subprocess.run([str(exe), "--files", str(root), "--keys", keys,
+                              "--dump-bench", str(out)],
+                             capture_output=True, text=True)
+        if run.returncode or not out.exists() or out.stat().st_size < 54:
+            print(run.stdout[-2000:])
+            fail(f"FAIL the '{keys}' frame did not render",
+                 run.stderr[-1500:])
+        frames[name] = out.read_bytes()
+    if frames["hash"] == frames["list"]:
+        fail("FAIL `#` did not open the file under the selection")
+    if frames["hash"] != frames["w"]:
+        fail("FAIL 'W' and '#' draw different frames")
+    print("nc_ui: 'W' is the pad's '#' - the same key, the same frame")
 
-    # The card root as the list shows it: the text files sit beside the programs
-    # (the preset file included), which is what `0` opens on the machine.
+    # The card root as the list shows it: the folders and the text files sit
+    # beside the programs, which is what `0` opens on the machine.
     listing = OUT / "root-list.bmp"
     run = subprocess.run([str(exe), "--files", str(root),
-                          "--keys", "F4,0,C,4,C,4",
-                          "--dump-bench", str(listing)],
+                          "--keys", "0", "--dump-bench", str(listing)],
                          capture_output=True, text=True)
     if run.returncode or not listing.exists() or listing.stat().st_size < 54:
         print(run.stdout[-2000:])

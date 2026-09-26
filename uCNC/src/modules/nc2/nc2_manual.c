@@ -36,6 +36,7 @@ static bool g_nc2_manual_stop_set[2][2];
 static float g_nc2_manual_stop[2][2];
 static char g_nc2_manual_spindle_dir;                 /* 0 off, '3' CW, '4' CCW */
 static char g_nc2_manual_feed_key;
+static char g_nc2_manual_held_key;
 static char g_nc2_manual_flash_key;
 static uint32_t g_nc2_manual_flash_ms;
 static uint8_t g_nc2_manual_field;                    /* 0 none, 1 minus, 2 plus */
@@ -610,11 +611,23 @@ bool nc2_manual_key(char key)
 
 void nc2_manual_hold(char key)
 {
-    if (key != 0) {
-        return;                   /* the press did the jog; the hold feeds */
+    bool changed = key != g_nc2_manual_held_key;
+
+    g_nc2_manual_held_key = key;
+    if (!g_nc2_manual_feed_key) {
+        return;                             /* nothing is feeding */
     }
-    /* The key came up: a feed ends where it stands. */
-    nc2_manual_feed_cancel();
+    /* An alarm or a program taking the reader stops the feed here as well as in
+       the controller: the panel must not believe a jog is still running. */
+    if (cnc_has_alarm() || nc2_run_streaming()) {
+        nc2_manual_feed_cancel();
+        return;
+    }
+    /* The key that started the feed is the only key that keeps it running.
+       Letting go, or reaching for another key, ends it where it is. */
+    if (changed && key != g_nc2_manual_feed_key) {
+        nc2_manual_feed_cancel();
+    }
 }
 
 /* --- drawing -------------------------------------------------------------- */

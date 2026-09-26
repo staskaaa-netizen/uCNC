@@ -26,6 +26,12 @@ static char g_labels[9][NC2_PRESET_ROW_MAX];
 static bool g_dirty;
 static bool g_list;                 /* the file list is the screen */
 static nc2_mode_t g_mode = NC2_MODE_PROGRAM;
+static uint32_t g_last_key_ms;      /* when the screen was last touched */
+
+/* The panel writes the program back itself once the operator has left it alone
+   for a moment, the way nc does: the file on the card is what runs, so an edit
+   that is never flushed is an edit that is not there. */
+#define NC2_IDLE_SAVE_MS 1500u
 
 static void nc2_visual_load_tools(void);
 
@@ -399,6 +405,7 @@ void nc2_visual_key(char key)
 {
     nc2_key_t editor_key = NC2_KEY_NONE;
 
+    g_last_key_ms = mcu_millis();
     /* The file list is its own screen: a picker, with the keys a picker needs and
        no pad (the pad's digits name a new file while one is being made). */
     if (g_list) {
@@ -573,11 +580,28 @@ void nc2_visual_key(char key)
     }
 }
 
+void nc2_visual_hold_key(char key)
+{
+    if (g_mode == NC2_MODE_MANUAL) {
+        nc2_manual_hold(key);
+    }
+}
+
 void nc2_visual_tick(unsigned ms)
 {
     if (nc2_boot_active()) {
         nc2_boot_tick(ms);
         nc2_visual_clear_dirty();
+    }
+}
+
+void nc2_visual_idle_tasks(void)
+{
+    if (g_list || g_mode == NC2_MODE_MANUAL || !g_doc.dirty || !g_doc.path[0]) {
+        return;
+    }
+    if ((uint32_t)(mcu_millis() - g_last_key_ms) >= NC2_IDLE_SAVE_MS) {
+        (void)nc2_visual_save();
     }
 }
 

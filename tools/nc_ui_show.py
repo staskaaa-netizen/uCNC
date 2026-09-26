@@ -32,14 +32,14 @@ ROOT_DIR = OUT / "root"
 # machine on afterwards (nothing moves otherwise).
 STEPS = [
     ("01-manual-stop", "F1,*", 2,
-     "MANUAL: the stop is set at the current point (`*`). The X line shows the "
-     "position, the stop and the machine figure."),
-    ("02-manual-step", "F1,*,#,8", 2,
-     "MANUAL: a step jog - `#` arms feed mode, `8` is X+. The step size and the "
-     "feed are the two values beside the pad; `1`/`3` change the filled one."),
-    ("03-manual-feed", "F1,*,8,WAIT6,#,1,HOLD2,WAIT2", 0,
-     "MANUAL: holding `2` (X-) with feed mode armed feeds to the stop and stops "
-     "on it; the F field shows the feed while it moves and the key stays lit."),
+     "MANUAL: `*` opens the minus stop of the picked axis. Type it, `*` takes it "
+     "and opens the plus one; `D` puts the axis limit the setup states in it."),
+    ("02-manual-step", "F1,8", 2,
+     "MANUAL: a step jog - `8` is X-. The step and the feed are the two values "
+     "the pane shows; `1`/`3` change the one the mode is using."),
+    ("03-manual-feed", "F1,#,HOLD8,WAIT6,RELEASE", 0,
+     "MANUAL: `#` swaps the step for feeding, and holding a direction key feeds "
+     "until it comes up - the DRO floats while it moves."),
     ("04-files-list", "F4,0", 2,
      "RUN: `0 FILE` opens the file list. Nothing is marked until `B`/`C` move "
      "the cursor, and the left pane previews what it points at."),
@@ -52,19 +52,19 @@ STEPS = [
     ("07-edit-insert", "F2,C,4,1", 2,
      "EDIT: choosing OD replaces that line with the template, ready for the "
      "field-by-field entry."),
-    ("08-edit-view", "F2,#", 0,
-     "EDIT, `# VIEW`: the code pane is hidden and the preview has the whole "
-     "body. The strip shows the preview's own keys; `#` brings the code back."),
+    ("08-edit-typed", "F2,C,C,D,5", 2,
+     "EDIT: `D` picks the first field of the line the cursor is on, and the "
+     "digits type over its value - the box around it is the field being typed."),
     ("09-tools-table", "F3", 2,
      "TOOLS: the global tool table from `tool.t`. The tip block shows the "
      "tool's line, its numbers and the orientation glyph."),
-    ("10-tools-3x3", "F3,2", 2,
-     "TOOLS: `2 TOOL` opens the same 3x3 helper - SELECT / EDIT / M6 / M3 / "
-     "STOP / M4."),
+    ("10-tools-field", "F3,D", 2,
+     "TOOLS: the same editor, field by field - `D` walks the row and the digits "
+     "type the value the tool cuts with."),
     ("11-run-single", "F4,DOWN,DOWN,DOWN,DOWN,1", 30,
-     "RUN: `1 SINGLE` one line at a time. The setup lines report as skipped "
-     "(they are for the panel, not the machine); reaching the G71 line sends "
-     "the whole cycle, and the live preview shows the cut."),
+     "RUN: `1 SINGLE` runs the block the mark is on. The setup lines are the "
+     "panel's, so they are not sent; reaching the G71 line sends the whole "
+     "cycle, and the mark stays on the line the operator stepped from."),
     ("12-run-full", "F4,3", 20,
      "RUN: `3 FULL` arms the whole program. `4 HOLD` and `5 STOP` are beside "
      "it, and `# RELOAD` re-reads the file from the card."),

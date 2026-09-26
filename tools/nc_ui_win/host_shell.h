@@ -6,6 +6,8 @@
 
 #include <windows.h>
 
+#include "nc2_visual.h"     /* the screen's key meaning, for the pad's labels */
+
 /* The emulated machine the station drives, in one place: the panel's own
    geometry, the keypad the machine has in hardware, the virtual card the files
    live on, and the main loop - parse, `cnc_dotasks()`, advance the clock - that
@@ -41,12 +43,12 @@
 #define PAD_ROWS 4
 extern const char g_pad_keys[PAD_ROWS][PAD_COLS + 1];
 
-/* The pad key's meaning on the active screen: the footer entry that carries it,
-   the screen's own word for a key the footer does not name, and whether the key
-   steps a field or the axis. False when the key means nothing here. */
-#include "nc_visual.h"
+/* The pad key's meaning on the active screen: the pad entry that carries it, the
+   screen's own word for a key the pad does not name, and whether the key steps a
+   field or the axis. False when the key means nothing here. */
+#include "nc2_visual.h"
 
-bool host_key_meaning(char key, nc_visual_key_meaning_t *meaning);
+bool host_key_meaning(char key, nc2_visual_key_meaning_t *meaning);
 
 /* The machine keypad key a PC key stands for when that does not depend on the
    keyboard layout (`W` and Delete are the keypad's `#`, Enter is `D`, Esc is

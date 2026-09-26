@@ -36,6 +36,13 @@ const char *nc2_visual_screen_name(void);
 
 /* One machine key, as the keypad sends it: `0`-`9`, `A`-`D`, `#`, `*`. */
 void nc2_visual_key(char key);
+/* The keypad key that is down right now, or 0 when nothing is held. A held
+   direction key in MANUAL feed mode feeds until it comes up, so a shell that
+   can hold a key reports both edges; one that cannot reports 0. */
+void nc2_visual_hold_key(char key);
+/* Main-loop hook: write the program back once the screen has been left alone,
+   and flush what the panel remembers. */
+void nc2_visual_idle_tasks(void);
 
 /* The boot logo's own clock and the screen's periodic work, from the main
    loop. */

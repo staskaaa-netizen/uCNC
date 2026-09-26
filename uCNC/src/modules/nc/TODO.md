@@ -1,5 +1,18 @@
 # NC TODO
 
+> **This module is retired.** `nc2` (`uCNC/src/modules/nc2/`) is the panel the
+> machine and the station run now: the build compiles `nc2` and
+> `LOAD_MODULE(nc2)` (see `module.c`, `rp2350.ini`, `tools/nc_ui_win/`) and
+> leaves everything under `modules/nc/` out. What follows is the history of
+> where this module stood when it was; it is kept because the reasons behind
+> nc2's decisions are written down here, not because any of it is compiled.
+> The checks that pinned this module's behaviour have been carried over to nc2
+> (`tools/test_nc2.py`: `--emit2test` keeps the wire content against nc's own
+> answer, `--run2test`/`--pace2test`/`--block2test` the run and its marks,
+> `--manual2test` the jog panel, `--demo2test` the demo card), and the two the
+> bench retired with the module - the contour pad and the whole-screen view -
+> went with the code that had them.
+
 ## Handoff: where the panel stands (2026-09-19, end of session)
 
 Read this first; the sections below are the history behind it.

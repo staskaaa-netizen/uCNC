@@ -36,21 +36,29 @@ folder), and nothing else on the PC is touched.
 
 ## The window
 
-**The panel (left)** is the machine: the mode strip across the top, the DRO
-band under it with the work position, the machine figures, F and S and the
-controller's state in the corner, the body of the current screen, and the soft
-key strip along the bottom. The keys at the bottom are the machine's own - the
-strip beside the panel labels them from the screen you are on.
+**The panel (left)** is the machine. It has just three things:
+
+- a line across the top saying which screen you are on and which file it has
+  open;
+- the body: the program down the left, the drawing of the part on the right;
+- the 3x3 pad in the bottom-right corner of the drawing, which is the machine's
+  own nine keys.
+
+While the machine is moving - a run, a jog, a held feed, an alarm - a small DRO
+floats over the top of the drawing with the work position, the feed, the spindle
+and the controller's state word (`uCNC RUN`, `HOLD`, `JOG`, `ALARM`). It leaves
+with the motion, so a machine standing still gives the whole drawing back. That
+word is the only place the state is said.
 
 **The strip (right)** is not a second menu:
 
-- `F1`-`F4` and `MODE` jump between MANUAL, EDIT, TOOLS and RUN;
+- `F1`-`F4` jump between MANUAL, EDIT, TOOLS and RUN;
 - **screen** names the screen and says in its own words what it is for and how
-  its keys drive it. The keys the bottom strip does not name are named here;
-- **machine keypad** is the 4x4 keypad the machine has in hardware. A key the
-  bottom strip carries is labelled in green; a key the screen has but the strip
-  does not name is grey; a key that steps a field or the axis is drawn with the
-  arrow it acts as. A key that means nothing here stays blank;
+  its keys drive it. The keys the pad does not name are named here;
+- **machine keypad** is the 4x4 keypad the machine has in hardware. The label
+  under each key is what that key does on this screen right now, and a key that
+  steps a field or the axis is drawn with the arrow it acts as. A key that means
+  nothing here stays blank;
 - **spindle** is what the tool is actually being told (speed and direction), not
   what a program asked for;
 - **PC keyboard** lists what the keyboard adds.
@@ -66,23 +74,32 @@ The machine keypad, row 1 on top:
 | `4` | `5` | `6` | `B` |
 | `7` | `8` | `9` | `A` |
 
-Every one of them means what the screen says it means at that moment: the
-labelled meaning under each key on the strip is the live one. The letters keep
-four jobs across the screens: `A` leaves a field / cycles the screen, `B`/`C`
-step a field or pick the axis, `D` accepts, `*` deletes or goes back.
+Every one of them means what the strip says under it at that moment. Four of
+them keep the same job wherever you are:
+
+| Key | On the screens |
+| --- | --- |
+| `A` | up a level in the pad; at the root, the mode key (MANUAL, EDIT, TOOLS, RUN) |
+| `0` | out of whatever is up - the pad in one press - and, with nothing to leave, the card's file list |
+| `B` / `C` | the line above / below, and the sign / decimal point while a value is being typed |
+| `D` | the next field of the line |
+| `#` | the type key: it accepts the field being typed |
+| `*` | delete (a text character while typing, the line otherwise) |
+
+The nine digits are the pad's own entries on EDIT and TOOLS, and the machine's
+jog keys on MANUAL.
 
 The PC keyboard adds:
 
 | Key | Does |
 | --- | --- |
-| `F1`-`F4`, or the `MODE` button | the four operation modes |
+| `F1`-`F4` | the four screens |
 | digits, numeric pad | the keypad's digits |
-| arrows | word by word on a code screen; steps the field / picks the axis where the screen has fields |
-| `Enter` | `D` - accept |
-| `Esc` | `A` - cancel / leave |
+| arrows | `Up`/`Down` are the machine's `B`/`C` (line, sign, point); `Right` is `D`, the field walk |
+| `Enter` | `D` - the next field |
+| `Esc` | `A` - up a level / cancel |
 | `Backspace` | `*` - delete back |
-| `W` or `Del` | `#` - finish / VIEW |
-| `-` `.` | sign and decimal point |
+| `W` or `Del` | `#` - the type key |
 
 `W` carries `#` because `#` needs Shift+3 on most layouts and AltGr on the rest.
 No other letter is taken: a letter that is not `A`-`D` or `W` types nothing, so
@@ -94,69 +111,68 @@ program text is written with the keypad and the on-screen 3x3 pad.
 
 Digits jog: `2`/`8` are X-/X+ (up is the smaller diameter), `4`/`6` are Z-/Z+,
 `7`/`9` start the spindle CCW/CW, `5` stops it. `1`/`3` pick the step or the
-feed - the value beside the pad shows which. `#` swaps step for feed; while a
-feed is on, holding a direction key feeds until you let go.
+feed - the pane shows which, and how big. `#` swaps step for feed; while a feed
+is on, holding a direction key feeds until you let go.
 
 `B`/`C` (or the arrows) pick the axis the readout and the offsets act on. `0`
 zeroes that axis, `D` opens a touch-off value.
 
 `*` is the stop: each axis has a minus and a plus limit, and a jog or feed never
-crosses the one it is headed for. `*` opens the minus stop, digits type it,
-`B` is the sign and `C` the point, `*` again takes it and opens the plus one;
-`D` puts the axis limit the setup states in the field. A stop you never type is
-the machine's own travel limit - an axis always has a wall.
+crosses the one it is headed for. `*` opens the minus stop, digits type it, `*`
+again takes it and opens the plus one; `D` puts the axis limit the setup states
+in the field. A stop you never type is the machine's own travel limit - an axis
+always has a wall.
 
 ### EDIT - the program
 
-The program is text. The arrows move the cursor by word, digits type a value
-into the selected word, `*` deletes a line (or backs a field up), `#` shows the
-whole-screen view of what you have written, and `0` opens the file list.
+The program is text, one line at a time. `B`/`C` move the cursor by line, `D`
+walks the fields of the line the cursor is on (an `X45.2` is the field `X` with
+the value `45.2`), and the digits type into the field that is picked - the first
+digit replaces what was there, `B` is the sign and `C` the point, because the
+keypad has neither key. `#` accepts, `*` deletes the line, `0` opens the card.
 
-`B`/`C` step between equal words - field by field, the way the on-screen 3x3
-helper works. The digit keys open the helper: `1 OPS` (the stock and setup
-rows), `2 TOOL`, `3 WORD` (one line by its name or number), `4 G7X` (the lathe
-cycles - inside that pad, `7` walks a profile, see below), `5 THREAD`,
-`6 PECK`.
+The line in play is marked bright and the cycle it belongs to - the `G71` block
+it sits in, or the range a `G70` finishes - is pale around it, so the block you
+are in is visible as you read.
 
-What those entries insert is not burned in: it is the card's own files, which
-you can open and edit like any text file. The section below is what they are.
+The pad is the card's entries, and it is a tree: `1`-`9` press what is at the
+address you are standing at (`1 OPS`, `2 TOOL`, `3 WORD`, `4 G7X`, `5 THREAD`,
+`6 PECK` at the root), `A` steps up a level, and pressing a group opens it.
+Pressing an entry writes its rows into the program where the cursor is - with
+the pad still up, so a profile is one press per point.
+
+What those entries write is not burned in: it is the card's own files, which you
+can open and edit like any text file. The section below is what they are.
 
 ### TOOLS - the tool table
 
-One tool per line, the fields the table draws. `1` adds, `7` inserts, `*`
-deletes, `8` opens the file list. The table is written to the card by the same
-idle task that writes the program, so leaving the screen saves it. `Tn` in a
-program picks the tool; the tip the preview draws comes from this table.
+One tool per line, and it is the same editor: the table is the file
+`nc-files\nc\files\tool.t`, opened and written like any other. `Tn` in a program
+picks the tool.
 
 ### RUN - the program at the machine
 
-Before anything else, RUN shows the program the way the sender walks it. `1
-SINGLE` runs one block, `2 FROM` runs from the cursor line, `3 FULL` runs the
-whole program. `4 HOLD` pauses and resumes, `5 STOP` stops, `#` reloads the file
-from the card and resets the run, `6 DIM` dims the trace.
+`1 SINGLE` runs the block the mark is on, `2 FROM` runs from that line to the
+end, `3 FULL` runs the whole program. `4 HOLD` pauses and resumes, `5 STOP`
+stops, `#` reloads the file from the card and resets the run. `B`/`C` pick the
+line while nothing is running.
 
-The line in play is marked bright on the pane and the cycle it belongs to is
-pale, so the block being cut is visible while the sender waits for the machine.
+The line in play is marked bright on the pane and the block it belongs to is
+pale, so the code being cut is visible while the sender waits for the machine.
 One block at a time - the run only moves on when the machine has finished the
 last one.
 
 ### The file list
 
-`0` opens it on EDIT, TOOLS and RUN. `B`/`C` or the arrows step the list, `4` or
-`D` opens the file, `5` makes a new one, `6` deletes, `8` refreshes, `#` runs it
-from this screen, `*` goes back. Text files are listed beside the programs - the
-entry files in `presets\` are text files - they open in the editor, but only
-program extensions are read as G-code, so a text file gets no preview and no RUN.
+`0` opens it on EDIT, TOOLS and RUN. `B`/`C` step the list, `D` or `#` opens the
+file (a folder is entered), `5` makes a new one (a number, then `#`), `6`
+deletes, `8` refreshes, `0` goes back to the program. Text files are listed
+beside the programs - the entry files in `presets\` are text files - they open
+in the editor, but only program extensions are read as G-code, so a text file
+gets no drawing and no RUN.
 
-### The view (whole screen)
-
-`#` on EDIT hands the whole body to the preview: the part as the program cuts
-it, with the stock, the trace of the path and the roughing passes as layers -
-`4 STOCK`, `5 TRACE`, `6 ROUGH`, `7 DIM`. `#` brings the code back. The layers
-are switches, and they are not saved: a reboot starts with the default view.
-On RUN the pane carries the same drawing beside the code, where `6 DIM` dims
-the trace.
-
+There is no whole-screen view: the drawing is always the right pane, and the
+code the left one.
 ## Writing a program
 
 The demo `lathe-demo.nc` is a complete, runnable example: open it and walk it.
@@ -235,41 +251,6 @@ sees a `U` or a `W` from a move. The program keeps the spelling you typed.
   `G1 X30 Z0` / `G1 W-15` / `G1 U20` draw the same part and expand to the same
   motion.
 
-### Walking a profile: `4 G7X`, then `7`
-
-The pad can write the contour for you, one row per press. `4` `7` turns the
-three-by-three into the profile pad - `2`/`8` move X, `4`/`6` move Z, the
-corners move both at once - and it stays up until `5` ends it:
-
-```text
-4 7      open it on the line the profile continues from
-2 4 6    one G1 per press, the axis that does not move is carried over
-digits   while the value is picked, type the number you actually want
-D        take it (and step on to the other axis of a corner)
-#        step the distance (0.5/1/2/5/10/20/50 mm)
-*        take the point back (the panel's own delete key)
-5        end the contour
-```
-
-- **Each press is one line**, written below the cursor: the axis that moves at
-  the step, the other carried over from the point the row above reached, and the
-  value just written left picked so you can type the real number over it.
-- **The digits belong to the value while it is picked**, so a dimension is typed
-  the one way this panel types values; `D` takes it and gives the pad its digits
-  back. `#` accepts it too - and only then does `#` step the distance.
-- **The point comes from the program**, not from a memory of the pad: a `G0`
-  before the cycle is what the first press counts from, and after that each row
-  is what the next one continues from. If the program has no position yet, the
-  first row starts at the stock's corner from the `G971` setup.
-- **It is a contour builder anywhere**, not only inside a cycle: walk a profile
-  with `4` `7` and it is an ordinary list of `G1` rows the machine cuts. Inside
-  a `G71` block the rows are that cycle's profile - insert the cycle first (`4`
-  `1`..`3`), set its `P`/`Q` range (`4` `4`, `4` `5`) and walk it.
-- What it does *not* do: no header, no end mark, no undoing a whole session.
-  The cycle template and the `G80` come from their own keys, and `*` takes back
-  one row at a time. That is the whole pad - about a hundred lines, against the
-  seven-hundred-line builder it replaced.
-
 ## The preset entries - the words the screens insert
 
 Every helper entry that **writes text into the program** is the card's, not the
@@ -315,16 +296,19 @@ name it shipped with.
   else is not an entry, so the address behaves as if the file were not there.
 - Keep the rows short: the panel draws one row at 46 characters, and a longer
   row shows as two with a tab between them.
-- A card with no `presets` folder, or no file for an address, uses the entries
-  the panel ships with - the folder only ever *replaces* what it names.
+- A card with no `presets` folder, or no file for an address, simply has no
+  entry there: the file *is* the entry, and deleting one is how an address stops
+  being one. The panel writes the shipped set onto a card that has never seen an
+  entry file - once, and never over yours.
 - Every entry the panel ships is already in that folder when the station seeds
   your card (see *The card* below), so the table above is also a list of files
   you can open: `presets\34.txt` and `presets\35.txt` are the two increments.
 
 **A word the pads do not offer** is added the same way, and there is no limit to
-how many: drop a file at an address whose slot is free on the pad you want it on
-- OPS `12`-`15` and `17`-`19`, TOOL `27`-`29`, WORD `36`-`39`, G7X `49`,
-THREAD `54`-`59`, PECK `64`-`69`. So `presets\12.txt` reading
+how many: drop a file at an address whose slot is free on the pad you want it on.
+An address is one to three digits - one digit per level, nine slots at each - so
+OPS has `11`-`19` under it, TOOL `21`-`29`, WORD `31`-`39`, G7X `41`-`49`,
+THREAD `51`-`59` and PECK `61`-`69`. So `presets\12.txt` reading
 
 ```text
 COOLANT
@@ -332,7 +316,8 @@ M8
 ```
 
 puts a `COOLANT` word on OPS `2`. (The addresses run `10`-`69`: one digit for
-the pad, one for the slot. Anything named outside that is just a text file.)
+the pad, one for the slot; a third digit is a level deeper still. A name that is
+not one to three digits is just a text file.)
 
 The entries you are most likely to edit:
 
@@ -351,11 +336,10 @@ The entries you are most likely to edit:
 
 Not every key is an entry, and that line is deliberate: **what a key means is the
 panel's; what an entry writes into the program is the card's.** The keys that
-*edit the line* rather than insert text (`4 G7X`'s `4 Q` and `5 N`, and its `7`,
-which walks a profile a row at a time), the ones that take a typed value (`1
-SELECT` opens the `T` field), and the ones that run an action (the file list,
-delete, the tool table, saving) are not entries and cannot be redefined from the
-card.
+walk and edit the program rather than insert text (`A`, `0`, `B`/`C`, `D`, `#`,
+`*`), and the ones that run an action (the file list, delete, the tool table,
+saving) are not entries and cannot be redefined from the card. Every digit of the
+pad is one, and a free slot is a slot waiting for a file.
 
 ## The card
 
@@ -366,8 +350,8 @@ nc-files\
   nc\files\      your programs (.nc), tool tables (.t) and text files
   presets\       one file per entry, named after its key path (the words
                  the screens insert - see above)
-  nc_state.txt   what the panel remembers: mode, the file you had open, stops,
-                 the spindle speed, the jog values
+  nc_state.txt   what the panel remembers: the screen you were on, the file it
+                 had open, and the spindle speed
 ```
 
 Copy the folder to back it up or move it to another PC; `--files DIR` points the
@@ -376,9 +360,10 @@ has no program of its own - your file is never overwritten by an upgrade.
 
 The `presets` folder arrives **filled**: one file per entry, named after the key
 path that inserts it (`34.txt` is WORD `4` = `U INC`, `41.txt` is G7X `1` = the
-OD cycle), and they are seeded when the folder has no entry of its own - so a
-card you already program also gets them, and nothing you wrote is overwritten.
-Delete a file and that key goes back to the entry the panel ships with.
+OD cycle). They are written once, onto a card whose `presets` folder holds no
+entry of its own - so a card you already program is left exactly as it was, and
+the station's own `examples\presets` folder is still there to copy from.
+Delete a file and that address has no entry any more; put one back and it does.
 
 ## Running the checks yourself
 
@@ -394,7 +379,7 @@ checks the demo expands as a cycle and compares frames where two paths must
 agree. What it cannot check is the machine itself: spindle phase and pitch
 through `G33`/`G76`, feed hold, Stop during queued motion, mounting the SD card
 on a cold start and how readable the panel is. Those are bench items, listed in
-`uCNC/src/modules/nc/TESTING.md` and `g7x/TESTING.md`.
+`uCNC/src/modules/nc2/TESTING.md` and `g7x/TESTING.md`.
 
 ## When something is wrong
 

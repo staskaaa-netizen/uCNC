@@ -2,6 +2,7 @@
 #define NC2_BOOT_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 /* The first start: the entries the panel ships, written onto a card that has
    never seen one - on its own, with a logo on the screen while it happens.
@@ -29,5 +30,14 @@ void nc2_boot_tick(unsigned ms);
 
 /* Draw it over the whole panel. */
 void nc2_boot_draw(void);
+
+/* The shipped entries themselves, for a tool that writes them out as the card's
+   own files (`--dump-presets`): the release ships one file per address and they
+   are generated from this table, so the two cannot drift. */
+size_t nc2_boot_count(void);
+/* The `index`th entry: its address, its name and the rows under it (`rows` is
+   NULL for a slot that only holds the things under it). False past the end. */
+bool nc2_boot_entry(size_t index, const char **address, const char **name,
+                    const char **rows);
 
 #endif

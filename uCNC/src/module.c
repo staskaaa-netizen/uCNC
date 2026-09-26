@@ -50,7 +50,7 @@ static FORCEINLINE void load_modules(void)
 	LOAD_MODULE(g7x);
 #elif defined(ENABLE_NC_MODULE)
 	LOAD_MODULE(g7x);
-	LOAD_MODULE(nc);
+	LOAD_MODULE(nc2);
 #elif defined(ENABLE_LVDS_RENDERER)
 	LOAD_MODULE(leanCam);
 #endif

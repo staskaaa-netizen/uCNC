@@ -55,21 +55,25 @@ Done: host build, expansion for both targets, Grbl 1.1 protocol (greeting,
 Win32 COM transport, scripted fake-controller tests and CLI smoke checks
 (`python tools/test_nc_sender.py`).
 
-On the UI side, `tools/nc_ui_win` runs the real panel layout on Windows: the NC
-screen code draws through the host LVDS backend, so the 800x600 layout, palette
+On the UI side, `tools/nc_ui_win` runs the real panel layout on Windows: the
+panel module's screen code (`modules/nc2/`) draws through the host LVDS backend,
+so the 800x600 layout, palette
 and fonts are the firmware's, and the machine keys (the F1-F4 mode row, the
 MODE key and the machine's 4x4 keypad) sit next to the emulated panel. That
 right-hand strip is the **programming station**: it names the active screen
-(`nc_visual_screen_name()`), shows the screen's own usage lines
-(`nc_visual_usage()`), labels every pad key through the screen's own answer
-(`nc_visual_key_meaning()` - green for a menu key, grey for a key the menu does
-not name, an arrow on the keys that step a field), and reads the spindle off the
+(`nc2_visual_screen_name()`), shows the screen's own usage lines
+(`nc2_visual_usage()`), labels every pad key through the screen's own answer
+(`nc2_visual_key_meaning()` - the entry that key writes, or the screen's own word
+for a key no entry carries, with an arrow on the keys that step a field), and
+reads the spindle off the
 signals the tool drives (PWM0/DOUT0) instead of an encoder the PC does not have
 (`tools/nc_ui_win/host_spindle.c`). `python tools/test_nc_ui.py` builds the
 station, renders a panel frame and a whole-bench frame headlessly, and runs every
-headless check (`--fstest`, `--presettest`, `--streamtest`, `--padtest`,
-`--spindletest`, `--feedtest`, `--uwtest`, `--contourtest`, `--runtest`, `--blocktest`,
-`--pacetest`, `--stoptest`, ...). Its README is the operator's usage.
+headless check (`--fstest`, `--streamtest`, `--keytest`, `--painttest`,
+`--seedtest`, `--edit2test`, `--pad2test`, `--screen2test`, `--file2test`,
+`--emit2test`, `--run2test`, `--manual2test`, `--tools2test`, `--block2test`,
+`--label2test`, `--pace2test`, `--demo2test`). `python tools/test_nc2.py` runs
+the module's own list without the window. Its README is the operator's usage.
 
 The station ships from GitHub: `.github/workflows/nc-ui-windows.yaml` builds it
 with MinGW-w64 on `windows-latest` and runs the checks on every push and pull

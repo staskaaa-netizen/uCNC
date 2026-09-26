@@ -63,6 +63,29 @@ static unsigned g_nc2_boot_left_ms;
 static int g_nc2_boot_written;
 static int g_nc2_boot_total;
 
+size_t nc2_boot_count(void)
+{
+    return sizeof(g_nc2_defaults) / sizeof(g_nc2_defaults[0]);
+}
+
+bool nc2_boot_entry(size_t index, const char **address, const char **name,
+                    const char **rows)
+{
+    if (index >= nc2_boot_count()) {
+        return false;
+    }
+    if (address) {
+        *address = g_nc2_defaults[index].address;
+    }
+    if (name) {
+        *name = g_nc2_defaults[index].name;
+    }
+    if (rows) {
+        *rows = g_nc2_defaults[index].rows;
+    }
+    return true;
+}
+
 bool nc2_boot_seed(void)
 {
     size_t i;

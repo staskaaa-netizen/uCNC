@@ -8,22 +8,22 @@
    the header comment below for what the flags are.
    */
 
-/* nc_ui - the uCNC programming station on Windows: it runs the NC screen
+/* nc_ui - the uCNC programming station on Windows: it runs the nc2 screen
    exactly as the LVDS panel shows it, plus the machine's own keypad and the
    active screen's own usage notes beside it.
 
    The window has two parts:
-     - the emulated panel (800x600) rendered by modules/nc/nc_visual.c through
+     - the emulated panel (800x600) rendered by modules/nc2/nc2_visual.c through
        the host LVDS backend, unmodified layout;
      - the keys the proprietary keyboard has in hardware: F1-F4 jump between
        the operation modes and the 4x4 keypad (the matrix cam_keyboard.c
        decodes: `*0#D` / `123C` / `456B` / `789A`) sits beside the panel. The
-       pad asks the screen what each key means (footer label, or MANUAL's own
-       jog hint), draws the arrows on the keys that step a field, shows the
-       screen's own usage lines (`nc_visual_usage()`), reads the spindle off the
-       signals the tool drives (`host_spindle.c`) and sends the key code
-       nc_module.c would send, so what is pressed here is what is pressed on the
-       machine.
+       pad asks the screen what each key means (`nc2_visual_key_meaning()`),
+       draws the arrows on the keys that step a field, shows the screen's own
+       usage lines (`nc2_visual_usage()`), reads the spindle off the signals the
+       tool drives (`host_spindle.c`) and sends the character
+       nc2_module.c would send, so what is pressed here is what is pressed on
+       the machine.
 
    nc_ui --dump out.bmp   render one frame headlessly (layout smoke test)
    nc_ui --files DIR      mount DIR as the /D drive (default: the `nc-files`
@@ -36,24 +36,27 @@
                            BACK/CANCEL/MODE/UP/DOWN/LEFT/RIGHT/MINUS/DOT)
                            before rendering, so a screen that only appears after
                            input can be checked
-   nc_ui --state          print what the machine is doing now
    nc_ui --version        print which build this exe is
    nc_ui --fstest         list /D through the firmware fs_* API
-   nc_ui --presettest     check the /D/presets entries contract
-   nc_ui --contourtest    walk a profile with the G7X pad's `7`
+   nc_ui --streamtest     the panel's one-shot blocks reach the reader
+   nc_ui --keytest        every keypad key decodes on both edges
+   nc_ui --painttest      the bench is composed once and blitted whole
    nc_ui --seedtest       the first start writes the entries onto an empty card
+   nc_ui --edit2test      the editor's fields, and what a key does to one
+   nc_ui --pad2test       the pad is the file tree, and a press writes
+   nc_ui --screen2test    the screen, the pad's corner and the program it writes
+   nc_ui --file2test      `0` opens the card, and the picker walks and opens
+   nc_ui --emit2test      the sender still makes what nc made
+   nc_ui --run2test       the run hands over what the program means
+   nc_ui --manual2test    the jog keys, the stops and the spindle
+   nc_ui --tools2test     the tool table is a file the editor writes
+   nc_ui --block2test     the line in play and the pale block around it
+   nc_ui --label2test     the floating DRO, and the state said once
+   nc_ui --pace2test      one unit at a time, and the mark never ahead
+   nc_ui --demo2test      the demo card seeds once, and expands
    nc_ui --dump-presets DIR
                           write every entry the panel ships into DIR, one file
                           per address (this is how examples\presets is made)
-   nc_ui --streamtest     check the panel's one-shot blocks reach the reader
-   nc_ui --dirtytest      a key that changes the screen asks for a repaint
-   nc_ui --runtest        RUN's FROM and FULL send the program
-   nc_ui --stoptest       the MANUAL stops are typed, taken and respected
-   nc_ui --spindletest    the spindle runs from the machine's own signals
-   nc_ui --demotest       the demo card seeds once, and the demo expands
-   nc_ui --blocktest      the mark is the line in play and its cycle block, and
-                          it stays on the unit that ran
-   nc_ui --pacetest       RUN gives one block and waits for the machine
    nc_ui                  open the window
    */
 
@@ -72,20 +75,12 @@
 #include "core/interpolator.h"
 #include "core/planner.h"
 #include "file_system.h"
-#include "nc.h"
-#include "nc_state.h"
-#include "nc_presets.h"
-#include "nc_run.h"
-#include "nc_menu.h"
-#include "nc_emit.h"
-#include "nc_g7x.h"
-#include "nc_layout.h"
-#include "nc_manual.h"
-#include "nc_palette.h"
-#include "nc_preview.h"
-#include "nc_tools.h"
-#include "nc_vocab.h"
-#include "nc_visual.h"
+#include "nc2.h"
+#include "nc2_draw.h"
+#include "nc2_manual.h"
+#include "nc2_run.h"
+#include "nc2_state.h"
+#include "nc2_visual.h"
 #include "g7x.h"
 #include "host_fs.h"
 #include "host_spindle.h"
@@ -95,24 +90,28 @@
 #include "modules/cam_keyboard/cam_keyboard.h"
 
 
-/* A host key is either an NC key or a direct mode jump. */
+/* A host key is either a machine keypad character or a direct mode jump. nc2
+   takes the machine's own characters, so the shell has no key table of its own:
+   the same character the keypad sends is what the screen acts on. */
 typedef struct {
     int x;
     int y;
     int w;
     int h;
     const char *label;
-    nc_visual_key_t key;
-    nc_mode_t mode;   /* used when key == NC_VISUAL_KEY_NONE and mode >= 0 */
+    char key;         /* 0 when the button jumps to a mode instead */
+    int mode;         /* an nc2_mode_t, or -1 for the MODE key */
 } host_button_t;
 
 static host_button_t g_buttons[] = {
     /* Operation modes: F1-F4 (firmware keeps the MODE key as well). */
-    {  12,  36, 132, 28, "F1 MANUAL", NC_VISUAL_KEY_NONE, NC_MODE_MANUAL },
-    { 156,  36, 132, 28, "F2 EDIT",   NC_VISUAL_KEY_NONE, NC_MODE_PROGRAM },
-    {  12,  68, 132, 28, "F3 TOOLS",  NC_VISUAL_KEY_NONE, NC_MODE_TOOLS },
-    { 156,  68, 132, 28, "F4 RUN",    NC_VISUAL_KEY_NONE, NC_MODE_RUN },
-    {  12, 100, 276, 26, "MODE",      NC_VISUAL_KEY_MODE, (nc_mode_t)-1 }
+    {  12,  36, 132, 28, "F1 MANUAL", 0, NC2_MODE_MANUAL },
+    { 156,  36, 132, 28, "F2 EDIT",   0, NC2_MODE_PROGRAM },
+    {  12,  68, 132, 28, "F3 TOOLS",  0, NC2_MODE_TOOLS },
+    { 156,  68, 132, 28, "F4 RUN",    0, NC2_MODE_RUN },
+    /* The machine's own MODE key is the keypad's `A`: the modes' cycle lives on
+       the screens (see nc2_visual_next_mode()). */
+    {  12, 100, 276, 26, "MODE",      'A', -1 }
 
     /* The machine keypad is drawn and clicked by character (see host_pad_*):
        it is the hardware's own key row, not a second soft-key strip. */
@@ -185,7 +184,7 @@ static void host_hold_key(char key)
     if (key == g_host_held_key)
         return;
     g_host_held_key = key;
-    nc_visual_hold_key(key);
+    nc2_visual_hold_key(key);
 }
 
 static void host_release_key(char key)
@@ -198,37 +197,37 @@ static void host_release_key(char key)
    through the screen's own key table, whatever the active mode calls it. */
 static void host_pad_click(int row, int col)
 {
-    nc_visual_key_t key;
+    char key;
 
     if (row < 0 || row >= PAD_ROWS || col < 0 || col >= PAD_COLS)
         return;
-    key = nc_visual_key_for_char(g_pad_keys[row][col]);
-    if (key != NC_VISUAL_KEY_NONE) {
-        nc_visual_handle_key(key);
-        host_hold_key(g_pad_keys[row][col]);
-    }
+    key = g_pad_keys[row][col];
+    if (!key)
+        return;
+    nc2_visual_key(key);
+    host_hold_key(key);
 }
 
 /* What the key means right now. The screen answers - the footer entry that
    carries it, the screen's own word for a key the footer does not name
    (MANUAL's jog digits), and whether the key steps a field or the axis. The
    meanings live with the screen, never in this shell. */
-bool host_key_meaning(char key, nc_visual_key_meaning_t *meaning)
+bool host_key_meaning(char key, nc2_visual_key_meaning_t *meaning)
 {
     memset(meaning, 0, sizeof(*meaning));
-    return nc_visual_key_meaning(key, meaning);
+    return nc2_visual_key_meaning(key, meaning);
 }
 
 static void host_send_button(const host_button_t *button)
 {
     if (!button)
         return;
-    if (button->key != NC_VISUAL_KEY_NONE) {
-        nc_visual_handle_key(button->key);
+    if (button->key) {
+        nc2_visual_key(button->key);
         return;
     }
-    if (button->mode >= 0 && button->mode < NC_MODE_COUNT)
-        nc_visual_select_mode(button->mode);
+    if (button->mode >= 0 && button->mode < NC2_MODE_COUNT)
+        nc2_visual_select_mode((nc2_mode_t)button->mode);
 }
 
 /* The machine keypad keys a PC key stands for when the key has the same meaning
@@ -247,6 +246,14 @@ char host_pc_machine_key(unsigned vk)
     default: break;
     }
     return 0;
+}
+
+/* The machine's own key characters: the keypad's set, which is also everything
+   nc2 acts on. A PC key that produces one of these is a machine key. */
+static bool host_machine_char(char ch)
+{
+    return (ch >= '0' && ch <= '9') || ch == '*' || ch == '#' ||
+           (ch >= 'A' && ch <= 'D');
 }
 
 /* The machine keypad key a PC key stands for, 0 for the keys only the host has
@@ -271,44 +278,43 @@ static char host_machine_key_for_vk(WPARAM vk, LPARAM lp)
 
         if (ch >= 'a' && ch <= 'd')
             ch = (char)(ch - 'a' + 'A');
-        if (nc_visual_key_for_char(ch) != NC_VISUAL_KEY_NONE)
+        if (host_machine_char(ch))
             return ch;
     }
     return 0;
 }
 
-static nc_visual_key_t host_key_for_vk(WPARAM vk, LPARAM lp, bool *handled)
+/* The machine key a PC key sends, 0 for a key the machine has not got. There is
+   no second key table: the arrows send the machine's own step keys (`B`/`C`),
+   `Right` the field walk (`D`), and the sign and point keys the keys that act as
+   them while a value is picked (`B`/`C`) - so what the PC sends is what the
+   keypad sends, and the screens' meanings are the only ones there are. */
+static char host_key_for_vk(WPARAM vk, LPARAM lp, bool *handled)
 {
     char machine_key;
 
     *handled = true;
     switch (vk) {
     case VK_UP:
-    case VK_PRIOR:  return NC_VISUAL_KEY_FIELD_PREV;
+    case VK_PRIOR:  return 'B';
     case VK_DOWN:
-    case VK_NEXT:   return NC_VISUAL_KEY_FIELD_NEXT;
-    /* Line and argument movement, as on a normal editor. */
-    case VK_LEFT:   return NC_VISUAL_KEY_WORD_PREV;
-    case VK_RIGHT:  return NC_VISUAL_KEY_WORD_NEXT;
-    /* Dedicated sign and point, so value entry does not depend on the footer
-       letters (which the machine pad overloads as UP/DOWN). */
+    case VK_NEXT:   return 'C';
+    /* The field walk is `D`; the machine has no key that steps back a field, so
+       Left is not one either. */
+    case VK_RIGHT:  return 'D';
     case VK_SUBTRACT:
-    case VK_OEM_MINUS:  return NC_VISUAL_KEY_MINUS;
+    case VK_OEM_MINUS:  return 'B';
     case VK_DECIMAL:
-    case VK_OEM_PERIOD: return NC_VISUAL_KEY_DOT;
+    case VK_OEM_PERIOD: return 'C';
     default: break;
     }
-    /* Everything else is a machine keypad key and goes through the screen's key
-       table - the same one the on-screen pad and the machine keypad use. */
+    /* Everything else is a machine keypad key. */
     machine_key = host_machine_key_for_vk(vk, lp);
     if (machine_key) {
-        nc_visual_key_t mapped = nc_visual_key_for_char(machine_key);
-
-        if (mapped != NC_VISUAL_KEY_NONE)
-            return mapped;
+        return machine_key;
     }
     *handled = false;
-    return NC_VISUAL_KEY_NONE;
+    return 0;
 }
 
 static void host_apply_vk(HWND hwnd, WPARAM vk, LPARAM lp)
@@ -321,12 +327,12 @@ static void host_apply_vk(HWND hwnd, WPARAM vk, LPARAM lp)
     /* F1-F4 select the operation modes directly, like the Heidenhain pilot
        row this panel copies. */
     if (vk >= VK_F1 && vk <= VK_F4) {
-        static const nc_mode_t modes[4] = {
-            NC_MODE_MANUAL, NC_MODE_PROGRAM,
-            NC_MODE_TOOLS, NC_MODE_RUN
+        static const nc2_mode_t modes[4] = {
+            NC2_MODE_MANUAL, NC2_MODE_PROGRAM,
+            NC2_MODE_TOOLS, NC2_MODE_RUN
         };
         if (!repeat) {
-            nc_visual_select_mode(modes[vk - VK_F1]);
+            nc2_visual_select_mode(modes[vk - VK_F1]);
             InvalidateRect(hwnd, NULL, FALSE);
         }
         return;
@@ -342,10 +348,10 @@ static void host_apply_vk(HWND hwnd, WPARAM vk, LPARAM lp)
         if (repeat && machine_key)
             return;
         {
-            nc_visual_key_t key = host_key_for_vk(vk, lp, &handled);
+            char key = host_key_for_vk(vk, lp, &handled);
 
-            if (handled) {
-                nc_visual_handle_key(key);
+            if (handled && key) {
+                nc2_visual_key(key);
                 InvalidateRect(hwnd, NULL, FALSE);
             }
         }
@@ -377,12 +383,12 @@ static void host_draw_side(HDC dc)
     TextOutA(dc, PANEL_W + SIDE_X, SIDE_TITLE_Y, "uCNC programming station", 24);
 
     /* What the active screen is and how it is driven, in the screen's own
-       words (`nc_visual_usage()`), so the panel beside the machine and the
+       words (`nc2_visual_usage()`), so the panel beside the machine and the
        panel under it cannot say different things about the same key. */
     {
         const char *const *usage = 0;
-        const char *name = nc_visual_screen_name();
-        size_t count = nc_visual_usage(&usage);
+        const char *name = nc2_visual_screen_name();
+        size_t count = nc2_visual_usage(&usage);
         size_t line;
 
         SelectObject(dc, small);
@@ -394,7 +400,7 @@ static void host_draw_side(HDC dc)
                  name, (int)strlen(name));
         SelectObject(dc, small);
         SetTextColor(dc, RGB(198, 202, 206));
-        for (line = 0u; line < count && line < NC_VISUAL_USAGE_MAX; line++) {
+        for (line = 0u; line < count && line < NC2_VISUAL_USAGE_MAX; line++) {
             TextOutA(dc, PANEL_W + SIDE_X,
                      SIDE_USAGE_Y + (int)line * SIDE_USAGE_STEP,
                      usage[line], (int)strlen(usage[line]));
@@ -434,7 +440,7 @@ static void host_draw_side(HDC dc)
         for (row = 0; row < PAD_ROWS; row++) {
             for (col = 0; col < PAD_COLS; col++) {
                 char key = g_pad_keys[row][col];
-                nc_visual_key_meaning_t meaning;
+                nc2_visual_key_meaning_t meaning;
                 RECT r = { PANEL_W + PAD_X0 + col * PAD_PITCH_X,
                            PAD_Y0 + row * PAD_PITCH_Y,
                            PANEL_W + PAD_CELL_RIGHT(col),
@@ -562,7 +568,7 @@ static void host_draw_bench(HDC dc)
 static void host_side_signature(char *out, size_t out_sz)
 {
     const char *const *usage = 0;
-    size_t lines = nc_visual_usage(&usage);
+    size_t lines = nc2_visual_usage(&usage);
     size_t used;
     char spindle[32];
     int row;
@@ -572,11 +578,11 @@ static void host_side_signature(char *out, size_t out_sz)
         return;
     }
     host_spindle_text(spindle, sizeof(spindle));
-    used = (size_t)snprintf(out, out_sz, "%s|%s|", nc_visual_screen_name(),
+    used = (size_t)snprintf(out, out_sz, "%s|%s|", nc2_visual_screen_name(),
                             spindle);
     for (row = 0; row < PAD_ROWS; row++) {
         for (col = 0; col < PAD_COLS; col++) {
-            nc_visual_key_meaning_t meaning;
+            nc2_visual_key_meaning_t meaning;
             char cell[24];
             int n;
 
@@ -709,11 +715,11 @@ static void host_paint(HWND hwnd)
 static void host_tick(HWND hwnd, unsigned now_ms)
 {
     static unsigned last_draw_ms;
-    bool periodic = nc_visual_periodic_needed() && (now_ms - last_draw_ms) >= 20u;
+    bool periodic = nc2_visual_periodic_needed() && (now_ms - last_draw_ms) >= 20u;
 
-    if (nc_visual_dirty() || periodic) {
+    if (nc2_visual_dirty() || periodic) {
         last_draw_ms = now_ms;
-        nc_visual_draw();
+        nc2_visual_draw();
         InvalidateRect(hwnd, NULL, FALSE);
     }
 }
@@ -729,7 +735,7 @@ void host_run_machine(unsigned elapsed_ms)
 {
     unsigned i;
 
-    nc_visual_hold_key(g_host_held_key);
+    nc2_visual_hold_key(g_host_held_key);
     for (i = 0u; i < 8u && grbl_stream_available(); i++) {
         (void)cnc_parse_cmd();
     }
@@ -993,28 +999,28 @@ char g_key_script[160];
 unsigned g_ticks;
 char g_files_root[260];
 
-/* Replays the machine's own key path - the keypad's key characters through
-   nc_visual_key_for_char(), and the mode keys - so what a dump shows is what
-   the panel shows after the same presses. */
+/* Replays the machine's own key path - the keypad's own key characters, and the
+   mode keys - so what a dump shows is what the panel shows after the same
+   presses. The names are the machine's keys under another name: nc2 takes the
+   keypad's characters, so there is no second key table to keep. */
 void host_play_keys(const char *script)
 {
     static const struct {
         const char *name;
-        nc_visual_key_t key;
+        char key;
     } named[] = {
-        { "ACCEPT", NC_VISUAL_KEY_ACCEPT },
-        { "NEXT", NC_VISUAL_KEY_NEXT },
-        { "PREV", NC_VISUAL_KEY_PREV },
-        { "FINISH", NC_VISUAL_KEY_FINISH },
-        { "BACK", NC_VISUAL_KEY_BACKSPACE },
-        { "CANCEL", NC_VISUAL_KEY_CANCEL },
-        { "MODE", NC_VISUAL_KEY_MODE },
-        { "UP", NC_VISUAL_KEY_FIELD_PREV },
-        { "DOWN", NC_VISUAL_KEY_FIELD_NEXT },
-        { "LEFT", NC_VISUAL_KEY_WORD_PREV },
-        { "RIGHT", NC_VISUAL_KEY_WORD_NEXT },
-        { "MINUS", NC_VISUAL_KEY_MINUS },
-        { "DOT", NC_VISUAL_KEY_DOT }
+        { "ACCEPT", '#' },
+        { "NEXT", 'D' },
+        { "PREV", 'B' },
+        { "FINISH", '#' },
+        { "BACK", '*' },
+        { "CANCEL", 'A' },
+        { "MODE", 'A' },
+        { "UP", 'B' },
+        { "DOWN", 'C' },
+        { "RIGHT", 'D' },
+        { "MINUS", 'B' },
+        { "DOT", 'C' }
     };
     char buf[sizeof(g_key_script)];
     char *token;
@@ -1029,11 +1035,11 @@ void host_play_keys(const char *script)
         if (!token[0])
             continue;
         if (token[0] == 'F' && token[1] >= '1' && token[1] <= '4' && token[2] == '\0') {
-            static const nc_mode_t modes[] = {
-                NC_MODE_MANUAL, NC_MODE_PROGRAM,
-                NC_MODE_TOOLS, NC_MODE_RUN
+            static const nc2_mode_t modes[] = {
+                NC2_MODE_MANUAL, NC2_MODE_PROGRAM,
+                NC2_MODE_TOOLS, NC2_MODE_RUN
             };
-            nc_visual_select_mode(modes[token[1] - '1']);
+            nc2_visual_select_mode(modes[token[1] - '1']);
             continue;
         }
         /* `HOLD<key>` presses the machine key and keeps it down, `RELEASE`
@@ -1041,8 +1047,8 @@ void host_play_keys(const char *script)
         if (strncmp(token, "HOLD", 4) == 0 && token[4] != '\0' && token[5] == '\0') {
             char key = token[4];
 
-            if (nc_visual_key_for_char(key) != NC_VISUAL_KEY_NONE) {
-                nc_visual_handle_key(nc_visual_key_for_char(key));
+            if (host_machine_char(key)) {
+                nc2_visual_key(key);
                 host_hold_key(key);
                 continue;
             }
@@ -1062,10 +1068,8 @@ void host_play_keys(const char *script)
             continue;
         }
         if (token[1] == '\0') {
-            nc_visual_key_t key = nc_visual_key_for_char(token[0]);
-
-            if (key != NC_VISUAL_KEY_NONE) {
-                nc_visual_handle_key(key);
+            if (host_machine_char(token[0])) {
+                nc2_visual_key(token[0]);
                 continue;
             }
             /* A PC key with a fixed meaning is accepted as well, so a script
@@ -1076,14 +1080,14 @@ void host_play_keys(const char *script)
                 char machine = host_pc_machine_key((unsigned)token[0]);
 
                 if (machine) {
-                    nc_visual_handle_key(nc_visual_key_for_char(machine));
+                    nc2_visual_key(machine);
                     continue;
                 }
             }
         }
         for (i = 0; i < sizeof(named) / sizeof(named[0]); i++) {
             if (strcmp(token, named[i].name) == 0) {
-                nc_visual_handle_key(named[i].key);
+                nc2_visual_key(named[i].key);
                 used = true;
                 break;
             }
@@ -1098,8 +1102,7 @@ void host_init_core(void)
     cnc_init();
     cnc_unit_test_start();
     host_fs_mount(g_files_root[0] ? g_files_root : NULL);
-    nc_run_init();
-    nc_visual_init();
+    nc2_visual_init();
 }
 
 int host_dump(const char *path)
@@ -1108,10 +1111,14 @@ int host_dump(const char *path)
     if (g_key_script[0]) {
         host_play_keys(g_key_script);
     }
+    /* A dump is a picture of the screen the operator works on, so the first
+       start's logo is given the time it stands for: a station that has just
+       written a card's entries must not hide the program behind them. */
+    nc2_visual_tick(4000u);
     for (unsigned i = 0u; i < g_ticks; i++) {
         host_run_machine(TIMER_MS);
     }
-    nc_visual_draw();
+    nc2_visual_draw();
     if (!lvds_host_save_bmp(path)) {
         fprintf(stderr, "nc_ui: cannot write %s\n", path);
         return 1;
@@ -1172,10 +1179,11 @@ int host_dump_bench(const char *path)
     if (g_key_script[0]) {
         host_play_keys(g_key_script);
     }
+    nc2_visual_tick(4000u);         /* past the first start's logo */
     for (unsigned i = 0u; i < g_ticks; i++) {
         host_run_machine(TIMER_MS);
     }
-    nc_visual_draw();
+    nc2_visual_draw();
 
     memset(&info, 0, sizeof(info));
     info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -1221,7 +1229,7 @@ void host_pump(unsigned iterations)
            runs it: the idle tasks are where the program is written to the card
            once the operator has stopped typing, so a harness that skips them
            cannot see an edit land in a file. */
-        nc_visual_idle_tasks();
+        nc2_visual_idle_tasks();
         mcu_unit_test_advance_time(1000u);
     }
 }

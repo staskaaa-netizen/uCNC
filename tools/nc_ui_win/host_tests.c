@@ -2358,6 +2358,55 @@ static int host_tools2test(void)
         }
     }
 
+    /* And once the machine has *run*, the pointer takes the machine's answer -
+       the tool the run handed over - before it reads any file. */
+    {
+        static const char *const two = "/D/nc/files/two.nc";
+        size_t cursor;
+        bool on_t2 = false;
+        unsigned guard;
+
+        if (!nc2_visual_open(two)) {
+            puts("tools2test: FAIL cannot open the two-tool program again");
+            failures++;
+        } else {
+            nc2_visual_select_mode(NC2_MODE_RUN);
+            host_pump_idle(32u);
+            nc2_visual_key('3');            /* FULL: the run sends `T2` */
+            for (guard = 0u; guard < 200000u; guard++) {
+                if (!nc2_run_streaming() && host_machine_idle()) {
+                    break;
+                }
+                host_pump(1u);
+            }
+            host_pump_idle(32u);
+            nc2_visual_select_mode(NC2_MODE_TOOLS);
+            cursor = nc2_visual_cursor();
+            if (!host_fs_read_text(tool, text, sizeof(text))) {
+                puts("tools2test: FAIL cannot read the table back again");
+                failures++;
+            } else {
+                const char *row = text;
+                size_t seen = 0u;
+                size_t i;
+
+                for (i = 0u; text[i] && seen < cursor; i++) {
+                    if (text[i] == '\n') {
+                        seen++;
+                        row = text + i + 1u;
+                    }
+                }
+                on_t2 = strncmp(row, "T2", 2) == 0;
+            }
+            if (!on_t2) {
+                printf("tools2test: FAIL after a run the pointer is on row %u, "
+                       "not the machine's T2\n", (unsigned)cursor);
+                failures++;
+            }
+            nc2_visual_select_mode(NC2_MODE_PROGRAM);
+        }
+    }
+
     if (failures) {
         printf("tools2test: FAILED (%d)\n", failures);
         return 1;
@@ -2732,6 +2781,14 @@ static int host_pace2test(void)
            operator reads the program from it (bench: "on run - it still does not
            moves the cursors it stays at first line"). */
         if (nc2_run_display_line() != prev_mark) {
+            /* And it only ever goes forward: a `G70` re-feeds the profile's own
+               rows, which belong to a block the run has already passed. */
+            if (nc2_run_display_line() < prev_mark) {
+                printf("pace2test: FAIL the mark went back to line %u\n",
+                       (unsigned)(nc2_run_display_line() + 1u));
+                failures++;
+                break;
+            }
             prev_mark = nc2_run_display_line();
             mark_moves++;
             /* ... and it is the *unit* it marks, not the row the expansion is
@@ -2749,7 +2806,10 @@ static int host_pace2test(void)
             break;
         }
     }
-    if (mark_moves < 3u) {
+    /* Two moves is the fixture's whole run: line 1, the `G71` block it opens,
+       and the `G70` after it - the finish cut's own range rows belong to the
+       block the run has already passed, and must not count as a move. */
+    if (mark_moves < 2u) {
         printf("pace2test: FAIL the pane's mark moved %u times in a full run\n",
                mark_moves);
         failures++;

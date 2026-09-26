@@ -49,6 +49,9 @@ cannot have the spindle, the travel or the panel's glass.
   `G71` block stays marked as the block while its roughing passes go out, and the
   pale path behind it covers the same rows (bench: *"it seems to when try to mark
   each one line inside g7x cycle. not stay in whole block as is"*).
+- And the mark never walks **backwards**: a `G70` re-feeds the profile's own rows
+  (a block the run has already passed), and the pane has to stay where it is
+  (bench: *"it still wants to jump to 1 line"*).
 - `A` to TOOLS **while a program is running** has to refuse - "Program running -
   TOOLS waits" - and the run has to carry on. Looking at MANUAL, EDIT or RUN
   while it cuts is fine.

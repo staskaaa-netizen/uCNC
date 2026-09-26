@@ -41,6 +41,9 @@ bool nc2_run_hold(void);
 bool nc2_run_done(void);
 /* True while a program run is armed - a panel block must not cut into it. */
 bool nc2_run_streaming(void);
+/* The tool the machine last saw: the last `T` the pacer handed over, kept
+   across runs. -1 until one has gone out. */
+int nc2_run_tool(void);
 /* True while the pacer is expanding a block: its lines go out back to back,
    because a contour is one cut, without a wait between rows. */
 bool nc2_run_expanding(void);

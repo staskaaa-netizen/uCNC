@@ -103,9 +103,13 @@ X0/Z0 crosshair, and the numbers its row holds under that. The row's meaning is
 the table's own letters, read by `nc2_tools.c` (the tool table is `nc2`'s now;
 `nc_tools.c` stays in the tree as the record of the module it replaced).
 
-The **pointer lands on the tool the machine is using**: the last `T` the program
-has by the line the editor is on, read from the card and looked up in the table
-(bench: *"we push tool to state of mashine but not jump around"*). Once it is
+The **pointer lands on the tool the machine is using**, and it takes the
+*machine's* answer first: the last `T` the run handed over (`nc2_run_tool()`),
+which is the tool in the spindle. Only a machine that has run nothing falls back
+to reading the program - its **last** `T`, not the one at the editor's line,
+because the editor's cursor sits at the top of the file and reading from there
+finds nothing and left the pointer jumping to the first row (bench: *"it still
+wants to jump to 1 line ... forget to take tool latest position"*). Once it is
 there, nothing moves it but the operator's own keys. And TOOLS is **refused while
 a run is armed** ("Program running - TOOLS waits"): TOOLS loads the table into
 the screen's document - the same document the pacer is sending - so a look at the
@@ -131,6 +135,10 @@ paints it whole, and the live stock's mask is painted over the rows the cut
 actually took material from - not the whole mask, and not the band below a cut
 that was painted when it was cut. The mask's own scan (516x165 bytes at this
 size) is what the first version read every frame.
+
+And a band that is not on the glass is not painted at all: the TOOLS screen's
+pane holds the table's rows, whose own fill paints the part out, so the drawing
+is not drawn there (bench: *"g7x leaves more then needed to be cleared"*).
 
 And what a frame paints has to include what the frame *moves*: the tool glyph
 rides the machine's position and can sit outside the stock, where a repaint that

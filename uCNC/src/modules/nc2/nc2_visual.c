@@ -316,22 +316,21 @@ static void nc2_visual_load_tools(void)
         nc2_statusf("New tool table");
     }
     nc2_state_remember_path(NC2_MODE_TOOLS, g_doc.path);
-    /* The pointer lands on the tool the machine is using: the last `T` the
-       program has by the line the editor is on, looked up in this table - so
-       opening TOOLS puts the operator on the tool the cut is with, and the
-       machine never moves it after that (bench: "we push tool to state of
-       mashine but not jump around"). A program that names no tool - or a table
-       that does not hold it - leaves the cursor on the first tool row, which is
-       where this screen is worth reading from. */
+    /* The pointer lands on the tool the machine is using, and it takes the
+       *machine's* answer first: the last `T` the run handed over, which is the
+       tool in the spindle. Only a machine that has not run anything falls back
+       to reading the program (its last `T`, not the one at the editor's line -
+       the editor's cursor sits at the top of the file, and reading from there
+       finds nothing and left the pointer jumping to the first row: bench, "it
+       still wants to jump to 1 line ... forget to take tool latest position").
+       Nothing moves it after that but the operator's own keys. */
     {
         nc2_tool_t tool;
-        int wanted = -1;
+        int wanted = nc2_run_tool();
         const char *program = nc2_state_path(NC2_MODE_PROGRAM);
 
-        if (program[0]) {
-            (void)nc2_tools_program_tool(program,
-                                         nc2_state_cursor(NC2_MODE_PROGRAM),
-                                         &wanted);
+        if (wanted < 0 && program[0]) {
+            (void)nc2_tools_program_tool(program, (size_t)-1, &wanted);
         }
         if (wanted >= 0 && g_doc.line_count &&
             (!nc2_tool_from_line(g_doc.lines[g_doc.cursor], &tool) ||
@@ -1506,6 +1505,12 @@ static void nc2_draw_preview(bool full)
     nc2_preview_run_t run;
     nc2_tool_t tool;
 
+    /* On the TOOLS screen the pane holds the table's rows, and the rows' own
+       fill would paint the part out anyway - drawing it first is work nobody
+       sees (bench: "g7x leaves more then needed to be cleared"). */
+    if (g_mode == NC2_MODE_TOOLS) {
+        return;
+    }
     nc2_state_runtime(&rt);
     run.busy = nc2_state_busy() || nc2_run_active() || nc2_run_hold();
     run.screen_run = g_mode == NC2_MODE_RUN;

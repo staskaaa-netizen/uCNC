@@ -1,6 +1,7 @@
 #include "nc2_run.h"
 
 #include "nc2_emit.h"
+#include "nc2_tools.h"
 
 #include "../../cnc.h"
 #include "../../interface/grbl_stream.h"
@@ -40,6 +41,11 @@ static bool g_nc2_run_step_in_flight;
    marks"). */
 static size_t g_nc2_run_unit_first;
 static size_t g_nc2_run_unit_last;
+/* The tool the machine last saw: the last `T` the pacer handed over. It stays
+   across runs (a tool is in the spindle until another one is), and it is what a
+   screen asks when it wants the machine's tool rather than the editor's place
+   in the text. */
+static int g_nc2_run_tool = -1;
 static nc2_emit_stream_t g_nc2_run_stream;
 
 /* The console log's own code for a normal end (`nc_run.c`'s STEP_COMPLETE). */
@@ -436,6 +442,14 @@ bool nc2_run_streaming(void)
     return g_nc2_run_program_active;
 }
 
+/* The tool the machine last saw. A screen that wants "the tool in the spindle"
+   asks this before it reads any file: the machine's answer, not the editor's
+   place in the text. */
+int nc2_run_tool(void)
+{
+    return g_nc2_run_tool;
+}
+
 bool nc2_run_expanding(void)
 {
     return g_nc2_run_stream.g7x.active || g_nc2_run_stream.g7x_collecting;
@@ -538,10 +552,23 @@ void nc2_run_pace(void)
         size_t last = emitted_line;
 
         nc2_run_unit(g_nc2_run_doc, emitted_line, &first, &last);
-        g_nc2_run_unit_first = first;
-        g_nc2_run_unit_last = last;
-        g_nc2_run_running_line = first;
-        g_nc2_run_running_valid = true;
+        /* A unit the run has already passed does not take the mark back: a `G70`
+           re-cuts the profile above it (the range's own rows), and the pane has
+           to stay on the block the run is on (bench: "it still wants to jump to
+           1 line"). */
+        if (!g_nc2_run_running_valid || first >= g_nc2_run_unit_first) {
+            g_nc2_run_unit_first = first;
+            g_nc2_run_unit_last = last;
+            g_nc2_run_running_line = first;
+            g_nc2_run_running_valid = true;
+        }
+    }
+    {
+        int tool;
+
+        if (nc2_tools_line_tool_number(emit, &tool)) {
+            g_nc2_run_tool = tool;      /* what the machine is cutting with */
+        }
     }
     if (!nc2_run_send_line(emit)) {
         nc2_run_program_finish(-1);

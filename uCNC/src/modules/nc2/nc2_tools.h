@@ -35,6 +35,9 @@ typedef struct {
 
 /* One row of the table, or the shipped T<n> row when the text is not one. */
 bool nc2_tool_from_line(const char *line, nc2_tool_t *tool);
+/* Just the `T` number of a line, or false when it names none. The pacer asks
+   this of every block it hands over, to remember the tool the machine has. */
+bool nc2_tools_line_tool_number(const char *line, int *tool);
 /* One field of a row as text, for the tool view's own lines. */
 bool nc2_tool_word_text(const char *line, char letter, char *out, size_t out_sz);
 /* The shipped row for a tool number, as text (static storage). */

@@ -157,6 +157,17 @@ bool nc2_tools_from_row(const char *row, nc2_tool_t *tool)
     return nc2_tool_from_line(row, tool);
 }
 
+bool nc2_tools_line_tool_number(const char *line, int *tool)
+{
+    float v;
+
+    if (!tool || !line || !nc2_tool_word(line, 'T', &v)) {
+        return false;
+    }
+    *tool = (int)(v + 0.5f);
+    return true;
+}
+
 /* --- the table, read once ------------------------------------------------ */
 
 static nc2_tool_t g_nc2_tools[NC2_TOOL_MAX + 1];

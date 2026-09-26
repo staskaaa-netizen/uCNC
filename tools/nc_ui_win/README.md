@@ -376,6 +376,12 @@ python tools\test_nc_ui.py
   the value that lands is picked so the digits type over it, `#` steps the
   distance, `*` drops the point being entered, and `5` ends it with the rows
   still in the program.
+- `--case2test` checks the card's own names: the machine's FatFs is built without
+  long filenames, so what a directory hands back is 8.3 with capitals
+  (`LATHE-~1.NC` for a file written on a PC as `lathe-demo.nc`). The extension
+  question is case-insensitive, so a card full of old programs is listed, opened
+  and run - and the preset scan asks the same question, or a card in use would be
+  seeded again on every boot.
 - `--block2test` reads the marks off the drawn frame on both code screens: the
   line in play is the bright selection colour, the rows of the block it heads are
   the pale one, and everything outside both is the pane's own ground. A mark the

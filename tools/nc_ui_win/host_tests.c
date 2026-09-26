@@ -2522,6 +2522,104 @@ static int host_contour2test(void)
     return 0;
 }
 
+/* What the card really hands back, and what the panel therefore has to accept.
+
+   A card is FAT, and the machine's FatFs is built without long filenames
+   (`FF_USE_LFN 0`): a program written on a PC as `lathe-demo.nc` is stored and
+   read back as `LATHE-~1.NC` - 8.3, extension in capitals. nc matched its
+   extensions case-insensitively (`nc_has_suffix_ci()`); nc2 compared with strcmp
+   and so dropped every such file from the list, which is the bench's "it does
+   not show their names properly nor does it seem to open them" on a card full of
+   old programs. This writes the shapes a real card has and insists they are
+   offered: a capital `.NC`, a capital `.TXT`, and the preset entries a card
+   written on a PC holds (`41.TXT`), which are what `nc2_presets_any()` has to
+   see or a card in use is seeded again on every boot. */
+static int host_case2test(void)
+{
+    char text[512];
+    int failures = 0;
+    int i;
+    bool saw_upper = false;
+    bool saw_upper_text = false;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!host_fs_write_text("/D/nc/files/UPPER.NC", "G0 X1 Z1\n") ||
+        !host_fs_write_text("/D/nc/files/UPPER.TXT", "notes\n") ||
+        !host_fs_write_text("/D/nc/files/lower.nc", "G0 X2 Z2\n")) {
+        puts("case2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    /* The preset folder a PC wrote: the entry names are capitals there. */
+    if (!host_fs_write_text("/D/presets/41.TXT",
+                            "OD ROUGH\nG71 U0 R0 X0 Z0 F0 P0 Q0\n")) {
+        puts("case2test: FAIL cannot write the preset entry");
+        return 1;
+    }
+
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+
+    /* 1. the extensions, both ways. */
+    if (!nc2_path_is_program("/D/nc/files/UPPER.NC") ||
+        !nc2_path_is_program("/D/nc/files/lower.nc") ||
+        nc2_path_is_program("/D/nc/files/UPPER.TXT") ||
+        !nc2_path_is_text("/D/nc/files/UPPER.TXT")) {
+        puts("case2test: FAIL the program and text extensions are not both "
+             "cases");
+        failures++;
+    }
+
+    /* 2. the list offers them, names and all. */
+    (void)nc2_file_scan("/D/nc/files");
+    for (i = 0; i < nc2_file_count(); i++) {
+        const nc2_file_entry_t *e = nc2_file_entry(i);
+
+        if (strcmp(e->name, "UPPER.NC") == 0) {
+            saw_upper = true;
+        }
+        if (strcmp(e->name, "UPPER.TXT") == 0) {
+            saw_upper_text = true;
+        }
+    }
+    if (!saw_upper || !saw_upper_text) {
+        printf("case2test: FAIL the list shows %d entries and the capital ones "
+               "are %s/%s\n", nc2_file_count(),
+               saw_upper ? "there" : "missing",
+               saw_upper_text ? "there" : "missing");
+        failures++;
+    }
+
+    /* 3. and one of them opens: a program written on a PC is a program. */
+    if (!nc2_visual_open("/D/nc/files/UPPER.NC") ||
+        !nc2_path_is_program(nc2_visual_path())) {
+        puts("case2test: FAIL a capital .NC does not open as a program");
+        failures++;
+    }
+
+    /* 4. a card whose entries are capitals is a card in use: the first start
+       must not write over it (and its logo must not come back every boot). */
+    if (nc2_presets_any()) {
+        /* Written after the seed ran, so the answer is the direct question. */
+        if (!host_fs_read_text("/D/presets/41.TXT", text, sizeof(text)) ||
+            strstr(text, "OD ROUGH") == 0) {
+            puts("case2test: FAIL the operator's capital entry was rewritten");
+            failures++;
+        }
+    } else {
+        puts("case2test: FAIL a card holding 41.TXT reads as having no entry");
+        failures++;
+    }
+
+    if (failures) {
+        printf("case2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("case2test: PASS a card's own names - capitals and 8.3 - are the "
+         "panel's names");
+    return 0;
+}
+
 /* nc2's value editor: a line is cut into fields at its letters, the keys walk
    them, and what is typed replaces the value that was there. The dumb editor the
    bench asked for, so the checks are about its two rules - where a field begins
@@ -3116,6 +3214,8 @@ int host_tests_run(int argc, char **argv)
             return host_tools2test();
         if (strcmp(argv[i], "--contour2test") == 0)
             return host_contour2test();
+        if (strcmp(argv[i], "--case2test") == 0)
+            return host_case2test();
         if (strcmp(argv[i], "--block2test") == 0)
             return host_block2test();
         if (strcmp(argv[i], "--label2test") == 0)

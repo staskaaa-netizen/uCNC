@@ -429,4 +429,6 @@ on a cold start and how readable the panel is. Those are bench items, listed in
 | A program will not open | only `.nc`, `.t` and text files open; anything else is refused |
 | A move does not happen | a jog is only sent from a standing axis, and MANUAL refuses a step that would cross a stop |
 | `Too many NC lines` with a text file | the file uses an ancient line ending (a lone carriage return); re-save it |
+| A file's name looks odd, like `LATHE-~1.NC` | the card is FAT and the machine reads **short names only**: a program saved on the PC as `lathe-demo.nc` is `LATHE-~1.NC` on the card. That is the file's real name on the machine; both cases open and run |
+| An old program does not open, and the list looks short | it used to: names with a capital extension (`.NC`) were skipped. Fixed - update to a station built after 2026-09-26 |
 | Nothing reaches a real machine | RUN drives the virtual machine today - see `tools/nc_sender` for the Grbl path |

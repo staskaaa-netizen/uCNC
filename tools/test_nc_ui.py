@@ -233,6 +233,8 @@ if __name__ == "__main__":
          "nc2's TOOLS does not edit the tool table as a file"),
         ("--contour2test", "contour2test: PASS",
          "nc2's path builder does not write the profile it walks"),
+        ("--case2test", "case2test: PASS",
+         "a card's own names (capitals, 8.3) are not the panel's names"),
         ("--block2test", "block2test: PASS",
          "nc2 does not mark the line and its block on the glass"),
         ("--label2test", "label2test: PASS",

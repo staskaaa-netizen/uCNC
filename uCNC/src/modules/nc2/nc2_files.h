@@ -15,6 +15,11 @@
 bool nc2_path_is_program(const char *path);
 /* A path the editor may open at all: a program or a text file. */
 bool nc2_path_is_text(const char *path);
+/* Does the path end with this suffix, either case? The card is FAT with short
+   names only, so what the machine reads back is `LATHE-~1.NC` for a file written
+   on a PC as `lathe-demo.nc`: the extension is capitals, and asking for it in
+   lower case is how a whole card of programs went missing. */
+bool nc2_path_has_suffix(const char *path, const char *suffix);
 
 /* Read `path` into `doc`. False when the file is not there or is empty; the
    document is then left as it was. A line longer than the panel's own is cut

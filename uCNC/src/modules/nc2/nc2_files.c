@@ -2,31 +2,53 @@
 
 #include "../file_system.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
-static const char *nc2_extension(const char *path)
-{
-    const char *dot;
+/* The end of the path, if it is this suffix - **either case**.
 
-    if (!path) {
-        return "";
+   The card is FAT and the machine's FatFs is built without long filenames
+   (`FF_USE_LFN 0`), so what a directory hands back is an 8.3 name: a file
+   written on a PC as `lathe-demo.nc` is stored and reported as something like
+   `LATHE-~1.NC`, extension in capitals. nc asked the same question the same way
+   (`nc_has_suffix_ci()`); nc2 compared with strcmp and so quietly dropped every
+   program the operator had - the list showed no `.nc` at all, and RUN would not
+   open one (bench: "it does not show their names properly nor does it seem to
+   open them"). */
+bool nc2_path_has_suffix(const char *path, const char *suffix)
+{
+    size_t path_len;
+    size_t suffix_len;
+    size_t i;
+
+    if (!path || !suffix) {
+        return false;
     }
-    dot = strrchr(path, '.');
-    return dot ? dot : "";
+    path_len = strlen(path);
+    suffix_len = strlen(suffix);
+    if (suffix_len == 0u || path_len < suffix_len) {
+        return false;
+    }
+    path += path_len - suffix_len;
+    for (i = 0u; i < suffix_len; i++) {
+        if (toupper((unsigned char)path[i]) !=
+            toupper((unsigned char)suffix[i])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool nc2_path_is_program(const char *path)
 {
-    return strcmp(nc2_extension(path), ".nc") == 0;
+    return nc2_path_has_suffix(path, ".nc");
 }
 
 bool nc2_path_is_text(const char *path)
 {
-    const char *ext = nc2_extension(path);
-
-    return strcmp(ext, ".nc") == 0 || strcmp(ext, ".t") == 0 ||
-           strcmp(ext, ".txt") == 0;
+    return nc2_path_is_program(path) || nc2_path_has_suffix(path, ".t") ||
+           nc2_path_has_suffix(path, ".txt");
 }
 
 /* One line at a time, cut at the panel's own width: a longer line could not be

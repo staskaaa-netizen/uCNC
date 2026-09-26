@@ -96,6 +96,17 @@ void nc2_visual_init(void)
     if (g_mode == NC2_MODE_TOOLS) {
         nc2_visual_load_tools();
     } else if (!nc2_state_load_document(g_mode, &g_doc)) {
+        /* A card that remembers a file it cannot open says so, instead of
+           showing an empty program the operator would take for their own: the
+           remembered name may be one the card's short names cannot answer to
+           (`FACING~1.NC` is what the machine reads for `facing.nc`). */
+        if (nc2_state_path(g_mode)[0]) {
+            char text[80];
+
+            snprintf(text, sizeof(text), "Cannot open %.48s",
+                     nc2_state_path(g_mode));
+            nc2_statusf(text);
+        }
         nc2_document_init(&g_doc);
         (void)nc2_insert_line(&g_doc, 0u, "");
     }

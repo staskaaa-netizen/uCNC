@@ -1,5 +1,7 @@
 #include "nc2_presets.h"
 
+#include "nc2_files.h"
+
 #include "../file_system.h"
 
 #include <ctype.h>
@@ -185,20 +187,18 @@ bool nc2_presets_any(void)
 {
     fs_file_t *dir;
     fs_file_info_t info;
-    const char *suffix = NC2_PRESET_SUFFIX;
-    size_t suffix_len = strlen(suffix);
 
     dir = fs_opendir(NC2_PRESET_ROOT);
     if (!dir) {
         return false;
     }
     while (fs_next_file(dir, &info)) {
-        size_t len = strlen(info.full_name);
-
-        if (info.is_dir || len < suffix_len) {
+        if (info.is_dir) {
             continue;
         }
-        if (strcmp(info.full_name + len - suffix_len, suffix) == 0) {
+        /* Either case: the card is FAT and its short names are capitals, so a
+           file written on a PC as `41.txt` reads back as `41.TXT`. */
+        if (nc2_path_has_suffix(info.full_name, NC2_PRESET_SUFFIX)) {
             fs_close(dir);
             return true;
         }

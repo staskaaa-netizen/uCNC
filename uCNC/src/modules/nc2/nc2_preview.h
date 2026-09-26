@@ -17,4 +17,9 @@
 
 void nc2_preview_draw(const nc2_document_t *doc, int x, int y, int w, int h);
 
+/* The stock's diameter, as the drawing reads it out of the setup rows. The path
+   builder starts an axis the program has not given yet at the stock's corner,
+   which is where a lathe profile starts (the same answer the drawing uses). */
+float nc2_preview_stock_x(const nc2_document_t *doc);
+
 #endif

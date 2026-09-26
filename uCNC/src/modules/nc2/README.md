@@ -54,6 +54,23 @@ screen is left where it is for now.
 up one level, `0` leaves the whole pad - and only when there is nothing to leave
 does it open the card, which is where the programs are.
 
+**The pad's rows run up, as nc's did.** The 3x3 is the machine keypad's numeric
+block, and that block's own rows are the other way up: `7 8 9` is the top row and
+`1 2 3` the bottom one. It is one function (`nc2_pad_cell_key()`) that the drawing
+and the checks both ask, because the bench has had to say this twice (*"3x3 is
+swapped again. i have 1 on bottom left corner"*). What it buys: MANUAL's `X-` sits
+above `X+`, matching the drawing's own sense of the axis (up is toward the
+centre), and G7X's pad lands with `7`/`48`/`46` in the cells nc put them in.
+
+**G7X's `7` is the path builder** - the address `47`, nc's contour pad. It is a
+key that *does* something rather than one that writes a row of its own, which is
+why it is not an entry a card can hold (nc's own reason). The pad becomes nine
+directions and stays until `5`; each press writes one `G1` row below the cursor,
+the axes that move at the step and the others carried over from the point the row
+above reaches, which makes a profile one press per point and a chamfer one press.
+The row that lands keeps its value picked, so the digits type the real number
+over the step's starting point.
+
 The machine has no `-` and `.` keys and `nc2` does not add any: a value that
 needs a sign or a point is typed with the pad's own keys where the screen puts
 them, or written on the card. The value editor is the dumb one the bench asked
@@ -254,6 +271,7 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built (10) | MANUAL, its own module: `nc2_manual.c` is the machine panel - the pad is the jog keys (`2`/`8` X, `4`/`6` Z, `7`/`9` the spindle, `5` its stop, `1`/`3` the value the pane shows, `#` swaps a step for feeding, `*` types the two stops of the picked axis, `D` touches off, `0` zeroes, `B`/`C` pick the axis) - and the pane carries the stops with the axis limit the setup states dimmer behind them and the STEP or FEED value. A jog is the `G91 G1` pair with the `G90` that puts the machine back, a held key feeds toward the stop, and the spindle starts at the speed the machine has. `--manual2test` checks what each key sends, that the axis moves, and that the stops and the value are the ones on the glass |
 | built (11) | TOOLS: the bench's "tool table is just as file as other ... basically just inserts" taken at its word, so the screen is the editor on `/D/nc/files/tool.t` - the same file `nc` wrote - with the shipped row as the table when the card has none, and the pad inserting into it like any program. A look at the tools does not lose the program's place. `--tools2test` checks the table is made, written, inserted into, and that the program is where it was |
 | built (12) | the four checks nc's suite had that nc2 did not: `--block2test` (the marks read off the glass), `--label2test` (the DRO, and the state said once), `--pace2test` (one unit at a time), `--demo2test` (the demo card). Writing `--block2test` found a real gap - EDIT marked only the cursor's row - so the editor colours the block pale too, from the same g7x answer RUN uses |
+| built (13) | the path builder, which the port had dropped: G7X's `7` (the address `47`) turns the pad into nc's nine contour directions and stays until `5`, one `G1` row per press with the axis that does not move carried over - and the pad's rows run up (`7 8 9` on top), as nc's did. `--contour2test` pins both. Two things it also fixed on the way: a picked value now takes `0` as a digit (`0` is the exit only when nothing is being typed), and the pad's order is one function both the drawing and the checks ask |
 | **switched over** | `nc` is retired: `module.c` loads `nc2`, `rp2350.ini` compiles `modules/nc2/`, and the station builds and drives nc2 (`tools/nc_ui_win/`, `tools/test_nc_ui.py`). nc's sources stay in the tree, unbuilt, as the record of the dialect nc2 replaces (`nc/TODO.md` says so at the top) |
 | next | the drawing's tool panel and live tip (they need the tool table parsed, which is its own module later) |
 

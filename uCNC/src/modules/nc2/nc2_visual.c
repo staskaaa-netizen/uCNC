@@ -34,6 +34,7 @@ static uint32_t g_last_key_ms;      /* when the screen was last touched */
 #define NC2_IDLE_SAVE_MS 1500u
 
 static void nc2_visual_load_tools(void);
+static const char *nc2_pad_label(char key);
 
 static void nc2_statusf(const char *text)
 {
@@ -140,6 +141,9 @@ void nc2_visual_select_mode(nc2_mode_t mode)
     if (g_mode == NC2_MODE_MANUAL) {
         nc2_manual_feed_cancel();      /* a jog must not run behind the next screen */
     }
+    /* A screen change closes the path builder the way a mode key did in nc: the
+       rows it wrote are ordinary program rows and stay. */
+    nc2_contour_leave();
     if (g_mode == NC2_MODE_PROGRAM || g_mode == NC2_MODE_TOOLS) {
         (void)nc2_visual_save();       /* whatever this screen had open */
     }
@@ -250,10 +254,15 @@ const char *nc2_visual_address(void)
 
 const char *nc2_visual_slot_label(char key)
 {
+    const char *label;
+
     if (key < '1' || key > '9') {
         return 0;
     }
-    return g_labels[key - '1'][0] ? g_labels[key - '1'] : 0;
+    /* The same word the pad draws: the shell labels its own keypad from the
+       screen's answer, never from a second copy of it. */
+    label = nc2_pad_label(key);
+    return (label && label[0]) ? label : 0;
 }
 
 bool nc2_visual_dirty(void)
@@ -297,6 +306,24 @@ static void nc2_pad_press(char key)
     char rows[NC2_PRESET_ROW_MAX * 4];
     int kind;
 
+    /* G7X's `7` is the path builder: a key that *does* something rather than one
+       that writes a row of its own, which is why it is not an entry (`nc`'s own
+       reason). It opens the nine directions and stays until `5`. */
+    if (strcmp(g_address, "4") == 0 && key == '7') {
+        /* The pad's own name line goes back first: the builder writes the
+           program's rows below the point, and a title line for an entry that is
+           not being inserted would be litter in the operator's contour. */
+        nc2_pad_close(&g_doc);
+        if (nc2_contour_begin(&g_doc)) {
+            char text[48];
+
+            snprintf(text, sizeof(text), "Path: 5 ends, # %.1f mm",
+                     (double)nc2_contour_step());
+            nc2_statusf(text);
+            g_dirty = true;
+        }
+        return;
+    }
     kind = nc2_slot(g_address, key, label, sizeof(label));
     if (kind == NC2_SLOT_EMPTY) {
         return;                     /* nothing there: nothing happens */
@@ -530,10 +557,17 @@ void nc2_visual_key(char key)
     case '#': editor_key = NC2_KEY_ACCEPT; break;
     case '*': editor_key = NC2_KEY_DELETE; break;
     case '0':
-        /* `0` is the exit everywhere, so with a pad up it leaves the pad - one
-           press out of however deep, which `A` cannot do (that is one level). The
-           program itself has nothing to leave, so there it opens the card. */
+        /* A value that is picked takes the key: `0` is a digit there, and the
+           field flow is one way to type a number, not two. Everywhere else `0`
+           is the exit - with a pad up it leaves the pad in one press, which `A`
+           cannot do (that is one level), and with nothing to leave it opens the
+           card. */
+        if (g_doc.field >= 0) {
+            editor_key = NC2_KEY_DIGIT;
+            break;
+        }
         if (g_address[0]) {
+            nc2_contour_leave();
             nc2_address_reset(g_address);
             nc2_pad_close(&g_doc);
             nc2_labels_at(g_address);
@@ -556,6 +590,7 @@ void nc2_visual_key(char key)
     case 'A':
         /* Up a level, and at the root the mode key: the program and the run
            are the two screens built so far. */
+        nc2_contour_leave();
         if (g_address[0]) {
             nc2_address_pop(g_address);
             nc2_pad_close(&g_doc);
@@ -570,6 +605,12 @@ void nc2_visual_key(char key)
         return;
     }
     g_dirty = true;
+    /* The path builder's keys come first: while it is up, the pad's digits are
+       the directions and the just-written row keeps its value picked, so the
+       digits that are *not* the builder's reach the editor's field flow. */
+    if (nc2_contour_active() && nc2_contour_key(&g_doc, key)) {
+        return;
+    }
     /* The editor first: with a value picked the digits are the value's, and with
        nothing picked they are the pad's. */
     if (nc2_key(&g_doc, editor_key, key)) {
@@ -870,11 +911,19 @@ static const char *nc2_pad_label(char key)
     if (key < '1' || key > '9') {
         return "";
     }
+    /* The builder's own pad: nine directions, in key order. */
+    if (nc2_contour_active()) {
+        return nc2_contour_label(key);
+    }
     if (g_mode == NC2_MODE_RUN) {
         return g_nc2_run_labels[key - '1'];
     }
     if (g_mode == NC2_MODE_MANUAL) {
         return nc2_manual_pad_label(key);
+    }
+    /* Under G7X, `7` is the path builder - the one cell the card cannot fill. */
+    if (g_address[0] == '4' && g_address[1] == '\0' && key == '7') {
+        return "PATH";
     }
     return g_labels[key - '1'];
 }
@@ -908,7 +957,10 @@ static void nc2_draw_pad_band(void)
     char key;
     int i;
 
-    if (g_mode == NC2_MODE_RUN) {
+    if (nc2_contour_active()) {
+        snprintf(line, sizeof(line), "PATH  step %.1f mm",
+                 (double)nc2_contour_step());
+    } else if (g_mode == NC2_MODE_RUN) {
         snprintf(line, sizeof(line), "RUN  line %lu",
                  (unsigned long)(nc2_visual_run_line() + 1u));
     } else if (g_mode == NC2_MODE_MANUAL) {

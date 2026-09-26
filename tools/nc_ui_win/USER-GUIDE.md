@@ -147,6 +147,42 @@ the pad still up, so a profile is one press per point.
 What those entries write is not burned in: it is the card's own files, which you
 can open and edit like any text file. The section below is what they are.
 
+### The path builder: `4` then `7`
+
+Under G7X, `7` is the **PATH** key - and it is the address `47`, where a path
+builder has always been. Pressing it turns the 3x3 into the nine directions and
+the pad *stays* until `5` ends it:
+
+```text
+4 7      open it on the point the profile continues from
+1..9     one G1 per press - the axes that move at the step, the rest carried
+         over from the row above (the corners move both axes, so a chamfer,
+         a taper or a radius lead-in is one press)
+digits   while the value is picked, type the number you actually want
+D        take it (and step on to the second word of a corner)
+#        step the distance (0.5/1/2/5/10/20/50 mm)
+*        take the point back (the row goes with it)
+5        end the builder - the rows it wrote stay
+```
+
+- **Each press is one row**, written below the cursor, and the cursor sits on it:
+  that is the whole of the "walk", because the next press reads its point from
+  the row just written. The axis that does not move is carried over, the way a
+  program written by hand reads.
+- **The point comes from the program**, not from a memory of the pad: a `G0`
+  before it is what the first press counts from, and if the program has not said
+  where the tool is yet, the first point starts at the stock's corner (the
+  `G971` diameter).
+- **The cells are the directions**: with the pad's rows running up (the machine
+  keypad's own block), the middle of the top row is `X-` and the middle of the
+  bottom row is `X+`, so "up" on the pad is "toward the centre" on the part.
+- **It is a contour builder anywhere**, not only inside a cycle: walk a profile
+  and it is an ordinary list of `G1` rows the machine cuts. Inside a `G71` block
+  the rows are that cycle's profile - insert the cycle first (`4` `1`..`3`), set
+  its `P`/`Q` range, and walk it.
+- `A` or `0` leaves it, and the rows stay: a builder is a view of the program,
+  not a mode the program is in.
+
 ### TOOLS - the tool table
 
 One tool per line, and it is the same editor: the table is the file

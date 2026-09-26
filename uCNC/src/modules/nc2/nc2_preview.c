@@ -154,6 +154,18 @@ static void nc2_preview_collect(const nc2_document_t *doc, nc2_preview_info_t *p
 
 /* --- the DIN layer, as nc draws it ---------------------------------------- */
 
+float nc2_preview_stock_x(const nc2_document_t *doc)
+{
+    nc2_preview_info_t info;
+
+    if (!doc) {
+        return 0.0f;
+    }
+    memset(&info, 0, sizeof(info));
+    nc2_preview_collect(doc, &info);
+    return info.stock_x;
+}
+
 static void nc2_dashdot(int x0, int y0, int x1, int y1, lvds_color_t color)
 {
     static const uint8_t pattern[] = { 18, 5, 3, 5 };

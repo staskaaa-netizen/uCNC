@@ -61,4 +61,11 @@ void nc2_hline(int x, int y, int w, lvds_color_t color);
 void nc2_draw_pad(int x, int y, int w, int h, const char *const *labels,
                   char hot);
 
+/* Which key a cell stands for. The pad mirrors the machine's keypad, the way
+   nc's pad did: the numeric block's own rows run the other way up, so `7 8 9`
+   is the top row and `1 2 3` the bottom one (bench: "3x3 is swapped again. i
+   have 1 on bottom left corner"). Both the drawing and the checks ask this, so
+   the order is stated once. */
+char nc2_pad_cell_key(int row, int col);
+
 #endif

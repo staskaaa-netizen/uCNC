@@ -144,6 +144,14 @@ static void nc2_draw_pad_cell(int x, int y, int w, int h, char key,
     }
 }
 
+char nc2_pad_cell_key(int row, int col)
+{
+    if (row < 0 || row > 2 || col < 0 || col > 2) {
+        return 0;
+    }
+    return (char)('1' + (2 - row) * 3 + col);
+}
+
 void nc2_draw_pad(int x, int y, int w, int h, const char *const *labels,
                   char hot)
 {
@@ -154,8 +162,10 @@ void nc2_draw_pad(int x, int y, int w, int h, const char *const *labels,
 
     for (row = 0; row < 3; row++) {
         for (col = 0; col < 3; col++) {
-            char key = (char)('1' + row * 3 + col);
-            const char *label = labels ? labels[row * 3 + col] : "";
+            char key = nc2_pad_cell_key(row, col);
+            /* The labels come in key order 1..9, so a cell takes its own key's
+               label - not the one that happens to sit at its row and column. */
+            const char *label = labels ? labels[key - '1'] : "";
 
             if (!label) {
                 label = "";

@@ -56,6 +56,7 @@ build\nc_ui.exe --emit2test                      # the sender still makes what n
 build\nc_ui.exe --run2test                       # nc2's run and its floating DRO
 build\nc_ui.exe --manual2test                    # nc2's jog panel
 build\nc_ui.exe --tools2test                     # nc2's tool table is a file
+build\nc_ui.exe --contour2test                   # nc2's path builder (4 then 7)
 build\nc_ui.exe --block2test                     # the line in play, and its block
 build\nc_ui.exe --label2test                     # the DRO, and the state said once
 build\nc_ui.exe --pace2test                      # one unit, then wait
@@ -369,6 +370,12 @@ python tools\test_nc_ui.py
 - `--tools2test` checks that nc2's TOOLS is the editor on the tool table: the
   file is made with the shipped row when the card has none, a pad press lands in
   it, and leaving TOOLS leaves the program where it was.
+- `--contour2test` checks the path builder (G7X's `7`, the address `47`) and the
+  pad's own order: the digits run up (`7 8 9` is the top row), one press writes
+  one `G1` row with the axis that does not move carried over from the row above,
+  the value that lands is picked so the digits type over it, `#` steps the
+  distance, `*` drops the point being entered, and `5` ends it with the rows
+  still in the program.
 - `--block2test` reads the marks off the drawn frame on both code screens: the
   line in play is the bright selection colour, the rows of the block it heads are
   the pale one, and everything outside both is the pane's own ground. A mark the

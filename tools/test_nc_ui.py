@@ -231,6 +231,8 @@ if __name__ == "__main__":
          "nc2's MANUAL does not jog, stop or run the spindle"),
         ("--tools2test", "tools2test: PASS",
          "nc2's TOOLS does not edit the tool table as a file"),
+        ("--contour2test", "contour2test: PASS",
+         "nc2's path builder does not write the profile it walks"),
         ("--block2test", "block2test: PASS",
          "nc2 does not mark the line and its block on the glass"),
         ("--label2test", "label2test: PASS",

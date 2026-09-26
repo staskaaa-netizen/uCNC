@@ -115,4 +115,29 @@ bool nc2_pad_write(nc2_document_t *doc, const char *rows);
 void nc2_pad_close(nc2_document_t *doc);
 bool nc2_pad_active(const nc2_document_t *doc);
 
+/* The path builder - G7X's `7`, the address `47`.
+
+   The pad becomes the nine directions and **stays** until `5`, and each press
+   writes one `G1` row below the cursor: the axes that move at the step, the
+   others carried over from the point the row above reaches. It is the "same
+   result as before" nc's contour pad gave - a profile one press per point, a
+   chamfer one press, and a contour outside a cycle just as easy - and it is a
+   key that *does* something rather than one that writes a row of its own, which
+   is why it is not an entry the card can hold (nc's own reason, `nc_menu.c`).
+
+   The row the press writes is an ordinary program row and keeps its value
+   picked, so the digits type the real number over the step's starting point;
+   `D` takes a corner's second word and closes the point, `*` takes the point
+   back, `#` steps the distance, and `5` ends it. */
+bool nc2_contour_active(void);
+bool nc2_contour_begin(nc2_document_t *doc);
+void nc2_contour_leave(void);
+/* One press while the builder is up. False when the key is not the builder's -
+   a digit with the point's value picked belongs to the editor's field flow. */
+bool nc2_contour_key(nc2_document_t *doc, char key);
+/* The cell's word on the builder's pad, in key order 1..9. */
+const char *nc2_contour_label(char key);
+/* The distance one press moves, as the pad's band shows it. */
+float nc2_contour_step(void);
+
 #endif

@@ -1,5 +1,8 @@
 #include "nc2.h"
 
+#include "nc2_emit.h"
+#include "nc2_preview.h"
+
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
@@ -418,6 +421,271 @@ bool nc2_key(nc2_document_t *doc, nc2_key_t key, char ch)
            modes belong to the screen. */
         return false;
     }
+}
+
+/* --- the path builder: G7X's `7`, the address 47 --------------------------
+
+   nc's contour pad, kept as it behaved ("same result as before"): each press
+   writes one `G1` row below the cursor, the axes that move at the step and the
+   others carried over from the point the row above reaches. The pad stays until
+   `5`, the row just written keeps its value picked so the digits type the real
+   number over it, `D` takes a corner's second word and closes the point, and `*`
+   takes the point back. */
+
+static bool g_nc2_contour;
+static uint8_t g_nc2_contour_step;
+/* The row just written and the word left picked on it: while both are still
+   under the cursor the point is being entered, and the digits belong to the
+   editor's field flow rather than to the pad. */
+static size_t g_nc2_contour_point = (size_t)-1;
+static int g_nc2_contour_word = -1;
+static int g_nc2_contour_next = -1;
+
+/* The distance one press moves: the starting point of the value that lands, so
+   `#` steps it and the digits type over it. Millimetres, like the program. */
+static const float g_nc2_contour_steps[] = {
+    0.5f, 1.0f, 2.0f, 5.0f, 10.0f, 20.0f, 50.0f
+};
+
+float nc2_contour_step(void)
+{
+    return g_nc2_contour_steps[g_nc2_contour_step];
+}
+
+bool nc2_contour_active(void)
+{
+    return g_nc2_contour;
+}
+
+static void nc2_contour_settle(void)
+{
+    g_nc2_contour_point = (size_t)-1;
+    g_nc2_contour_word = -1;
+    g_nc2_contour_next = -1;
+}
+
+/* Which way a pad key moves the tool: X is the diameter it cuts, Z the length.
+   The corners move both axes, which is what makes a chamfer or a taper one
+   press instead of two - nc's own directions, so a profile written with the pad
+   is the same profile. */
+static bool nc2_contour_direction(char key, int *dx, int *dz)
+{
+    switch (key) {
+    case '1': *dx = 1;  *dz = -1; return true;
+    case '2': *dx = 1;  *dz = 0;  return true;
+    case '3': *dx = 1;  *dz = 1;  return true;
+    case '4': *dx = 0;  *dz = -1; return true;
+    case '6': *dx = 0;  *dz = 1;  return true;
+    case '7': *dx = -1; *dz = -1; return true;
+    case '8': *dx = -1; *dz = 0;  return true;
+    case '9': *dx = -1; *dz = 1;  return true;
+    default: return false;
+    }
+}
+
+const char *nc2_contour_label(char key)
+{
+    switch (key) {
+    case '1': return "Z- X+";
+    case '2': return "X+";
+    case '3': return "Z+ X+";
+    case '4': return "Z-";
+    case '5': return "END";
+    case '6': return "Z+";
+    case '7': return "Z- X-";
+    case '8': return "X-";
+    case '9': return "Z+ X-";
+    default: return "";
+    }
+}
+
+bool nc2_contour_begin(nc2_document_t *doc)
+{
+    if (!doc) {
+        return false;
+    }
+    g_nc2_contour = true;
+    nc2_contour_settle();
+    return true;
+}
+
+void nc2_contour_leave(void)
+{
+    g_nc2_contour = false;
+    nc2_contour_settle();
+}
+
+/* True while the row just written is still the one being entered: nothing has
+   taken the value and the cursor has not left it. */
+static bool nc2_contour_pending(const nc2_document_t *doc)
+{
+    return g_nc2_contour_point != (size_t)-1 &&
+           g_nc2_contour_point < doc->line_count &&
+           doc->cursor == g_nc2_contour_point &&
+           doc->field == g_nc2_contour_word;
+}
+
+/* A millimetre value as a program spells it: `G1 X30 Z-15`, not `G1 X30.000`.
+   The value is left picked for typing either way, so this is what the row reads
+   when the operator does not change it. */
+static void nc2_contour_mm(float value, char *out, size_t out_sz)
+{
+    size_t len;
+
+    snprintf(out, out_sz, "%.3f", (double)value);
+    len = strlen(out);
+    while (len > 0u && out[len - 1u] == '0') {
+        out[--len] = '\0';
+    }
+    if (len > 0u && out[len - 1u] == '.') {
+        out[--len] = '\0';
+    }
+    if (strcmp(out, "-0") == 0) {
+        strcpy(out, "0");
+    }
+}
+
+/* Where the profile is now: the point the rows up to the cursor leave the tool
+   at, read with the one rule the sender and the preview use. An axis the program
+   has not given yet starts at the stock's own corner, which is where a lathe
+   profile starts. */
+static void nc2_contour_point_at(const nc2_document_t *doc, float *x, float *z)
+{
+    bool x_known = false;
+    bool z_known = false;
+    size_t i;
+
+    *x = 0.0f;
+    *z = 0.0f;
+    for (i = 0u; i < doc->line_count && i <= doc->cursor; i++) {
+        uint8_t words = 0u;
+        float px = *x;
+        float pz = *z;
+
+        if (!nc2_emit_line_is_direct(doc->lines[i])) {
+            continue;                   /* a header's U is not an increment */
+        }
+        if (!nc2_emit_line_point(doc->lines[i], &px, &pz, 0, 0u, &words)) {
+            continue;
+        }
+        *x = px;
+        *z = pz;
+        if (words & NC2_EMIT_WORD_X_ABS) {
+            x_known = true;
+        }
+        if (words & NC2_EMIT_WORD_Z_ABS) {
+            z_known = true;
+        }
+    }
+    if (!x_known) {
+        *x = nc2_preview_stock_x(doc);
+    }
+    if (!z_known) {
+        *z = 0.0f;
+    }
+}
+
+/* One press: a row of its own, below the cursor, and the cursor on it - which is
+   the whole of the "walk", because the next press reads its point from the row
+   just written. */
+static bool nc2_contour_move(nc2_document_t *doc, int dx, int dz)
+{
+    char xs[24];
+    char zs[24];
+    char row[NC2_MAX_LINE_LEN];
+    nc2_field_t fields[NC2_MAX_FIELDS];
+    size_t at = doc->cursor + 1u;
+    float x = 0.0f;
+    float z = 0.0f;
+    float step = nc2_contour_step();
+    int count;
+    int i;
+
+    nc2_contour_point_at(doc, &x, &z);
+    x += (float)dx * step;
+    z += (float)dz * step;
+    nc2_contour_mm(x, xs, sizeof(xs));
+    nc2_contour_mm(z, zs, sizeof(zs));
+    snprintf(row, sizeof(row), "G1 X%s Z%s", xs, zs);
+    if (doc->line_count == 0u) {
+        at = 0u;                    /* an empty program takes its first row */
+    }
+    if (!nc2_insert_line(doc, at, row)) {
+        return false;
+    }
+    doc->cursor = at;
+    nc2_unpick(doc);
+    g_nc2_contour_point = at;
+    g_nc2_contour_word = -1;
+    g_nc2_contour_next = -1;
+    /* The value the operator is most likely to change is picked: the X word for
+       an X move, the Z word for a Z move, and for a corner the X one - the
+       diameter, the number a lathe hand reads first. */
+    count = nc2_fields(row, fields, NC2_MAX_FIELDS);
+    for (i = 0; i < count; i++) {
+        char letter = (char)toupper((unsigned char)fields[i].letter);
+
+        if ((dx != 0 && letter == 'X') || (dz != 0 && letter == 'Z')) {
+            if (g_nc2_contour_word < 0) {
+                g_nc2_contour_word = i;
+            } else {
+                g_nc2_contour_next = i;
+                break;
+            }
+        }
+    }
+    if (g_nc2_contour_word >= 0) {
+        (void)nc2_pick_field(doc, g_nc2_contour_word);
+    }
+    return true;
+}
+
+bool nc2_contour_key(nc2_document_t *doc, char key)
+{
+    int dx = 0;
+    int dz = 0;
+
+    if (!doc || !g_nc2_contour) {
+        return false;
+    }
+    if (nc2_contour_pending(doc)) {
+        if (key == 'D') {
+            if (g_nc2_contour_next >= 0) {
+                g_nc2_contour_word = g_nc2_contour_next;
+                g_nc2_contour_next = -1;
+                return nc2_pick_field(doc, g_nc2_contour_word);
+            }
+            nc2_unpick(doc);
+            return true;                /* the point is taken: the pad is back */
+        }
+        if (key == '*') {
+            (void)nc2_delete_line(doc, doc->cursor);
+            nc2_contour_settle();
+            return true;
+        }
+        /* The digits, the sign, the point and `#` are the editor's field flow:
+           what is typed lands in the word the pad just picked. */
+        return false;
+    }
+    if (key == '5') {
+        g_nc2_contour = false;
+        nc2_contour_settle();
+        return true;
+    }
+    if (key == '#') {                   /* the step */
+        g_nc2_contour_step =
+            (uint8_t)((g_nc2_contour_step + 1u) %
+                      (sizeof(g_nc2_contour_steps) /
+                       sizeof(g_nc2_contour_steps[0])));
+        return true;
+    }
+    if (key == '*') {                   /* the point under the cursor */
+        return nc2_delete_line(doc, doc->cursor);
+    }
+    if (!nc2_contour_direction(key, &dx, &dz)) {
+        return false;                   /* a key the pad does not use */
+    }
+    return nc2_contour_move(doc, dx, dz);
 }
 
 /* --- the pad -------------------------------------------------------------- */

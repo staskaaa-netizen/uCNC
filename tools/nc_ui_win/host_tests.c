@@ -2326,6 +2326,202 @@ static int host_pump2test(void)
     return 0;
 }
 
+/* The path builder - G7X's `7`, the address 47.
+
+   nc's contour pad, so this is nc's `--contourtest` carried over: the pad's
+   nine directions, one `G1` row per press, the axis that does not move carried
+   over from the point the row above reaches, the value that lands picked so the
+   digits type the real number over it, `#` stepping the distance, `*` taking the
+   point back, and `5` ending it with the rows still in the program. It also pins
+   the pad's own order, which the bench reads first: 7 8 9 on the top row.
+
+   The check reads the program back off the card after every press, the way the
+   operator would see it. */
+static int host_contour2test(void)
+{
+    static const char *const program = "/D/nc/files/contour.nc";
+    static const char *const fixture = "G0 X52 Z2\n";
+    nc2_document_t doc;
+    int failures = 0;
+
+    /* The pad's order, before anything is drawn or pressed: the digits run up
+       the way the machine's keypad does, so `7` is the top-left cell. */
+    if (nc2_pad_cell_key(0, 0) != '7' || nc2_pad_cell_key(0, 2) != '9' ||
+        nc2_pad_cell_key(1, 1) != '5' || nc2_pad_cell_key(2, 0) != '1' ||
+        nc2_pad_cell_key(2, 2) != '3') {
+        printf("contour2test: FAIL the pad's cells are %c%c%c / %c%c%c / %c%c%c\n",
+               nc2_pad_cell_key(0, 0), nc2_pad_cell_key(0, 1),
+               nc2_pad_cell_key(0, 2), nc2_pad_cell_key(1, 0),
+               nc2_pad_cell_key(1, 1), nc2_pad_cell_key(1, 2),
+               nc2_pad_cell_key(2, 0), nc2_pad_cell_key(2, 1),
+               nc2_pad_cell_key(2, 2));
+        failures++;
+    }
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!host_fs_write_text(program, fixture)) {
+        puts("contour2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    if (!nc2_visual_open(program)) {
+        puts("contour2test: FAIL the fixture does not load");
+        return 1;
+    }
+    nc2_visual_select_mode(NC2_MODE_PROGRAM);
+
+    /* 1. the pad opens on G7X's `7`, and that cell says what it is. */
+    nc2_visual_key('4');
+    if (strcmp(nc2_visual_address(), "4") != 0 ||
+        !nc2_visual_slot_label('7') ||
+        strcmp(nc2_visual_slot_label('7'), "PATH") != 0) {
+        printf("contour2test: FAIL G7X's `7` reads \"%s\" at \"%s\"\n",
+               nc2_visual_slot_label('7') ? nc2_visual_slot_label('7') : "",
+               nc2_visual_address());
+        failures++;
+    }
+    nc2_visual_key('7');
+    if (!nc2_contour_active()) {
+        puts("contour2test: FAIL `4` `7` did not open the path builder");
+        return 1;
+    }
+    /* Its pad is the directions, not the card's entries. */
+    if (!nc2_visual_slot_label('5') ||
+        strcmp(nc2_visual_slot_label('5'), "END") != 0) {
+        puts("contour2test: FAIL the builder's pad does not show its directions");
+        failures++;
+    }
+
+    /* 2. one press, one row - and the point comes from the program, not from a
+       memory of the pad: `G0 X52 Z2` is what the first press counts from. */
+    nc2_visual_key('2');                        /* X+ */
+    /* 3. the value that landed is picked, so the digits type the real number
+       over the step's prefill, and `D` gives the pad its digits back. */
+    nc2_visual_key('3');
+    nc2_visual_key('0');
+    nc2_visual_key('D');
+    if (!nc2_visual_save()) {
+        puts("contour2test: FAIL the program was not written back");
+        return 1;
+    }
+    nc2_document_init(&doc);
+    if (!nc2_file_load(&doc, program) || doc.line_count != 2u ||
+        strcmp(doc.lines[1], "G1 X30 Z2") != 0) {
+        printf("contour2test: FAIL the first point is \"%s\"\n",
+               doc.line_count > 1u ? doc.lines[1] : "");
+        failures++;
+    } else {
+        puts("contour2test: the point continues from the program, and its value "
+             "is typed over the prefill");
+    }
+
+    /* 4. the next press reads the point from the row just written and carries
+       the axis that does not move. */
+    nc2_visual_key('4');                        /* Z- */
+    (void)nc2_visual_save();
+    nc2_document_init(&doc);
+    if (!nc2_file_load(&doc, program) || doc.line_count != 3u ||
+        strcmp(doc.lines[1], "G1 X30 Z2") != 0 ||
+        strcmp(doc.lines[2], "G1 X30 Z1.5") != 0) {
+        printf("contour2test: FAIL the second point is \"%s\"\n",
+               doc.line_count > 2u ? doc.lines[2] : "");
+        failures++;
+    } else {
+        puts("contour2test: the walk carries the axis that does not move");
+    }
+
+    /* 5. `#` steps the distance - but only once the point is settled. */
+    nc2_visual_key('#');                        /* take the point */
+    nc2_visual_key('#');                        /* step the distance */
+    nc2_visual_key('2');                        /* X+ by the new step */
+    nc2_visual_key('#');                        /* and take that one too */
+    (void)nc2_visual_save();
+    nc2_document_init(&doc);
+    if (!nc2_file_load(&doc, program) || doc.line_count != 4u ||
+        strcmp(doc.lines[3], "G1 X31 Z1.5") != 0) {
+        printf("contour2test: FAIL the stepped point is \"%s\"\n",
+               doc.line_count > 3u ? doc.lines[3] : "");
+        failures++;
+    } else {
+        puts("contour2test: `#` steps the distance");
+    }
+
+    /* 6. `*` drops the point being entered - the row goes with it - and the pad
+       is still up. */
+    nc2_visual_key('2');                        /* a point, still being entered */
+    nc2_visual_key('*');
+    if (!nc2_contour_active()) {
+        puts("contour2test: FAIL `*` closed the builder");
+        failures++;
+    }
+    (void)nc2_visual_save();
+    nc2_document_init(&doc);
+    if (!nc2_file_load(&doc, program) || doc.line_count != 4u) {
+        printf("contour2test: FAIL `*` left %u rows\n",
+               (unsigned)doc.line_count);
+        failures++;
+    } else {
+        puts("contour2test: `*` drops the point being entered");
+    }
+
+    /* 7. `5` ends the builder, and the rows already written stay - the program
+       is an ordinary program, so it also expands. */
+    nc2_visual_key('5');
+    if (nc2_contour_active()) {
+        puts("contour2test: FAIL `5` did not end the builder");
+        failures++;
+    }
+    (void)nc2_visual_save();
+    nc2_document_init(&doc);
+    if (!nc2_file_load(&doc, program) || doc.line_count != 4u ||
+        strcmp(doc.lines[1], "G1 X30 Z2") != 0 ||
+        strcmp(doc.lines[3], "G1 X31 Z1.5") != 0) {
+        puts("contour2test: FAIL `5` did not leave the rows it wrote");
+        failures++;
+    }
+    {
+        g7x_doc_t view = nc2_document_g7x(&doc);
+        float x = 0.0f;
+        float z = 0.0f;
+        size_t i;
+        bool any = false;
+
+        for (i = 0u; i < doc.line_count; i++) {
+            uint8_t words = 0u;
+
+            if (nc2_emit_line_is_direct(doc.lines[i]) &&
+                nc2_emit_line_point(doc.lines[i], &x, &z, 0, 0u, &words)) {
+                any = true;
+            }
+        }
+        (void)view;
+        if (!any) {
+            puts("contour2test: FAIL the rows it wrote move nothing");
+            failures++;
+        }
+    }
+
+    /* 8. the mode key leaves it, and the rows stay: a builder is a view of the
+       program, not a mode the program is in. */
+    nc2_visual_key('4');
+    nc2_visual_key('7');
+    nc2_visual_key('A');
+    if (nc2_contour_active()) {
+        puts("contour2test: FAIL the mode key left the builder up");
+        failures++;
+    }
+
+    if (failures) {
+        printf("contour2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("contour2test: PASS the path builder writes the profile it walks, one "
+         "G1 row per press, and the pad stays until 5");
+    return 0;
+}
+
 /* nc2's value editor: a line is cut into fields at its letters, the keys walk
    them, and what is typed replaces the value that was there. The dumb editor the
    bench asked for, so the checks are about its two rules - where a field begins
@@ -2918,6 +3114,8 @@ int host_tests_run(int argc, char **argv)
             return host_manual2test();
         if (strcmp(argv[i], "--tools2test") == 0)
             return host_tools2test();
+        if (strcmp(argv[i], "--contour2test") == 0)
+            return host_contour2test();
         if (strcmp(argv[i], "--block2test") == 0)
             return host_block2test();
         if (strcmp(argv[i], "--label2test") == 0)

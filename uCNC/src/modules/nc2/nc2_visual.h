@@ -48,6 +48,15 @@ void nc2_visual_idle_tasks(void);
    loop. */
 void nc2_visual_tick(unsigned ms);
 
+/* One pass of the screen's main loop, with the machine's own clock: the logo's
+   countdown, the program written back once the operator has stopped typing, and
+   the answer "draw this pass" - dirty, or the period a screen that is moving
+   asks for. Both the firmware module and the station call this, so the loop
+   that decides what the screen shows is the screen's own and not a copy of it
+   beside the module (a copy that once left the first start's logo up for
+   ever). */
+bool nc2_visual_pump(uint32_t now_ms);
+
 bool nc2_visual_dirty(void);
 void nc2_visual_clear_dirty(void);
 const char *nc2_visual_status(void);

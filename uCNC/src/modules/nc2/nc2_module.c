@@ -10,12 +10,6 @@
 #include "../lvds_renderer/lvds_renderer_boot.h"
 #include "../cam_keyboard/ui_input_keypad.h"
 
-#ifndef NC2_MODULE_DRAW_PERIOD_MS
-#define NC2_MODULE_DRAW_PERIOD_MS 20u
-#endif
-
-static uint32_t g_nc2_module_last_draw_ms;
-
 static void nc2_module_poll_keyboard(void)
 {
     ui_input_keypad_poll();
@@ -33,18 +27,10 @@ static void nc2_module_poll_keyboard(void)
 
 static bool nc2_module_update(void *args)
 {
-    uint32_t now;
-    bool periodic;
-
     (void)args;
     nc2_module_poll_keyboard();
-    nc2_visual_idle_tasks();
-
-    now = mcu_millis();
-    periodic = nc2_visual_periodic_needed() &&
-               (uint32_t)(now - g_nc2_module_last_draw_ms) >= NC2_MODULE_DRAW_PERIOD_MS;
-    if (nc2_visual_dirty() || periodic) {
-        g_nc2_module_last_draw_ms = now;
+    /* The screen decides; the module only hands it the clock. */
+    if (nc2_visual_pump(mcu_millis())) {
         nc2_visual_draw();
     }
     return EVENT_CONTINUE;
@@ -59,6 +45,5 @@ DECL_MODULE(nc2)
     }
     ui_input_keypad_init();
     nc2_visual_init();
-    g_nc2_module_last_draw_ms = 0;
     ADD_EVENT_LISTENER(cnc_dotasks, nc2_module_update);
 }

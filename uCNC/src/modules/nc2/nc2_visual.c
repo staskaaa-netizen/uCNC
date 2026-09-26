@@ -591,8 +591,44 @@ void nc2_visual_tick(unsigned ms)
 {
     if (nc2_boot_active()) {
         nc2_boot_tick(ms);
-        nc2_visual_clear_dirty();
+        if (nc2_boot_active()) {
+            /* The logo is a still picture: nothing to do while it stands. */
+            nc2_visual_clear_dirty();
+        } else {
+            /* It has just left, and the work screen has to take its place - or
+               the panel keeps the logo on the glass while the screen believes
+               it is gone. */
+            nc2_visual_mark_dirty();
+        }
     }
+}
+
+/* How often a screen that has something of its own to show redraws: the frame
+   the DRO's figures and a held feed need, and no more. */
+#define NC2_PUMP_PERIOD_MS 20u
+
+bool nc2_visual_pump(uint32_t now_ms)
+{
+    static uint32_t last_pump_ms;
+    static uint32_t last_draw_ms;
+    unsigned elapsed = (unsigned)(now_ms - last_pump_ms);
+
+    last_pump_ms = now_ms;
+    /* The logo's clock first: it is the screen's own, and it is what makes the
+       first start leave on its own - the module that draws has no clock of its
+       own to run it with. */
+    nc2_visual_tick(elapsed);
+    nc2_visual_idle_tasks();
+    if (nc2_visual_dirty()) {
+        last_draw_ms = now_ms;
+        return true;
+    }
+    if (nc2_visual_periodic_needed() &&
+        (uint32_t)(now_ms - last_draw_ms) >= NC2_PUMP_PERIOD_MS) {
+        last_draw_ms = now_ms;
+        return true;
+    }
+    return false;
 }
 
 void nc2_visual_idle_tasks(void)
@@ -986,9 +1022,12 @@ void nc2_visual_draw(void)
 
 bool nc2_visual_periodic_needed(void)
 {
+    /* What changes on its own: the first start's logo, the machine doing
+       something (the DRO's figures, a held feed), MANUAL's key flash. An
+       *unsaved* program is not one of them - that flag is about writing the
+       file back, and it used to keep a still screen repainting every 20 ms. */
     return nc2_boot_active() || nc2_state_busy() || nc2_run_active() ||
-           nc2_run_hold() || nc2_run_error() || g_doc.dirty ||
-           g_mode == NC2_MODE_MANUAL;   /* the flash, and a held feed */
+           nc2_run_hold() || nc2_run_error() || g_mode == NC2_MODE_MANUAL;
 }
 
 size_t nc2_visual_usage(const char *const **lines)

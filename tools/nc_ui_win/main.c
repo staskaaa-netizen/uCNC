@@ -714,11 +714,9 @@ static void host_paint(HWND hwnd)
 
 static void host_tick(HWND hwnd, unsigned now_ms)
 {
-    static unsigned last_draw_ms;
-    bool periodic = nc2_visual_periodic_needed() && (now_ms - last_draw_ms) >= 20u;
-
-    if (nc2_visual_dirty() || periodic) {
-        last_draw_ms = now_ms;
+    /* The screen's own loop decides - the same one the firmware module runs, so
+       the window cannot disagree with the machine about when a frame is due. */
+    if (nc2_visual_pump(now_ms)) {
         nc2_visual_draw();
         InvalidateRect(hwnd, NULL, FALSE);
     }
@@ -1225,11 +1223,13 @@ void host_pump(unsigned iterations)
     for (i = 0u; i < iterations; i++) {
         (void)cnc_parse_cmd();
         cnc_dotasks();
-        /* The panel's own main-loop work, the way the firmware's `nc` module
-           runs it: the idle tasks are where the program is written to the card
-           once the operator has stopped typing, so a harness that skips them
-           cannot see an edit land in a file. */
-        nc2_visual_idle_tasks();
+        /* The panel's own clock, the way the firmware's `nc2` module runs it:
+           the screen's pump is where the first start's logo counts down and
+           where the program is written to the card once the operator has
+           stopped typing, so a harness that skips it cannot see an edit land in
+           a file. The *draw* is left to the check, which takes its frames
+           deliberately. */
+        (void)nc2_visual_pump(mcu_millis());
         mcu_unit_test_advance_time(1000u);
     }
 }

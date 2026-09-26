@@ -2232,6 +2232,100 @@ static int host_present2test(void)
     return 0;
 }
 
+/* The screen's own main loop - the one the firmware module and the station
+   window both run.
+
+   This is the second machine-only blind spot: the host checks drive the screen
+   themselves, so the loop that decides *when* to draw was never theirs. The
+   firmware's own copy of it forgot to run the first start's clock, which left
+   the logo up for ever; the loop lives in the screen now (`nc2_visual_pump()`)
+   and this check runs it, with its own clock. */
+/* One pass of the loop as both the firmware module and the window run it: ask
+   the screen's pump, and draw when it says so. The pump keeps asking until a
+   frame has actually been drawn, so a caller that ignored it would see it ask
+   for ever - which is the point of it. */
+static bool host_pump2(unsigned now_ms)
+{
+    if (!nc2_visual_pump(now_ms)) {
+        return false;
+    }
+    nc2_visual_draw();
+    return true;
+}
+
+static int host_pump2test(void)
+{
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!nc2_boot_active()) {
+        puts("pump2test: FAIL a fresh card did not raise the logo");
+        return 1;
+    }
+
+    /* The logo is up: it is drawn, and it is still up while its time has not
+       passed. */
+    if (!host_pump2(1000u)) {
+        puts("pump2test: FAIL the logo did not ask for a frame");
+        failures++;
+    }
+    if (!nc2_boot_active()) {
+        puts("pump2test: FAIL the logo left before its time");
+        failures++;
+    }
+
+    /* Past its time it leaves *and says so*: the pass that ends it has to be a
+       pass that draws, or the panel keeps the logo on the glass while the
+       screen believes it is gone. */
+    if (!host_pump2(1300u)) {
+        puts("pump2test: FAIL the pass that ended the logo did not draw");
+        failures++;
+    }
+    if (nc2_boot_active()) {
+        puts("pump2test: FAIL the logo never left");
+        failures++;
+    }
+
+    /* Nothing moving, nothing pressed: the loop stays quiet. */
+    if (host_pump2(1400u)) {
+        puts("pump2test: FAIL an idle screen asked for a frame");
+        failures++;
+    }
+
+    /* A key asks for one. */
+    nc2_visual_key('4');
+    if (!host_pump2(1500u)) {
+        puts("pump2test: FAIL a key did not ask for a frame");
+        failures++;
+    }
+
+    /* And a screen with something of its own to show keeps the frames coming:
+       MANUAL's held feed and the floating DRO need them, at the period and no
+       faster. */
+    nc2_visual_select_mode(NC2_MODE_MANUAL);
+    if (!host_pump2(2000u)) {
+        puts("pump2test: FAIL the screen change did not ask for a frame");
+        failures++;
+    }
+    if (host_pump2(2010u)) {
+        puts("pump2test: FAIL the screen drew faster than its own period");
+        failures++;
+    }
+    if (!host_pump2(2030u)) {
+        puts("pump2test: FAIL a screen that is working did not keep drawing");
+        failures++;
+    }
+
+    if (failures) {
+        printf("pump2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("pump2test: PASS the screen's own loop draws when it should, and the "
+         "first start's logo leaves");
+    return 0;
+}
+
 /* nc2's value editor: a line is cut into fields at its letters, the keys walk
    them, and what is typed replaces the value that was there. The dumb editor the
    bench asked for, so the checks are about its two rules - where a field begins
@@ -2806,6 +2900,8 @@ int host_tests_run(int argc, char **argv)
             return host_seedtest();
         if (strcmp(argv[i], "--present2test") == 0)
             return host_present2test();
+        if (strcmp(argv[i], "--pump2test") == 0)
+            return host_pump2test();
         if (strcmp(argv[i], "--edit2test") == 0)
             return host_edit2test();
         if (strcmp(argv[i], "--pad2test") == 0)

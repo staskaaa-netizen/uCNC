@@ -1963,6 +1963,10 @@ static void g7x_parser_region_complete(gcode_exec_args_t *ptr)
         proto_info("G7X region ready count=%u", (unsigned)g7x_parser_stream.region.count);
         memcpy(&g7x_parser_runner_state, ptr->new_state, sizeof(g7x_parser_runner_state));
         g7x_parser_runner_active = true;
+        /* The bench reads the generated cycle off the serial, so the run of
+           generated blocks says where it starts and (`run_pending`) where it
+           ends - the port had dropped both with the old runner. */
+        proto_print("[MSG:G7X generated blocks queued]\r\n");
         *(ptr->error) = STATUS_OK;
     }
     ptr->cmd->groups = 0;
@@ -2436,6 +2440,7 @@ bool g7x_exec_modifier(void *args)
         memcpy(&g7x_parser_runner_state, ptr->new_state,
                sizeof(g7x_parser_runner_state));
         g7x_parser_runner_active = true;
+        proto_print("[MSG:G7X generated blocks queued]\r\n");
         ptr->cmd->group_extended = 0;
         ptr->cmd->groups = 0;
         ptr->cmd->words = 0;
@@ -2781,6 +2786,7 @@ static uint8_t g7x_parser_run_pending(parser_state_t *state)
         /* Cancel modal cycle motion; retain the caller's units/feed/tool. */
         state->groups.motion = G80;
         state->groups.motion_mantissa = 0;
+        proto_print("[MSG:G7X generated blocks done]\r\n");
     }
     g7x_parser_clear_state();
     return error;

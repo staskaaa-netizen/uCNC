@@ -163,21 +163,31 @@ own box is remembered, filled with the pane's ground before the frame draws, and
 the rows of it that lie inside the stock are handed to the mask's band so the
 material comes back under it.
 
-**Where a frame's time goes** is on the console, once a second, whenever the
-screen is drawing:
+**Where a frame's time goes** is the frame meter in the header's corner
+(`12 FPS`), and only there. It was also printed once a second - `[MSG:NC2 fps 12
+draw 79 screen 3 stock 41 geom 28 strip 2 present 1]`, the whole frame, the still
+bands, the drawing's two halves, the machine's line and the hand-off - which was
+the instrument a layout change is measured with (*"12 fps only. why ..."*), and
+the bench has now asked for the serial instead: *"drop fps debug from serial"*.
+The serial carries what the machine is doing - the generated cycle and the line
+the panel is on:
 
 ```text
-[MSG:NC2 fps 12 draw 79 screen 3 stock 41 geom 28 strip 2 present 1]
+[MSG:NC2 SELECT RUN 7: G71 U3 R1 X1 Z1 F500 P50 Q55]
+[MSG:G7X generated blocks queued]
+[MSG:NC2 G7X OUT (G71 rough X15.500)]
+[MSG:NC2 SEND G1 X31.000 F500.000]
+[MSG:G7X generated blocks done]
 ```
 
-`draw` is the whole frame, `screen` the bands that do not move on their own
-(the header, the rows, the notes, the pad), `stock` and `geom` the drawing's two
-halves (the mask and the stock, then the dimensions, contour, emitted part and
-tool), `strip` the machine's own line, `present` the hand-off to the panel. All
-in milliseconds, averaged over the frames of that second; the glass keeps the
-frame count alone (`12 FPS`). The bench asked for the meter back to test the
-panel: *"give me back fps meter it need to be tested"*, and a number without a
-breakdown cannot say what to fix - *"12 fps only. why ..."*.
+`SELECT` is the line the panel has just put in play - a run walking a cycle, or
+the operator stepping the cursor - `nc`'s own message (`nc_editor.c`), which the
+port had dropped. The `G7X` lines bracket the generated cycle and name each
+block of it; the module's own runner says the same two brackets when a host
+sends a cycle straight down the serial. A line is announced when it *changes*,
+not on every frame: the station shows this serial in its strip, and a line
+nothing asked for would make a still screen look busy (`--painttest` holds
+that).
 
 **A refused line is said, not just flagged.** When the controller refuses a line
 the strip says `uCNC ERROR` - a glance - and the notes say the sentence: which

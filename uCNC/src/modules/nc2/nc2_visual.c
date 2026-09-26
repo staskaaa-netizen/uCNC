@@ -52,21 +52,10 @@ static uint16_t g_nc2_fps_frames;
 static uint32_t g_nc2_fps_start_ms;
 
 /* Where a frame's time goes: the whole drawing, the bands that do not move on
-   their own (the header, the rows, the notes, the pad), the machine's strip, and
-   the hand-off to the panel. Once a second they are averaged and logged to the
-   console - the glass has room for the frame count, and the breakdown is what
-   answers "why" (bench: "12 fps only. why ..."). */
-static uint32_t g_nc2_acc_draw_us;
-static uint32_t g_nc2_acc_screen_us;
-static uint32_t g_nc2_acc_stock_us;
-static uint32_t g_nc2_acc_geom_us;
-static uint32_t g_nc2_acc_strip_us;
-static uint32_t g_nc2_acc_present_us;
-
-static unsigned nc2_ms_of(uint32_t us, uint16_t frames)
-{
-    return frames ? ((us / frames) + 500u) / 1000u : 0u;
-}
+    their own (the header, the rows, the notes, the pad), the machine's strip, and
+    the hand-off to the panel. The glass reads the frame count - the reading a
+    layout change is measured with - and the serial carries what the machine is
+    doing instead (bench: "drop fps debug from serial"). */
 
 static void nc2_fps_tick(void)
 {
@@ -80,24 +69,6 @@ static void nc2_fps_tick(void)
     elapsed = now - g_nc2_fps_start_ms;
     if (elapsed >= 1000u) {
         g_nc2_fps = (uint16_t)(((uint32_t)g_nc2_fps_frames * 1000u) / elapsed);
-        if (g_nc2_fps_frames) {
-            grbl_stream_printf("[MSG:NC2 fps %u draw %u screen %u stock %u "
-                               "geom %u strip %u present %u]\r\n",
-                               (unsigned)g_nc2_fps,
-                               nc2_ms_of(g_nc2_acc_draw_us, g_nc2_fps_frames),
-                               nc2_ms_of(g_nc2_acc_screen_us, g_nc2_fps_frames),
-                               nc2_ms_of(g_nc2_acc_stock_us, g_nc2_fps_frames),
-                               nc2_ms_of(g_nc2_acc_geom_us, g_nc2_fps_frames),
-                               nc2_ms_of(g_nc2_acc_strip_us, g_nc2_fps_frames),
-                               nc2_ms_of(g_nc2_acc_present_us,
-                                         g_nc2_fps_frames));
-        }
-        g_nc2_acc_draw_us = 0u;
-        g_nc2_acc_screen_us = 0u;
-        g_nc2_acc_stock_us = 0u;
-        g_nc2_acc_geom_us = 0u;
-        g_nc2_acc_strip_us = 0u;
-        g_nc2_acc_present_us = 0u;
         g_nc2_fps_frames = 0u;
         g_nc2_fps_start_ms = now;
     }
@@ -1570,6 +1541,23 @@ static nc2_rows_key_t g_rows_key;
 static nc2_chrome_key_t g_chrome_key;
 static bool g_frame_key_valid;
 
+/* The line the panel is on, said out loud. `nc` did this (`nc_editor.c`'s
+   `[MSG:NC SELECT RUN 7: G71 U3 ...]`) and the bench walks a program off the
+   serial as much as off the glass: the generated cycle is bracketed by the
+   G7x messages, and the line each of them came from is this one. */
+static void nc2_serial_selected_line(const nc2_rows_key_t *key)
+{
+    char text[97];
+
+    text[0] = '\0';
+    if (g_doc.line_count > 0u && key->mark < g_doc.line_count) {
+        snprintf(text, sizeof(text), "%.96s", g_doc.lines[key->mark]);
+    }
+    grbl_stream_printf("[MSG:NC2 SELECT %s %lu: %s]\r\n",
+                       nc2_visual_screen_name(),
+                       (unsigned long)(key->mark + 1u), text);
+}
+
 static void nc2_frame_keys_of(nc2_rows_key_t *rows, nc2_chrome_key_t *chrome)
 {
     nc2_runtime_state_t rt;
@@ -1599,8 +1587,6 @@ void nc2_visual_draw(void)
 {
     nc2_rows_key_t rows_key;
     nc2_chrome_key_t chrome_key;
-    uint32_t t_start;
-    uint32_t t_band;
     bool full;
     bool rows;
     bool chrome;
@@ -1614,40 +1600,33 @@ void nc2_visual_draw(void)
         lvds_hstx_present();
         return;
     }
-    t_start = mcu_micros();
-    t_band = t_start;
     nc2_frame_keys_of(&rows_key, &chrome_key);
     /* A mode or a screen change paints the lot: the bands are in different
        places then. Anything else is per band. */
     full = g_dirty || !g_frame_key_valid ||
            rows_key.mode != g_rows_key.mode || rows_key.list != g_rows_key.list;
+    /* The line the panel is on, to the serial: a run walking a cycle, or an
+       operator stepping the cursor. A *change* of the line and nothing else - a
+       new screen or a file list shows the same line and is not a select, and the
+       station draws this serial in its strip, where a line nothing asked for
+       would make a still screen look busy (`--painttest` holds that). */
+    if (g_frame_key_valid && rows_key.mark != g_rows_key.mark) {
+        nc2_serial_selected_line(&rows_key);
+    }
     rows = full || memcmp(&rows_key, &g_rows_key, sizeof(rows_key)) != 0;
     chrome = full ||
              memcmp(&chrome_key, &g_chrome_key, sizeof(chrome_key)) != 0;
     if (full) {
         nc2_fill(0, 0, LVDS_VIEW_WIDTH, LVDS_VIEW_HEIGHT, nc2_col_bg());
     }
-    t_band = mcu_micros();
     if (full || chrome) {
         nc2_draw_header();
     }
-    g_nc2_acc_screen_us += mcu_micros() - t_band;   /* the header */
     /* The two bands that move on their own: the drawing (the machine's own
        position, and the tool with it) and the strip's figures. Everything else
        is drawn when something it shows has changed. */
     nc2_draw_preview(full);
-    {
-        uint32_t stock_us = 0u;
-        uint32_t geom_us = 0u;
-
-        /* What the drawing itself spent its time in (the preview knows). */
-        nc2_preview_times(&stock_us, &geom_us);
-        g_nc2_acc_stock_us += stock_us;
-        g_nc2_acc_geom_us += geom_us;
-    }
-    t_band = mcu_micros();
     nc2_draw_dro();
-    g_nc2_acc_strip_us += mcu_micros() - t_band;
     if (g_list) {
         /* The list is one column, not the editor's pane: it takes the whole
            bottom band while it is up, the way a picker does. */
@@ -1704,15 +1683,11 @@ void nc2_visual_draw(void)
             nc2_draw_pad_band();
         }
     }
-    g_nc2_acc_screen_us += mcu_micros() - t_band;   /* the bands around it */
     g_rows_key = rows_key;
     g_chrome_key = chrome_key;
     g_frame_key_valid = true;
     nc2_visual_clear_dirty();
-    t_band = mcu_micros();
-    g_nc2_acc_draw_us += t_band - t_start;
     lvds_hstx_present();
-    g_nc2_acc_present_us += mcu_micros() - t_band;
     nc2_fps_tick();
 }
 

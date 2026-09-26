@@ -865,8 +865,10 @@ static int host_pad2test(void)
         printf("pad2test: FAIL the root's `4` is kind %d, \"%s\"\n", kind, label);
         failures++;
     }
-    if (nc2_slot(address, '7', label, sizeof(label)) != NC2_SLOT_EMPTY) {
-        puts("pad2test: FAIL the root's `7` is not empty");
+    /* `8` and `9` at the root are the shipped set's own empty slots (`7` is the
+       tool table's group, which the TOOLS screen's pad offers). */
+    if (nc2_slot(address, '8', label, sizeof(label)) != NC2_SLOT_EMPTY) {
+        puts("pad2test: FAIL the root's `8` is not empty");
         failures++;
     }
 
@@ -933,13 +935,13 @@ static int host_pad2test(void)
 
     /* 5. and the file tree is the whole story: an address with no file is not
        there, and neither is a level below the pad's depth. */
-    if (!nc2_address_push(address, '7') || !nc2_address_push(address, '1') ||
+    if (!nc2_address_push(address, '8') || !nc2_address_push(address, '1') ||
         !nc2_address_push(address, '1') || nc2_address_push(address, '1')) {
         puts("pad2test: FAIL the address grew past its depth");
         failures++;
     }
     nc2_address_reset(address);
-    if (nc2_slot(address, '7', label, sizeof(label)) != NC2_SLOT_EMPTY ||
+    if (nc2_slot(address, '8', label, sizeof(label)) != NC2_SLOT_EMPTY ||
         nc2_slot(address, '9', label, sizeof(label)) != NC2_SLOT_EMPTY ||
         nc2_slot(address, '0', label, sizeof(label)) != NC2_SLOT_EMPTY) {
         puts("pad2test: FAIL a slot nobody wrote answers");
@@ -1508,6 +1510,35 @@ static int host_run2test(void)
     nc2_run_stop();
     host_pump_idle(64u);
     nc2_run_reset();
+
+    /* A tool the drawing's view does not reach is held on the pane's edge, not
+       dropped: the machine is parked far outside the stock's envelope and the
+       glyph still has to be on the glass (bench: "tool itself is gone one
+       retrun on g0"). */
+    if (!nc2_run_send_line("G0 X100 Z40")) {
+        puts("run2test: FAIL cannot park the tool outside the view");
+        failures++;
+    } else {
+        host_pump(1u);
+        for (n = 0u; n < 200000u; n++) {
+            if (host_machine_idle()) {
+                break;
+            }
+            host_pump(1u);
+        }
+        nc2_run_reset();
+        host_pump_idle(64u);
+        nc2_visual_key('3');                /* FULL, so the machine is moving */
+        host_pump(1u);
+        nc2_visual_draw();
+        if (!host_preview_has_tool()) {
+            puts("run2test: FAIL the tool is off the view and not on the edge");
+            failures++;
+        }
+        nc2_run_stop();
+        host_pump_idle(64u);
+        nc2_run_reset();
+    }
 
     if (failures) {
         printf("run2test: FAILED (%d)\n", failures);
@@ -2250,18 +2281,25 @@ static int host_tools2test(void)
         }
     }
 
-    /* The pad inserts into the table like it inserts into a program: `4` walks
-       into the G7X group and `1` writes its entry where the pad's name stands. */
-    nc2_visual_key('4');
-    if (strcmp(nc2_visual_address(), "4") != 0) {
+    /* The pad is the *table's* group on this screen, not the program's: its
+       nine entries are the table's own rows (bench: "on ttols - 3x3 is wrong
+       here"), so a press adds a tool row where the pad's name stands and the
+       address never leaves the root - `A` still leaves the screen. */
+    if (strcmp(nc2_visual_address(), "") != 0) {
         printf("tools2test: FAIL the pad address is \"%s\"\n",
                nc2_visual_address());
         failures++;
     }
+    if (!nc2_visual_slot_label('1') ||
+        strcmp(nc2_visual_slot_label('1'), "ADD T1") != 0) {
+        printf("tools2test: FAIL the pad's first entry is \"%s\"\n",
+               nc2_visual_slot_label('1') ? nc2_visual_slot_label('1') : "");
+        failures++;
+    }
     nc2_visual_key('1');
     if (!nc2_visual_save() || !host_fs_read_text(tool, text, sizeof(text)) ||
-        !strstr(text, "G71")) {
-        printf("tools2test: FAIL the inserted row is not in \"%s\"\n", text);
+        !strstr(text, "T1 R0.8")) {
+        printf("tools2test: FAIL the added row is not in \"%s\"\n", text);
         failures++;
     }
 
@@ -3772,8 +3810,10 @@ static int host_seedtest(void)
         }
     }
     fs_close(dir);
-    if (files != 27) {
-        printf("seedtest: FAIL %d files were written, wanted 27\n", files);
+    /* The shipped entries: the seven groups, the table rows the TOOLS screen's
+       pad offers, and the rows the groups hold. */
+    if (files != 31) {
+        printf("seedtest: FAIL %d files were written, wanted 31\n", files);
         failures++;
     } else {
         puts("seedtest: the empty card got the shipped entries");

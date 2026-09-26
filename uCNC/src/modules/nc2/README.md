@@ -112,6 +112,14 @@ the screen's document - the same document the pacer is sending - so a look at th
 tools in the middle of a program would have the run cut the tool table. MANUAL,
 EDIT and RUN are safe to look at: they are the same file, or no file at all.
 
+The pad on this screen is the **table's own group** (`7 TABLE`: `ADD T1`, `ADD
+T2`, `ADD T3`), not the program's menu: pressing a cycle row into a tool table is
+what the bench called wrong (*"on ttols - 3x3 is wrong here"*). The pad's *root*
+is what changes, not the operator's address - `A` still leaves the pad and `0`
+still exits it, exactly as every other screen. A press adds the shipped default
+row and its first field is picked, so the digits type the tool number over the
+`1`.
+
 **A frame only paints what changed.** The header, the rows, the notes and the pad
 are drawn when something they show has changed (a key, the line in play, the
 message, the cursor); a frame that changes nothing paints the drawing and the

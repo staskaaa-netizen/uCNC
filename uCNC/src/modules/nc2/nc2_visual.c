@@ -202,12 +202,26 @@ void nc2_visual_mark_dirty(void)
 /* The nine labels of the address the operator is standing at. Read every frame
    the pad is drawn: nine small files on a card that answers in microseconds, and
    a cache would be a second copy of what the card already says. */
+/* The address the pad *reads* from. The screens share one pad, and its entries
+   are files - but a screen can have a subject of its own: the TOOLS screen has
+   the tool table open, so its pad is the tool group, because pressing a
+   program's cycle entry into a tool table is what the bench called wrong
+   ("on ttols - 3x3 is wrong here"). What the operator walks with `A` and leaves
+   with `0` is still the screen's own address: on TOOLS the root *is* the tool
+   group's level, so `A` leaves the pad the way it does everywhere. */
+static const char *nc2_pad_root(void)
+{
+    return g_mode == NC2_MODE_TOOLS ? "7" : "";
+}
+
 static void nc2_labels_at(const char *address)
 {
+    char full[NC2_ADDR_MAX + 3];
     char key;
 
+    snprintf(full, sizeof(full), "%s%s", nc2_pad_root(), address ? address : "");
     for (key = '1'; key <= '9'; key++) {
-        int kind = nc2_slot(address, key, g_labels[key - '1'],
+        int kind = nc2_slot(full, key, g_labels[key - '1'],
                             sizeof(g_labels[0]));
 
         if (kind == NC2_SLOT_EMPTY) {
@@ -536,17 +550,15 @@ const char *nc2_visual_status(void)
    the digits themselves when nobody wrote one. */
 static void nc2_pad_name(char *out, size_t out_sz)
 {
+    char full[NC2_ADDR_MAX + 3];
     char name[NC2_PRESET_ROW_MAX];
 
-    if (!g_address[0]) {
-        snprintf(out, out_sz, "MAIN");
-        return;
-    }
-    if (nc2_preset_read(g_address, name, sizeof(name), 0, 0u) >= 0 && name[0]) {
+    snprintf(full, sizeof(full), "%s%s", nc2_pad_root(), g_address);
+    if (nc2_preset_read(full, name, sizeof(name), 0, 0u) >= 0 && name[0]) {
         snprintf(out, out_sz, "%s", name);
         return;
     }
-    snprintf(out, out_sz, "%s", g_address);
+    snprintf(out, out_sz, "%s", g_address[0] ? g_address : "MAIN");
 }
 
 /* One press of a slot: rows are written where the pad's name stands, children
@@ -554,9 +566,12 @@ static void nc2_pad_name(char *out, size_t out_sz)
    is what makes a profile one press per point. */
 static void nc2_pad_press(char key)
 {
+    char full[NC2_ADDR_MAX + 3];
     char label[NC2_PRESET_ROW_MAX];
     char rows[NC2_PRESET_ROW_MAX * 4];
     int kind;
+
+    snprintf(full, sizeof(full), "%s%s", nc2_pad_root(), g_address);
 
     /* G7X's `7` is the path builder: a key that *does* something rather than one
        that writes a row of its own, which is why it is not an entry (`nc`'s own
@@ -576,14 +591,14 @@ static void nc2_pad_press(char key)
         }
         return;
     }
-    kind = nc2_slot(g_address, key, label, sizeof(label));
+    kind = nc2_slot(full, key, label, sizeof(label));
     if (kind == NC2_SLOT_EMPTY) {
         return;                     /* nothing there: nothing happens */
     }
     if (kind & NC2_SLOT_ENTRY) {
         char child[NC2_ADDR_MAX + 2];
 
-        snprintf(child, sizeof(child), "%s%c", g_address, key);
+        snprintf(child, sizeof(child), "%s%c", full, key);
         if (nc2_preset_read(child, 0, 0u, rows, sizeof(rows)) > 0) {
             if (!nc2_pad_active(&g_doc) && !nc2_pad_open(&g_doc, label)) {
                 nc2_statusf("No room in the program");

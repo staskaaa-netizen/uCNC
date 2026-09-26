@@ -34,6 +34,18 @@ static const nc2_default_t g_nc2_defaults[] = {
     { "4", "G7X", 0 },
     { "5", "THREAD", 0 },
     { "6", "PECK", 0 },
+    { "7", "TABLE", 0 },
+
+    /* The table's own group, which is what the TOOLS screen's pad offers: a
+       tool's *row* for the table (the `2 TOOL` group is the program's tool
+       change and spindle - `M6`, `M3`, `M4`, `M5` - and pressing those into a
+       tool table is what the bench called wrong: "on ttols - 3x3 is wrong
+       here"). A press adds the shipped default row and the digits type the
+       number over its `1`, because the row that lands keeps its first field
+       picked. */
+    { "71", "ADD T1", "T1 R0.8 O3 F120 Q60 D2.0 E0.5 S800 X0 Z0" },
+    { "72", "ADD T2", "T2 R0.4 O3 F100 Q50 D0.5 E0.2 S1200 X0 Z0" },
+    { "73", "ADD T3", "T3 R0.2 O3 F80 Q40 D0.3 E0.1 S1500 X0 Z0" },
 
     { "11", "INS", "" },                    /* one blank line */
     { "16", "SETUP", "G970 X0 U0 Z0 W0\nG971 X0 Z0 I0 E0\nG972 C0\nG973 P0" },

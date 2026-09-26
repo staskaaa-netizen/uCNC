@@ -33,7 +33,8 @@ cannot have the spindle, the travel or the panel's glass.
 - On TOOLS: the table's rows above and the tool the cursor is on below - its
   shape on the crosshair and its numbers under it. Walk the cursor down the
   table and the drawing has to change with it; a row that is not a tool shows
-  nothing.
+  nothing. The 3x3 there is the table's own group (`TABLE`: `ADD T1`...), not the
+  program's cycle menu, and `A` still leaves the pad.
 - Open TOOLS on the machine, from every screen: it has to come up at once, with
   the pointer on the tool the program is using. This is the screen that read the
   table through a 24 KB stack frame before (see the module README) - a hang or a
@@ -41,6 +42,9 @@ cannot have the spindle, the travel or the panel's glass.
 - In a run: the **mark follows the cut**, line by line, and the tool glyph rides
   the machine's own position on the drawing. Walk the cursor before the run and
   the mark is the line the operator left it on.
+- Send the machine **off the drawing's view** (a `G0` past the stock's envelope)
+  while it is cutting: the tool has to be held on the pane's edge, not vanish
+  (bench: *"tool itself is gone one retrun on g0"*).
 - The mark is the **unit** the machine is cutting, not a row of its expansion: a
   `G71` block stays marked as the block while its roughing passes go out, and the
   pale path behind it covers the same rows (bench: *"it seems to when try to mark

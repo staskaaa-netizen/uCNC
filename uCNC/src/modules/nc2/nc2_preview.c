@@ -987,22 +987,29 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
     nc2_emitted_preview(doc, &preview, z0_x, stock_w, stock_top, stock_h);
     /* The tool, riding the cut: the machine's own position, drawn as the shape
        its table row describes - nc's live tool, which the port had left out. It
-       is only drawn while the machine is moving, and only when the whole glyph
-       is inside the pane: a tool drawn outside the area that repaints would
-       stay on the glass (`nc`'s own rule). */
+       is only drawn while the machine is moving. Off the drawing's view it is
+       held on the pane's edge rather than dropped: a lathe hand reads "the tool
+       is off that way" from a marker on the border, and a glyph that simply
+       vanishes on the return rapid - "tool itself is gone one retrun on g0" -
+       says nothing at all. nc dropped it instead, and its own note says why it
+       could not hold it there (the marker had nowhere to be taken back from);
+       the box above is what takes it back now. */
     if (run && run->busy && run->tool && run->tool->valid) {
         int tx = nc2_map_z(&preview, z0_x, stock_w, run->z);
         int ty = nc2_map_x(&preview, stock_top, stock_h,
                            (run->x < 0.0f ? -run->x : run->x) * 2.0f);
+        int span = 2 * NC2_LIVE_TOOL_GLYPH + 2;
 
-        if (tx >= x && tx + NC2_LIVE_TOOL_GLYPH <= x + w &&
-            ty >= y && ty + NC2_LIVE_TOOL_GLYPH <= y + h) {
-            nc2_draw_tool_glyph(tx, ty, NC2_LIVE_TOOL_GLYPH, run->tool,
-                                nc2_col_prev_bg());
-            /* Where it was drawn, so the next frame can take it back. */
-            g_nc2_tool_box_x = tx - NC2_LIVE_TOOL_GLYPH;
-            g_nc2_tool_box_y = ty - NC2_LIVE_TOOL_GLYPH;
-        }
+        tx = nc2_clampi(tx, x + NC2_LIVE_TOOL_GLYPH,
+                        x + w - NC2_LIVE_TOOL_GLYPH - 1);
+        ty = nc2_clampi(ty, y + NC2_LIVE_TOOL_GLYPH,
+                        y + h - NC2_LIVE_TOOL_GLYPH - 1);
+        nc2_draw_tool_glyph(tx, ty, NC2_LIVE_TOOL_GLYPH, run->tool,
+                            nc2_col_prev_bg());
+        /* Where it was drawn, so the next frame can take it back - and inside
+           the pane, so the box is always somewhere the frame repaints. */
+        g_nc2_tool_box_x = nc2_clampi(tx - NC2_LIVE_TOOL_GLYPH, x, x + w - span);
+        g_nc2_tool_box_y = nc2_clampi(ty - NC2_LIVE_TOOL_GLYPH, y, y + h - span);
     }
         g_nc2_preview_geom_us = mcu_micros() - t0;
     }

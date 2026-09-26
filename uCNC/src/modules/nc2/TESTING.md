@@ -50,6 +50,10 @@ cannot have the spindle, the travel or the panel's glass.
   stays on the row the operator stepped from.
 - `# RELOAD` after a fault: the fault clears, the file is read back off the
   card, and the run is over.
+- **Fault a program on purpose** (a word with no number, `G0 X`): the strip says
+  `uCNC ERROR` and the notes above the 3x3 carry the sentence - the line, the
+  code and what it means, in red. The console has the same thing; the point is
+  that the glass does not need the PC to explain a stop.
 - **The live stock**, on the glass: start a run with the tool parked off the
   stock and watch the material come off from the tool's X down as the cut
   travels - the first frame must not read the parking position as a cut, and a

@@ -1737,6 +1737,90 @@ static int host_live2test(void)
     return 0;
 }
 
+/* A line the controller refuses has to be said on the screen: the strip's own
+   word (`uCNC ERROR`) is a glance, and the sentence names the line, the code and
+   what it means (bench: "it says ucnc erro in strip only but not message
+   itself?"). The fixture is a program whose third line has a word with no
+   number - `G0 X` - which is what the controller answers `error:2` to. */
+static int host_fault2test(void)
+{
+    static const char *const program = "/D/nc/files/fault2.nc";
+    static const char *const text =
+        "G0 X10 Z2\n"
+        "G1 X12 Z2 F100\n"
+        "G0 X\n";
+    uint32_t err_rgb;
+    nc2_document_t doc;
+    unsigned guard;
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!host_fs_write_text(program, text)) {
+        puts("fault2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    if (!nc2_visual_open(program)) {
+        puts("fault2test: FAIL the fixture does not load");
+        return 1;
+    }
+    nc2_visual_select_mode(NC2_MODE_RUN);
+    host_pump_idle(32u);
+    nc2_visual_key('3');                    /* FULL */
+    for (guard = 0u; guard < 200000u; guard++) {
+        if (!nc2_run_streaming() && host_machine_idle()) {
+            break;
+        }
+        host_pump(1u);
+    }
+    host_pump_idle(32u);
+    nc2_visual_draw();
+    if (!nc2_run_error()) {
+        puts("fault2test: FAIL the bad line was accepted");
+        failures++;
+    } else if (!strstr(nc2_visual_status(), "error 2") ||
+               !strstr(nc2_visual_status(), "Line 3")) {
+        printf("fault2test: FAIL the screen says \"%s\"\n",
+               nc2_visual_status());
+        failures++;
+    }
+    /* And it is said where the operator reads it: the notes above the 3x3, in
+       the fault's own red. */
+    err_rgb = host_panel_rgb(nc2_col_error());
+    {
+        int x;
+        int found = 0;
+
+        for (x = NC2_NOTES_X + 4; x < NC2_NOTES_X + NC2_NOTES_W - 4; x++) {
+            int y;
+
+            for (y = NC2_NOTES_Y; y < NC2_NOTES_Y + 18; y++) {
+                if (host_view_at(x, y) == err_rgb) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (found) {
+                break;
+            }
+        }
+        if (!found) {
+            puts("fault2test: FAIL the message is not in the notes, in red");
+            failures++;
+        }
+    }
+    nc2_document_init(&doc);
+    if (failures) {
+        printf("fault2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    printf("fault2test: PASS the refusal reads \"%s\" on the screen\n",
+           nc2_visual_status());
+    return 0;
+}
+
 /* The code pane's scroll: the cursor walks down and the *text* moves, so the
    rows after the cursor's stay in view. The bench: "cursor should never reach
    last line. in g code it is always necessary to see next line. so as before
@@ -3930,6 +4014,8 @@ int host_tests_run(int argc, char **argv)
             return host_fps2test();
         if (strcmp(argv[i], "--scroll2test") == 0)
             return host_scroll2test();
+        if (strcmp(argv[i], "--fault2test") == 0)
+            return host_fault2test();
         if (strcmp(argv[i], "--manual2test") == 0)
             return host_manual2test();
         if (strcmp(argv[i], "--tools2test") == 0)

@@ -100,6 +100,16 @@ message, the cursor); a frame that changes nothing paints the drawing and the
 machine's strip and leaves the rest of the pixels alone - the bench: *"fps is
 dead slow - again full screen is refreshed not only preview area?"*
 
+**A refused line is said, not just flagged.** When the controller refuses a line
+the strip says `uCNC ERROR` - a glance - and the notes say the sentence: which
+line of the program it was, the code, and what it means (`Line 8 error 2: Invalid
+number`). The words come from the module that refused the line when it has any
+(`g7x_take_refusal_text()`), and from `nc_feedback_error()`'s own table
+otherwise; the bench found the gap by faulting a program and seeing only the
+strip's word (bench: *"it says ucnc erro in strip only but not message
+itself?"*). `--fault2test` runs a program whose line has a word with no number
+and insists the sentence names the line.
+
 **The word under the cursor is named**, on the row above it, in EDIT and TOOLS:
 `>  X position`, `>  Depth/pass`, from the same table nc kept (`nc2_vocab.c`).
 The pane's own top line is used when the cursor is on the first row - the row
@@ -358,6 +368,7 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built (18) | the turned screen and its layout: the renderer turns the picture a quarter (`lvds_hstx.h` states it once, `lvds_renderer/README.md` says why the scanout is untouched), and `nc2` is redrawn for a 600x800 screen - header, drawing, one strip, then the text with the pad beside it. The strip is the DRO: work X and Z, feed, spindle and the state word on one line, drawn on every screen, the machine's colour on it. The drawing is on every screen now, MANUAL's included. Two things the new shape exposed and this change fixes: the **run used to inherit the tool table** (the mode key walks EDIT, TOOLS, RUN, and TOOLS edits the table - so `3 FULL` straight after a look at the tools would have sent the table to the machine), and the station's window, its frames and every check now read the picture through the same turn. `--live2test` and `--label2test` are the two that read the new bands |
 | built (19) | the second bench pass on that layout: the strip is the screen's **centre line** (it was a few rows below it, put there to fit seventeen program rows - the bench: *"split is not per center ... no not needed here at all. so make it at the middle as asked"*), the space above the 3x3 carries the **notes** - an error first, in the fault's red, then the screen's helpers - and the **frame meter** is back (`nc2_visual_fps()`, `--fps2test`), because it is the instrument a layout change is measured with. The helpers moved onto the glass from the station's side strip, which still draws them: the owner of the words is `nc2_visual_usage()` and both read it |
 | built (20) | the third pass, on the things the bench found by using it: the **scroll** keeps six rows after the cursor (`--scroll2test`), the **mark follows the run** - the pacer updated the line in play only while one had never been set, so a full run sat on line 1 (bench: *"on run - it still does not moves the cursors it stays at first ilen"*, pinned by `--pace2test` now counting the moves), **the tool is drawn again** (`nc2_tools.c` + `nc2_draw.c`'s glyph: the live tool on the drawing, and the tool view the TOOLS screen is half made of), and a frame **only paints what changed** (`--fps2test` damages a pixel in the pad's corner and insists a still frame leaves it) |
+| built (21) | the fault the bench hit while cutting: a refused line said `uCNC ERROR` on the strip and nothing else. The refusal now has a sentence where the operator reads - the line, the code and what it means, in the fault's red above the 3x3 - with the module that refused the line handing the words over when it has them (`g7x_take_refusal_text()`) and `nc_feedback_error()`'s table answering otherwise. `--fault2test` runs a program whose line is `G0 X` (a word with no number, the `error:2` the bench saw) and insists the sentence names the line |
 | **switched over** | `nc` is retired: `module.c` loads `nc2`, `rp2350.ini` compiles `modules/nc2/`, and the station builds and drives nc2 (`tools/nc_ui_win/`, `tools/test_nc_ui.py`). nc's sources stay in the tree, unbuilt, as the record of the dialect nc2 replaces (`nc/TODO.md` says so at the top) |
 | next | the drawing's tool panel and the tool glyph that rides the live stock (they need the tool table parsed, which is its own module later) |
 

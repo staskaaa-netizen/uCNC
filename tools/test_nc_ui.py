@@ -233,6 +233,8 @@ if __name__ == "__main__":
          "nc2's frame meter does not count the frames it draws"),
         ("--scroll2test", "scroll2test: PASS",
          "nc2's pane lets the cursor reach the last row"),
+        ("--fault2test", "fault2test: PASS",
+         "nc2 does not say what the controller refused"),
         ("--manual2test", "manual2test: PASS",
          "nc2's MANUAL does not jog, stop or run the spindle"),
         ("--tools2test", "tools2test: PASS",

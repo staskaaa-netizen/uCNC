@@ -17,6 +17,7 @@
 #include "../../core/interpolator.h"
 #include "../../core/parser.h"
 #include "../lvds_renderer/lvds_hstx.h"
+#include "../g7x/g7x.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -90,6 +91,61 @@ uint16_t nc2_visual_fps(void)
 static void nc2_visual_load_tools(void);
 static void nc2_visual_load_tool_table(void);
 static const char *nc2_pad_label(char key);
+static void nc2_statusf(const char *text);
+
+/* The wording of a refused line: the module that refused it knows *why* and
+   hands its reason over (`g7x_take_refusal_text()` - reading it takes it, so it
+   can never explain a later line); otherwise the controller's own code name is
+   all there is. `nc`'s `nc_feedback_error()`, kept where the panel's words
+   live. */
+static const char *nc2_error_text(uint8_t error)
+{
+    const char *why = g7x_take_refusal_text();
+
+    if (why && why[0]) {
+        return why;
+    }
+    switch (error) {
+    case STATUS_BAD_NUMBER_FORMAT: return "Invalid number";
+    case STATUS_INVALID_STATEMENT: return "Invalid parameters or cycle contour";
+    case STATUS_NEGATIVE_VALUE: return "Negative value not allowed";
+    case STATUS_SYSTEM_GC_LOCK: return "Controller locked or cycle canceled";
+    case STATUS_SOFT_LIMIT_ERROR: return "Target exceeds travel limits";
+    case STATUS_GCODE_UNSUPPORTED_COMMAND: return "Unsupported command";
+    case STATUS_GCODE_MODAL_GROUP_VIOLATION: return "Conflicting modal commands";
+    case STATUS_GCODE_UNDEFINED_FEED_RATE: return "Set a valid feed rate (F)";
+    case STATUS_GCODE_COMMAND_VALUE_NOT_INTEGER: return "Integer value required";
+    case STATUS_GCODE_VALUE_WORD_MISSING: return "Required parameter missing";
+    case STATUS_GCODE_UNUSED_WORDS: return "Unexpected parameter";
+    case STATUS_INVALID_PLANE_SELECTED: return "Wrong plane for this command";
+    case STATUS_SPINDLE_RPM_ERROR:
+        return "Spindle feedback/synchronization error";
+    default: return "Command rejected; check parameters";
+    }
+}
+
+/* A line the controller refused, said where the operator reads: which line of
+   the program it was, the code, and what it means. The strip's own word
+   (`uCNC ERROR`) is a glance; this is the sentence (bench: "it says ucnc erro in
+   strip only but not message itself?"). */
+static bool nc2_visual_parse_error(void *args)
+{
+    uint8_t error = *(uint8_t *)args;
+    char text[96];
+
+    if (nc2_run_error()) {
+        snprintf(text, sizeof(text), "Line %lu error %u: %s",
+                 (unsigned long)(nc2_run_error_line() + 1u), (unsigned)error,
+                 nc2_error_text(error));
+    } else {
+        snprintf(text, sizeof(text), "Error %u: %s", (unsigned)error,
+                 nc2_error_text(error));
+    }
+    nc2_statusf(text);
+    g_dirty = true;
+    return EVENT_CONTINUE;
+}
+CREATE_EVENT_LISTENER(cnc_parse_cmd_error, nc2_visual_parse_error);
 
 static void nc2_statusf(const char *text)
 {
@@ -132,6 +188,17 @@ void nc2_visual_init(void)
     nc2_statusf("");
     g_dirty = true;
     nc2_run_init();
+    /* The refusal's own words: the screen is where an operator reads them, and
+       the listener is registered *after* the run's, so the line the run stopped
+       on is already known when the sentence is built. */
+    {
+        static bool error_listener;
+
+        if (!error_listener) {
+            ADD_EVENT_LISTENER(cnc_parse_cmd_error, nc2_visual_parse_error);
+            error_listener = true;
+        }
+    }
     nc2_state_init();
     switch (nc2_state_mode()) {
     case NC2_MODE_MANUAL:

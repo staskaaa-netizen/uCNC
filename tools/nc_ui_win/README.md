@@ -385,6 +385,10 @@ python tools\test_nc_ui.py
 - `--scroll2test` checks the code pane's scroll: twenty lines down a thirty-line
   program, the cursor's row has to be six rows short of the pane's last, and the
   six rows under it have to carry the next lines.
+- `--fault2test` checks what a refused line says: a program whose third line is
+  `G0 X` (a word with no number - the controller answers `error:2`) has to end
+  with the screen reading `Line 3 error 2: Invalid number`, and the sentence has
+  to be in the notes above the 3x3 in the fault's red.
 - `--manual2test` checks nc2's MANUAL: the digits jog the axis each names (X is
   a diameter, so a 0.100 mm step is written `X0.200`), a jog is always the
   `G91 G1 ...` block followed by the `G90` that puts the machine back, `1`/`3`

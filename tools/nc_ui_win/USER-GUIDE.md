@@ -43,8 +43,10 @@ things, top to bottom:
 - the band across the top: the four screens - MANUAL, EDIT, TOOLS, RUN - with
   the one you are on wearing the yellow block, the file it has open, and
   whatever the panel has to say at the right end (a run starting, a stop, a key
-  you pressed, a fault). Everything the panel tells you appears there and
-  nowhere else; there is no strip along the bottom;
+  you pressed, a fault). The small dim `N FPS` in the far corner is the frame
+  meter - a debug reading, not something you use - and everything else the panel
+  tells you appears in the band and nowhere else; there is no strip along the
+  bottom;
 - the drawing of the part, on every screen: the stock, the profile the program
   cuts and its dimensions;
 - the machine's own strip across the middle: the work position in X and Z, the
@@ -55,6 +57,8 @@ things, top to bottom:
 - the program (or the tool table, or the card's list, or MANUAL's stops and
   values) on the left of the bottom band;
 - the 3x3 pad in its corner on the right, which is the machine's own nine keys.
+  The space above it carries the machine's own notes: an error first, in red,
+  and under it what the keys on this screen do.
 
 The drawing is the part, not a picture of the stock: while the tool is moving,
 the material it has taken off is shown where it went - the tool clears the stock

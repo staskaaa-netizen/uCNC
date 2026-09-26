@@ -80,6 +80,11 @@ const char *nc2_visual_slot_label(char key);
    words - what a shell draws as the usage notes beside the machine. */
 size_t nc2_visual_usage(const char *const **lines);
 
+/* The frame meter's last reading: the frames the screen drew in the last whole
+   second. It is a debug reading - the bench asked for it back to test what a
+   change costs the panel - and `--fps2test` is the check that counts them. */
+uint16_t nc2_visual_fps(void);
+
 /* What one pad key means on the active screen, for a shell that draws the
    keypad itself. */
 typedef struct {

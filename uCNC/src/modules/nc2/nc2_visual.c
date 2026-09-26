@@ -29,6 +29,50 @@ static bool g_list;                 /* the file list is the screen */
 static nc2_mode_t g_mode = NC2_MODE_PROGRAM;
 static uint32_t g_last_key_ms;      /* when the screen was last touched */
 
+/* The frame meter - back by the bench's own request ("give me back fps meter it
+   need to be tested"). One frame is one `nc2_visual_draw()`, and the reading is
+   the last whole second's frames; it is what says whether a change cost the
+   panel its frame rate, and the live stock's mask redraw is the one to watch
+   (`nc2/TESTING.md`). It is a debug reading: dim, small, and in the header's
+   far corner, out of everything the operator reads. */
+#define NC2_FPS_COLS 8
+static uint16_t g_nc2_fps;
+static uint16_t g_nc2_fps_frames;
+static uint32_t g_nc2_fps_start_ms;
+
+static void nc2_fps_tick(void)
+{
+    uint32_t now = mcu_millis();
+    uint32_t elapsed;
+
+    if (!g_nc2_fps_start_ms) {
+        g_nc2_fps_start_ms = now;
+    }
+    g_nc2_fps_frames++;
+    elapsed = now - g_nc2_fps_start_ms;
+    if (elapsed >= 1000u) {
+        g_nc2_fps = (uint16_t)(((uint32_t)g_nc2_fps_frames * 1000u) / elapsed);
+        g_nc2_fps_frames = 0u;
+        g_nc2_fps_start_ms = now;
+    }
+}
+
+static void nc2_draw_fps(void)
+{
+    char buf[16];
+
+    snprintf(buf, sizeof(buf), "%u FPS", (unsigned)g_nc2_fps);
+    nc2_text_clip(LVDS_VIEW_WIDTH - 8 -
+                      NC2_FPS_COLS * nc2_col_width(LVDS_FONT_SMALL),
+                  NC2_HEADER_H - 11, buf, NC2_FPS_COLS, nc2_col_dim(),
+                  nc2_col_header(), LVDS_FONT_SMALL);
+}
+
+uint16_t nc2_visual_fps(void)
+{
+    return g_nc2_fps;
+}
+
 /* The panel writes the program back itself once the operator has left it alone
    for a moment, the way nc does: the file on the card is what runs, so an edit
    that is never flushed is an edit that is not there. */
@@ -758,10 +802,14 @@ static void nc2_draw_header(void)
         int msg_x;
         int path_cols;
 
-        if (msg_cols > LVDS_VIEW_WIDTH / (2 * small_w)) {
-            msg_cols = LVDS_VIEW_WIDTH / (2 * small_w);
+        /* The frame meter has the far corner to itself; the message and the
+           file stop short of it. */
+        int fps_w = (NC2_FPS_COLS + 1) * small_w;
+
+        if (msg_cols > (LVDS_VIEW_WIDTH - fps_w) / (2 * small_w)) {
+            msg_cols = (LVDS_VIEW_WIDTH - fps_w) / (2 * small_w);
         }
-        msg_x = LVDS_VIEW_WIDTH - 8 - msg_cols * small_w;
+        msg_x = LVDS_VIEW_WIDTH - 8 - fps_w - msg_cols * small_w;
         path_cols = (msg_x - 12 - x) / small_w;
         if (path_cols > 0 && path[0]) {
             char line[NC2_PATH_MAX + 4];
@@ -775,6 +823,7 @@ static void nc2_draw_header(void)
                           nc2_col_header(), LVDS_FONT_SMALL);
         }
     }
+    nc2_draw_fps();
 }
 
 /* One row of the program: its number, then the text. The row the cursor (or the
@@ -1053,6 +1102,48 @@ static bool nc2_state_is_fault(const nc2_runtime_state_t *rt)
            nc2_run_error();
 }
 
+/* The notes in the space above the 3x3 (the bench: *"use space above 3x3 to fit
+   labels like errors or big message or helpers"*).
+
+   An error goes first and in the fault's own red - it is the one thing an
+   operator must not miss, and it is said here so it cannot be lost among the
+   figures on the strip. What the screen's keys do follows, from the screen's own
+   answer (`nc2_visual_usage()`, the same lines the station's side strip shows),
+   so the machine carries its own help instead of the PC being the only place it
+   is written. */
+static void nc2_draw_notes(void)
+{
+    const char *const *lines = 0;
+    size_t count = nc2_visual_usage(&lines);
+    nc2_runtime_state_t rt;
+    bool fault;
+    int y = NC2_NOTES_Y + 2;
+    int msg_cols = (NC2_NOTES_W - 8) / nc2_col_width(LVDS_FONT_NORMAL);
+    int cols = (NC2_NOTES_W - 8) / nc2_col_width(LVDS_FONT_SMALL);
+    size_t i;
+
+    nc2_state_runtime(&rt);
+    fault = nc2_state_is_fault(&rt);
+    if (g_status[0] || fault) {
+        char text[64];
+
+        if (g_status[0]) {
+            snprintf(text, sizeof(text), "%s", g_status);
+        } else {
+            snprintf(text, sizeof(text), "uCNC %s", nc2_state_label(&rt));
+        }
+        nc2_text_clip(NC2_NOTES_X + 4, y, text, msg_cols,
+                      fault ? nc2_col_error() : nc2_col_accent(), nc2_col_bg(),
+                      LVDS_FONT_NORMAL);
+        y += 18;
+    }
+    for (i = 0u; i < count && y + 8 <= NC2_NOTES_BOTTOM; i++) {
+        nc2_text_clip(NC2_NOTES_X + 4, y, lines[i], cols, nc2_col_dim(),
+                      nc2_col_bg(), LVDS_FONT_SMALL);
+        y += 11;
+    }
+}
+
 /* The machine's own strip, across the middle of the screen: the work position,
    the feed and the spindle, and the state word, on one line. It is the DRO and
    the line between the two halves at once - the top is what the machine is
@@ -1148,13 +1239,16 @@ void nc2_visual_draw(void)
         /* MANUAL is a machine panel: the pane carries the stops and the value
            the keys change and the pad its jog keys. */
         nc2_manual_draw_pane(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H);
+        nc2_draw_notes();
         nc2_draw_pad_band();
     } else {
         nc2_draw_program();
+        nc2_draw_notes();
         nc2_draw_pad_band();
     }
     nc2_visual_clear_dirty();
     lvds_hstx_present();
+    nc2_fps_tick();
 }
 
 /* --- the shell's own questions -------------------------------------------- */

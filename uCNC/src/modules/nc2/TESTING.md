@@ -75,6 +75,13 @@ cannot have the spindle, the travel or the panel's glass.
   does them, on every screen: the panel's grey while nothing happens, the run's
   green while it moves, the red for a fault. It is the only place the state is
   said - the header must not repeat it.
+- The strip has to sit **on the screen's centre line**, and the space above the
+   3x3 has to carry the notes: the error first (red) and the screen's helpers
+   under it, with the pad's caption the line directly above the keys.
+- **The frame meter** (the reading in the header's far corner) is the instrument
+   for the rest of this list: read it while the machine is *cutting* - a still
+   screen legitimately reads low, because it only redraws what changed. Compare
+   it against the last build before a change to the drawing or the live stock.
 - The drawing is on every screen, MANUAL included: start a jog and the part is
   in view above the strip.
 - Read the code pane outdoors and with the panel at an angle: the selected row,

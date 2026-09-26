@@ -38,14 +38,18 @@ this time."* Five bands, top to bottom:
    contour and the dimensions, as nc drew them. **Every screen has it**,
    MANUAL included - the part is what the machine is making, and a jog is worth
    watching against it.
-3. **The strip in the middle**, edge to edge: the machine's own numbers on one
-   line - work X and Z, the feed, the spindle's speed, and the state word at the
-   far end. It is the DRO *and* the one line the layout has between the two
-   halves; it never moves, and its colour is the machine's (the panel's grey
-   idle, the run's green, the fault's red).
+3. **The strip in the middle**, edge to edge - and the screen's own middle, not
+   a place chosen to fit a row count (bench: *"split is not per center ... make
+   it at the middle as asked"*): the machine's own numbers on one line - work X
+   and Z, the feed, the spindle's speed, and the state word at the far end. It
+   is the DRO *and* the one line the layout has between the two halves; it never
+   moves, and its colour is the machine's (the panel's grey idle, the run's
+   green, the fault's red).
 4. **The text pane**, on the left of the band under the strip: the program (or
    the tool table, or the card's list, or MANUAL's own stops and values), one
-   word picked at a time.
+   word picked at a time. It holds whatever the half leaves it - the bench was
+   plain that the row count is not what the split is for: *"no not needed here
+   at all."*
 5. **The 3x3 pad**, pinned in the bottom-right corner. It is the only menu there
    is: no footer strip and no submenu tables, and no borders anywhere - the strip
    above it is the whole of the layout's furniture (the bench: *"only middle
@@ -54,6 +58,20 @@ this time."* Five bands, top to bottom:
    opening it writes its name as a line at the cursor, which is both the title
    and the place the entry lands (the bench kept this one: *"this one is not big
    and we may preserve it"*).
+6. **The notes above the 3x3** (bench: *"use space above 3x3 to fit labels like
+   errors or big message or helpers"*): what the machine has to say, and what
+   the screen's keys do. An error is the first line and wears the fault's red;
+   under it the screen's own helpers (`nc2_visual_usage()`, the same lines the
+   station's side strip draws) fill the space. The pad's caption stays the line
+   directly above the keys.
+
+**The frame meter** is back, because it is how a change is measured on the
+machine (bench: *"give me back fps meter it need to be tested"*). It counts the
+frames the screen actually drew in the last whole second and shows them in the
+header's far corner, dim and small, out of everything the operator reads. A
+still screen legitimately reads low - it only redraws what changed - and a run
+reads the panel's own period; the number to watch when the live stock or the
+drawing changes is the one *while the machine is cutting*.
 
 **A drawing that is the part.** While the tool moves, the stock is drawn from
 what the tool has taken off (nc's live stock): the machine's own position, frame
@@ -311,6 +329,7 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built (16) | the three things the port had invented or dropped, from one bench pass: the drawing's X is a **diameter** again (`nc_preview_map_x()`'s halving - the stock came out right and the profile twice its size), the screen in play wears the **block**, and the **legend** is back (`nc2_vocab.c`, nc's own table). `--vocab2test` insists every word the panel can write is named |
 | built (17) | the live stock, the one thing the port had not carried over: while the tool moves, `nc2_preview.c` paints the material still there from the machine's own position, one sample per turn of the screen's loop, into a one-byte-per-pixel mask in PSRAM (nc's own offset, 512 KiB). The tool takes the material off from its X down to the axis, so what is left of a column still starts where the whole stock did; the stock's bore is not material; a run that parks keeps the part on RUN and EDIT draws the stock whole. `--live2test` reads the glass column by column: the cut is where nc's mask puts it, the tops are untouched, the parked screen holds the part, and the editor has the whole stock again |
 | built (18) | the turned screen and its layout: the renderer turns the picture a quarter (`lvds_hstx.h` states it once, `lvds_renderer/README.md` says why the scanout is untouched), and `nc2` is redrawn for a 600x800 screen - header, drawing, one strip, then the text with the pad beside it. The strip is the DRO: work X and Z, feed, spindle and the state word on one line, drawn on every screen, the machine's colour on it. The drawing is on every screen now, MANUAL's included. Two things the new shape exposed and this change fixes: the **run used to inherit the tool table** (the mode key walks EDIT, TOOLS, RUN, and TOOLS edits the table - so `3 FULL` straight after a look at the tools would have sent the table to the machine), and the station's window, its frames and every check now read the picture through the same turn. `--live2test` and `--label2test` are the two that read the new bands |
+| built (19) | the second bench pass on that layout: the strip is the screen's **centre line** (it was a few rows below it, put there to fit seventeen program rows - the bench: *"split is not per center ... no not needed here at all. so make it at the middle as asked"*), the space above the 3x3 carries the **notes** - an error first, in the fault's red, then the screen's helpers - and the **frame meter** is back (`nc2_visual_fps()`, `--fps2test`), because it is the instrument a layout change is measured with. The helpers moved onto the glass from the station's side strip, which still draws them: the owner of the words is `nc2_visual_usage()` and both read it |
 | **switched over** | `nc` is retired: `module.c` loads `nc2`, `rp2350.ini` compiles `modules/nc2/`, and the station builds and drives nc2 (`tools/nc_ui_win/`, `tools/test_nc_ui.py`). nc's sources stay in the tree, unbuilt, as the record of the dialect nc2 replaces (`nc/TODO.md` says so at the top) |
 | next | the drawing's tool panel and the tool glyph that rides the live stock (they need the tool table parsed, which is its own module later) |
 

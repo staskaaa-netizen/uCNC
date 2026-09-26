@@ -679,6 +679,19 @@ static int host_screen2test(void)
         puts("screen2test: FAIL the drawing pane drew nothing");
         failures++;
     }
+    /* The split is the screen's own middle - the bench asked for it there, not
+       where a row count would put it - and the notes above the 3x3 carry what
+       the screen's keys do. */
+    if (NC2_DRO_Y + NC2_DRO_H / 2 != LVDS_VIEW_HEIGHT / 2) {
+        printf("screen2test: FAIL the strip sits at %d, not the middle\n",
+               NC2_DRO_Y + NC2_DRO_H / 2);
+        failures++;
+    }
+    if (!host_view_ink_in(NC2_NOTES_X + 4, NC2_NOTES_Y + 4, NC2_NOTES_W - 8,
+                          NC2_NOTES_H - 8)) {
+        puts("screen2test: FAIL the space above the pad is empty");
+        failures++;
+    }
 
     /* 2. into G7X. */
     nc2_visual_key('4');
@@ -1690,6 +1703,44 @@ static int host_live2test(void)
     printf("live2test: PASS the run takes the stock off (%d columns, %d "
            "pixels), the top stays, and the editor draws it whole\n",
            cut_columns, lost);
+    return 0;
+}
+
+/* The frame meter, which the bench asked for back to test what a change costs
+   the panel ("give me back fps meter it need to be tested"). The screen counts
+   the frames it draws and keeps the last whole second's worth; the check draws
+   a second of them - one per millisecond of the panel's own clock - and insists
+   the meter counted them and that the reading is on the glass where the
+   operator does not read. */
+static int host_fps2test(void)
+{
+    unsigned i;
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    nc2_visual_draw();
+    for (i = 0u; i < 1200u; i++) {
+        host_pump(1u);              /* one millisecond of the panel's clock */
+        nc2_visual_draw();
+    }
+    if (nc2_visual_fps() < 100u) {
+        printf("fps2test: FAIL the meter reads %u after 1200 frames\n",
+               (unsigned)nc2_visual_fps());
+        failures++;
+    }
+    if (!host_view_ink_in(LVDS_VIEW_WIDTH - 60, 12, 56, 16)) {
+        puts("fps2test: FAIL the reading is not on the glass");
+        failures++;
+    }
+    if (failures) {
+        printf("fps2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    printf("fps2test: PASS the meter read %u frames a second and the reading "
+           "is in the header's corner\n", (unsigned)nc2_visual_fps());
     return 0;
 }
 
@@ -3682,6 +3733,8 @@ int host_tests_run(int argc, char **argv)
             return host_run2test();
         if (strcmp(argv[i], "--live2test") == 0)
             return host_live2test();
+        if (strcmp(argv[i], "--fps2test") == 0)
+            return host_fps2test();
         if (strcmp(argv[i], "--manual2test") == 0)
             return host_manual2test();
         if (strcmp(argv[i], "--tools2test") == 0)

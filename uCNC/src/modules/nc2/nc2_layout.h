@@ -21,18 +21,22 @@
 #define NC2_PREVIEW_X 6
 #define NC2_PREVIEW_Y (NC2_HEADER_H + 4)
 #define NC2_PREVIEW_W (LVDS_VIEW_WIDTH - 12)
+
+/* The strip **in the middle**, where the bench asked for it: the screen's own
+   centre line, not a place chosen to fit a row count (bench: *"make it at the
+   middle as asked"*). It carries the machine's own numbers on one line, edge to
+   edge, and it is both the DRO and the line that separates the two halves. */
+#define NC2_DRO_H 28
+#define NC2_DRO_Y (LVDS_VIEW_HEIGHT / 2 - NC2_DRO_H / 2)
+#define NC2_DRO_X 0
+#define NC2_DRO_W LVDS_VIEW_WIDTH
+
+/* What is left of the top half is the drawing. */
+#define NC2_PREVIEW_BOTTOM (NC2_DRO_Y - 4)
 /* Not `NC2_PREVIEW_H`: that is the drawing's own header guard, and a macro by
    that name hides the whole of `nc2_preview.h` from whatever includes this
    file first. */
-#define NC2_PREVIEW_PANE_H 300
-#define NC2_PREVIEW_BOTTOM (NC2_PREVIEW_Y + NC2_PREVIEW_PANE_H)
-
-/* The strip in the middle: the machine's own numbers, one line, edge to edge -
-   it is both the DRO and the line that separates the two halves. */
-#define NC2_DRO_X 0
-#define NC2_DRO_Y (NC2_PREVIEW_BOTTOM + 4)
-#define NC2_DRO_W LVDS_VIEW_WIDTH
-#define NC2_DRO_H 28
+#define NC2_PREVIEW_PANE_H (NC2_PREVIEW_BOTTOM - NC2_PREVIEW_Y)
 
 /* The bottom band: the text pane on the left, the 3x3 in the corner. */
 #define NC2_BODY_Y (NC2_DRO_Y + NC2_DRO_H + 6)
@@ -52,6 +56,17 @@
 #define NC2_PAD_H 216
 #define NC2_PAD_X (LVDS_VIEW_WIDTH - NC2_PAD_W - 8)
 #define NC2_PAD_Y (NC2_BODY_BOTTOM - NC2_PAD_H)
+
+/* The notes in the space above the 3x3, between the strip and the keys: what
+   the machine has to say (an error, the panel's own message) and, under it,
+   what the screen's keys do - the helpers the station used to keep in its side
+   strip. The pad's caption is the line directly above the keys, so the notes
+   stop short of it. */
+#define NC2_NOTES_X NC2_PAD_X
+#define NC2_NOTES_Y NC2_BODY_Y
+#define NC2_NOTES_W NC2_PAD_W
+#define NC2_NOTES_BOTTOM (NC2_PAD_Y - 24)
+#define NC2_NOTES_H (NC2_NOTES_BOTTOM - NC2_NOTES_Y)
 
 /* The rows the text pane holds, and the files the list shows. */
 #define NC2_CODE_ROWS (NC2_TEXT_H / NC2_ROW_H)

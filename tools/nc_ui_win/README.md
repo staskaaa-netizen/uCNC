@@ -200,9 +200,11 @@ the scanout reads (`lvds_hstx.h` owns the turn, and `lvds_host.c` and this windo
 go through the same statement - a `--dump` is written upright for the same
 reason). On that picture: the header band across the top - the four screens with
 the one in play wearing its block, the file, and everything the screen has to
-say at the right end - the drawing under it, the machine's own strip across the
-middle (work X and Z, feed, spindle, and the state word), and then the program
-on the left with the 3x3 in the corner beside it.
+say at the right end, and the frame meter in the far corner (dim, small, a debug
+reading - the bench asked for it back to test what a change costs the panel) -
+the drawing under it, the machine's own strip across the middle (work X and Z,
+feed, spindle, and the state word), and then the program on the left with the
+3x3 in the corner beside it and the screen's helpers in the space above them.
 
 | Keys | Function |
 | --- | --- |
@@ -374,6 +376,9 @@ python tools\test_nc_ui.py
   every column where it was), the parked RUN screen still holds the part, and
   EDIT draws the whole stock. No picture is compared: the counts of the stock's
   own pixels are.
+- `--fps2test` checks the frame meter: the screen draws a second of frames -
+  one per millisecond of the panel's own clock - and the meter has to have
+  counted them, with the reading drawn in the header's far corner.
 - `--manual2test` checks nc2's MANUAL: the digits jog the axis each names (X is
   a diameter, so a 0.100 mm step is written `X0.200`), a jog is always the
   `G91 G1 ...` block followed by the `G90` that puts the machine back, `1`/`3`

@@ -793,6 +793,18 @@ static void nc2_live_update(const nc2_preview_info_t *p,
        the walk is in diameters and the mapping halves it back. */
     float diam_x = (run->x < 0.0f ? -run->x : run->x) * 2.0f;
 
+    if (!run->cutting) {
+        /* The machine is on its way somewhere - the move from where the tool
+           was parked to the cycle's first point, a jog, a one-shot block, the
+           cycle's own retract. A rapid is not a cut: the walk follows the tool
+           so the next cut starts from where it really is, and takes nothing
+           off the drawing (bench: "g7x leaves more then needed to be
+           cleared"). */
+        g_nc2_live_last_x = diam_x;
+        g_nc2_live_last_z = run->z;
+        g_nc2_live_has_last = true;
+        return;
+    }
     if (g_nc2_live_has_last) {
         nc2_live_sweep(p, z0_x, stock_left, stock_w, stock_top, stock_h,
                        g_nc2_live_last_x, g_nc2_live_last_z, diam_x, run->z);
@@ -935,10 +947,12 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
         g_nc2_tool_box_x = -1;          /* this frame's own box is set below */
 
         /* A cut starts a part, and nothing else does: the mask is made again
-           when the machine starts cutting, and a run that has parked keeps what
-           it made (`nc`'s own rule - the finished part stays on the glass until
-           the drawing is asked for something else). */
-        if (live && (!g_nc2_live_was_cutting || context_changed)) {
+           when the tool starts *cutting* - a rapid, a jog and a one-shot block
+           are the machine moving, not the part being made - and a run that has
+           parked keeps what it made (`nc`'s own rule: the finished part stays
+           on the glass until the drawing is asked for something else). */
+        if (run && run->cutting &&
+            (!g_nc2_live_was_cutting || context_changed)) {
             nc2_live_reset(&preview, stock_w, stock_h);
             paint_all = true;
         }

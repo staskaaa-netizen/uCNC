@@ -82,13 +82,21 @@ still screen legitimately reads low - it only redraws what changed - and a run
 reads the panel's own period; the number to watch when the live stock or the
 drawing changes is the one *while the machine is cutting*.
 
-**A drawing that is the part.** While the tool moves, the stock is drawn from
-what the tool has taken off (nc's live stock): the machine's own position, frame
-by frame, painted as the material still there. A run that has parked keeps the
-finished part on the RUN screen until the drawing is asked for something else;
-EDIT draws the stock whole again. **The tool is on it**: the glyph rides the
-machine's own position while it cuts, drawn as the shape its row's orientation
-code describes (`nc`'s live tool, which the port had left out).
+**A drawing that is the part.** While the tool cuts, the stock is drawn from what
+it has taken off (nc's live stock): the machine's own position, frame by frame,
+painted as the material still there. **Only a cut takes material off.** The
+machine's position is read through the offset in use, and the *line the sender
+handed over* says whether the tool is in the material: a `G0` rapid is the
+machine on its way somewhere, and so are the move from wherever the tool was
+parked to the cycle's first point, a jog (`$J=`) and a one-shot block. Those
+follow the tool so the next cut starts from where it really is, and take nothing
+off the drawing - the bench's *"g7x leaves more then needed to be cleared"* was
+a parking move crossing the stock and cutting a wedge out of the part on the
+glass, which read as stock left uncut where the G71 says it is gone. A run that
+has parked keeps the finished part on the RUN screen until the drawing is asked
+for something else; EDIT draws the stock whole again. **The tool is on it**: the
+glyph rides the machine's own position while it moves, drawn as the shape its
+row's orientation code describes (`nc`'s live tool, which the port had left out).
 
 The drawing starts just under the header: the band above it is what the rulers
 and the dimension callouts reach (54 pixels) and nothing more - the bench kept
@@ -138,7 +146,7 @@ size) is what the first version read every frame.
 
 And a band that is not on the glass is not painted at all: the TOOLS screen's
 pane holds the table's rows, whose own fill paints the part out, so the drawing
-is not drawn there (bench: *"g7x leaves more then needed to be cleared"*).
+is not drawn there.
 
 And what a frame paints has to include what the frame *moves*: the tool glyph
 rides the machine's position and can sit outside the stock, where a repaint that
@@ -440,6 +448,7 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built (19) | the second bench pass on that layout: the strip is the screen's **centre line** (it was a few rows below it, put there to fit seventeen program rows - the bench: *"split is not per center ... no not needed here at all. so make it at the middle as asked"*), the space above the 3x3 carries the **notes** - an error first, in the fault's red, then the screen's helpers - and the **frame meter** is back (`nc2_visual_fps()`, `--fps2test`), because it is the instrument a layout change is measured with. The helpers moved onto the glass from the station's side strip, which still draws them: the owner of the words is `nc2_visual_usage()` and both read it |
 | built (20) | the third pass, on the things the bench found by using it: the **scroll** keeps six rows after the cursor (`--scroll2test`), the **mark follows the run** - the pacer updated the line in play only while one had never been set, so a full run sat on line 1 (bench: *"on run - it still does not moves the cursors it stays at first ilen"*, pinned by `--pace2test` now counting the moves), **the tool is drawn again** (`nc2_tools.c` + `nc2_draw.c`'s glyph: the live tool on the drawing, and the tool view the TOOLS screen is half made of), and a frame **only paints what changed** (`--fps2test` damages a pixel in the pad's corner and insists a still frame leaves it) |
 | built (21) | the fault the bench hit while cutting: a refused line said `uCNC ERROR` on the strip and nothing else. The refusal now has a sentence where the operator reads - the line, the code and what it means, in the fault's red above the 3x3 - with the module that refused the line handing the words over when it has them (`g7x_take_refusal_text()`) and `nc_feedback_error()`'s table answering otherwise. `--fault2test` runs a program whose line is `G0 X` (a word with no number, the `error:2` the bench saw) and insists the sentence names the line |
+| built (22) | the cut is the program's own, from the bench's *"g7x leaves more then needed to be cleared"* - read at first as the TOOLS screen drawing under its rows, and then, with the demo program in hand, as what the drawing does to the part: the material followed *every* machine move, so the way from wherever the tool was parked to the cycle's first point - and a jog, and a one-shot block - cut a wedge out of the part on the glass. The **line the sender handed over** now says whether the tool is in the material (`nc2_run_cutting()`: a `G0`, a `$J=` jog and a row that moves nothing are not cuts), a rapid follows the tool without taking anything off, and the mask's position is read through the offset in use (`parser_machine_to_work()` - a touch-off moved the machine's frame away from the program's and the cut landed beside the part). `--live2test` runs the demo from a park *inside* the stock and reads both directions: the material the program never cuts is untouched, and where it does cut the material ends at the profile |
 | **switched over** | `nc` is retired: `module.c` loads `nc2`, `rp2350.ini` compiles `modules/nc2/`, and the station builds and drives nc2 (`tools/nc_ui_win/`, `tools/test_nc_ui.py`). nc's sources stay in the tree, unbuilt, as the record of the dialect nc2 replaces (`nc/TODO.md` says so at the top) |
 | next | the drawing's tool panel and the tool glyph that rides the live stock (they need the tool table parsed, which is its own module later) |
 

@@ -38,6 +38,10 @@ void nc2_run_set_line(const nc2_document_t *doc, size_t line);
 
 bool nc2_run_active(void);
 bool nc2_run_hold(void);
+/* True while the line the machine is on is one of the program's cuts: a `G0`
+   rapid, a jog or a one-shot block is the machine moving, and the drawing takes
+   no material off there. What the last line handed over was. */
+bool nc2_run_cutting(void);
 bool nc2_run_done(void);
 /* True while a program run is armed - a panel block must not cut into it. */
 bool nc2_run_streaming(void);

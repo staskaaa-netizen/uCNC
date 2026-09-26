@@ -1595,6 +1595,12 @@ static int host_stock_column(int x, uint32_t rgb, int *top, int *bottom)
    material below the tool is gone, its top is where it was, the RUN screen keeps
    the part while the machine is parked, and the editor draws the stock whole.
 
+   And then the demo card's own program, parked *inside* the stock first: the
+   material the program never cuts has to be whole, and where the contour reaches
+   the material has to end at it. A rapid - the parking move, a jog - is the
+   machine on its way somewhere, and it takes nothing off (bench: "g7x leaves
+   more then needed to be cleared").
+
    This is a comparison of the stock's own colour per column of the drawing, not
    a picture: the cut is where nc's mask says it is or the counts say so. */
 static int host_live2test(void)
@@ -1783,6 +1789,201 @@ static int host_live2test(void)
         printf("live2test: FAIL the editor shows %d stock pixels, wanted %d\n",
                whole, before_total);
         failures++;
+    }
+
+    /* And the cut is the *program's* own, in both directions. The run is the
+       demo card's cycle - two `G71`/`G70` pairs - parked *inside* the stock's
+       envelope so the move to the cycle's first point is a cut the program
+       never asked for, and every column is read twice: once for the contour
+       the finish draws, once for the material's edge.
+
+         - A column the contour reaches may not keep material past it: that
+           would be stock left uncut where the command says it is gone (bench:
+           "no remaing is bigger than x/z in g71 command").
+         - A column the contour never reaches may not lose any material at
+           all. The tool's parking - and a jog, and a one-shot block - is not a
+           cut, and the material follows the program, not the machine's way of
+           getting to it (bench: "g7x leaves more then needed to be cleared").
+
+       The bench's own program, with its own numbers. */
+    {
+        static const char *const cycle = "/D/nc/files/live2cycle.nc";
+        static const char *const cycle_text =
+            "G970 X-5 U60 Z-60 W5\n"
+            "G971 X50 Z50 I0 E0\n"
+            "G973 P7\n"
+            "T2\n"
+            "M3 S450\n"
+            "G0 X52 Z2\n"
+            "G71 U3 R1 X1 Z1 F500 P50 Q55\n"
+            "N50 G1 X30 Z2\n"
+            "G1 X30 Z-15 C2\n"
+            "G1 X35 Z-15\n"
+            "G1 X35 Z-25\n"
+            "N55 G1 X52 Z-25\n"
+            "G70 P50 Q55\n"
+            "G71 U2 R1 X1 Z1 F500 P100 Q200\n"
+            "N100 G1 X35 Z0 R0\n"
+            "G1 X35 Z-20 R5\n"
+            "N200 G1 X50 Z-20\n"
+            "G70 P100 Q200\n"
+            "G1 X60 Z5 C0 R0\n"
+            "M5\n";
+        uint32_t profile_rgb = host_panel_rgb(nc2_col_prev_profile());
+        static bool has_profile[NC2_PREVIEW_W + 2];
+        static int stock_rows[NC2_PREVIEW_W];
+        int stock_top_row = NC2_PREVIEW_BOTTOM;
+        int stock_bottom_row = NC2_PREVIEW_Y;
+        int stock_first = NC2_PREVIEW_X + NC2_PREVIEW_W;
+        int stock_last = NC2_PREVIEW_X;
+        int columns = 0;
+        int too_deep = 0;
+        int stolen = 0;
+
+        if (!host_fs_write_text(cycle, cycle_text)) {
+            puts("live2test: FAIL cannot write the cycle fixture");
+            failures++;
+        } else {
+            nc2_visual_select_mode(NC2_MODE_RUN);
+            if (!nc2_visual_open(cycle)) {
+                puts("live2test: FAIL the cycle fixture does not load");
+                failures++;
+            } else {
+                /* The stock's own box, off the idle RUN screen: the material is
+                   whole there, and the columns the cut reaches are measured
+                   against it. */
+                nc2_visual_draw();
+                for (x = NC2_PREVIEW_X; x < NC2_PREVIEW_X + NC2_PREVIEW_W; x++) {
+                    int top = 0;
+                    int bottom = 0;
+                    int count = host_stock_column(x, stock_rgb, &top, &bottom);
+
+                    stock_rows[x - NC2_PREVIEW_X] = count;
+                    if (count <= 0) {
+                        continue;
+                    }
+                    if (top < stock_top_row) stock_top_row = top;
+                    if (bottom > stock_bottom_row) stock_bottom_row = bottom;
+                    if (x < stock_first) stock_first = x;
+                    if (x > stock_last) stock_last = x;
+                }
+                if (stock_last - stock_first < 100 || stock_bottom_row -
+                    stock_top_row < 60) {
+                    printf("live2test: FAIL the cycle's stock is %d..%d rows "
+                           "%d..%d\n", stock_first, stock_last, stock_top_row,
+                           stock_bottom_row);
+                    failures++;
+                }
+
+                /* Park the tool *inside* the envelope, at an X small enough to
+                   leave a wide sweep if the machine's way to the cycle were
+                   read as a cut. */
+                if (!nc2_run_send_line("G0 X5 Z-30")) {
+                    puts("live2test: FAIL the panel will not park in the stock");
+                    failures++;
+                }
+                host_pump_idle(64u);
+                nc2_visual_draw();
+
+                nc2_run_reset();
+                host_pump_idle(64u);
+                nc2_visual_draw();
+                nc2_visual_key('3');            /* 3 FULL: run the program */
+                host_pump(1u);
+                nc2_visual_draw();
+                for (i = 0u; i < 200000u; i++) {
+                    if (host_machine_idle() && !nc2_run_streaming()) {
+                        break;
+                    }
+                    host_pump(1u);
+                    nc2_visual_draw();
+                }
+                host_pump_idle(64u);
+                nc2_visual_draw();
+
+                /* Where the contour is, column by column: what the program
+                   cuts, and what it does not. */
+                memset(has_profile, 0, sizeof(has_profile));
+                for (x = NC2_PREVIEW_X; x < NC2_PREVIEW_X + NC2_PREVIEW_W; x++) {
+                    int y;
+
+                    for (y = NC2_PREVIEW_Y; y < NC2_PREVIEW_BOTTOM; y++) {
+                        if (host_view_at(x, y) == profile_rgb) {
+                            has_profile[x - NC2_PREVIEW_X] = true;
+                            break;
+                        }
+                    }
+                }
+                for (x = NC2_PREVIEW_X; x < NC2_PREVIEW_X + NC2_PREVIEW_W; x++) {
+                    int profile_y = -1;
+                    int material_y = -1;
+                    int col = x - NC2_PREVIEW_X;
+                    int y;
+
+                    for (y = NC2_PREVIEW_Y; y < NC2_PREVIEW_BOTTOM; y++) {
+                        uint32_t c = host_view_at(x, y);
+
+                        if (c == profile_rgb) {
+                            profile_y = y;      /* the finish contour's row */
+                        }
+                        if (c == stock_rgb) {
+                            material_y = y;     /* the material still there */
+                        }
+                    }
+                    /* A column the contour does not reach is the material the
+                       program never asks for. Its own edge, minus the couple of
+                       pixels the whole-stock reading is off by - and the stock
+                       has to be there, not the pane's ground. */
+                    if (profile_y < 0) {
+                        /* A cut is three columns wide, so its own edge reaches
+                           one column past the contour's last point. Those
+                           columns are the cut's, not material the program never
+                           touches. */
+                        if (has_profile[col > 2 ? col - 2 : 0] ||
+                            has_profile[col > 1 ? col - 1 : 0] ||
+                            has_profile[col + 1] || has_profile[col + 2]) {
+                            continue;
+                        }
+                        if (stock_rows[col] > 20 &&
+                            (material_y < 0 ||
+                             material_y < stock_bottom_row - 2)) {
+                            if (!stolen) {
+                                printf("live2test: FAIL column %d lost material "
+                                       "the program never cut (edge %d, stock "
+                                       "ends at %d)\n", x, material_y,
+                                       stock_bottom_row);
+                            }
+                            stolen++;
+                        }
+                        continue;
+                    }
+                    columns++;
+                    if (material_y > profile_y + 2) {
+                        if (!too_deep) {
+                            printf("live2test: FAIL column %d keeps material to "
+                                   "row %d, the profile is at %d\n", x,
+                                   material_y, profile_y);
+                        }
+                        too_deep++;
+                    }
+                }
+                if (columns < 20) {
+                    printf("live2test: FAIL the cycle drew no profile (%d "
+                           "columns)\n", columns);
+                    failures++;
+                }
+                if (too_deep) {
+                    printf("live2test: FAIL %d of %d columns keep material "
+                           "below the profile\n", too_deep, columns);
+                    failures++;
+                }
+                if (stolen) {
+                    printf("live2test: FAIL %d columns lost material outside "
+                           "the profile\n", stolen);
+                    failures++;
+                }
+            }
+        }
     }
 
     if (failures) {

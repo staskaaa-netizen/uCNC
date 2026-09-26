@@ -79,6 +79,16 @@ cannot have the spindle, the travel or the panel's glass.
   and the stock is whole again. This is the one place the mask's timing can be
   seen: `--live2test` proves the same rule over frames the host draws, but not
   the panel's frame rate or what a long program costs a frame.
+- **The parking move does not cut**, on the glass: park the tool *inside* the
+  stock's envelope - at a small X and a Z inside the part - then run the demo.
+  The material the program does not cut must still be whole on the RUN screen at
+  the end, and the part must be the profile's own shape: the move from the park
+  to the cycle's first point crosses the stock on the glass, and reading it as a
+  cut left a wedge of the part gone (bench: *"g7x leaves more then needed to be
+  cleared"*, and the drawing then showed stock left uncut where the `G71`'s X/Z
+  say it is gone). A jog does the same thing - jog into the stock, run, and the
+  part is unchanged where the jog went. `--live2test`'s cycle check is the same
+  rule over host frames.
 - Feed hold, Stop during queued motion, and a run that walks off the end of the
   card's file are bench items - the suites prove targets and ordering, not
   motion.

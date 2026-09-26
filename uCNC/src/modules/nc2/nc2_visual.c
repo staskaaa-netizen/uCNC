@@ -1506,17 +1506,30 @@ static void nc2_draw_preview(bool full)
     nc2_tool_t tool;
 
     /* On the TOOLS screen the pane holds the table's rows, and the rows' own
-       fill would paint the part out anyway - drawing it first is work nobody
-       sees (bench: "g7x leaves more then needed to be cleared"). */
+       fill would paint the part out anyway: drawing it first is work nobody
+       sees. (What the bench meant by "g7x leaves more then needed to be
+       cleared" is the cut itself and lives in `nc2_preview.c`.) */
     if (g_mode == NC2_MODE_TOOLS) {
         return;
     }
     nc2_state_runtime(&rt);
     run.busy = nc2_state_busy() || nc2_run_active() || nc2_run_hold();
+    run.cutting = nc2_run_cutting();
     run.screen_run = g_mode == NC2_MODE_RUN;
     run.full = full;
-    run.x = rt.x;
-    run.z = rt.z;
+    /* The drawing is in the program's own frame, so the machine's position is
+       read through the offset in use - the same conversion the DRO makes. A
+       touch-off (a `G10 L20`) moves the machine's frame away from the program's,
+       and a cut drawn from the machine's raw position lands beside the part. */
+    {
+        float work[AXIS_COUNT] = { 0 };
+
+        work[AXIS_X] = rt.x;
+        work[AXIS_Z] = rt.z;
+        parser_machine_to_work(work);
+        run.x = work[AXIS_X];
+        run.z = work[AXIS_Z];
+    }
     run.tool = 0;
     if (run.busy && nc2_tools_active(&g_doc, nc2_visual_run_line(), &tool)) {
         run.tool = &tool;

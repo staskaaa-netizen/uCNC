@@ -14,6 +14,10 @@ flags, each of which sets up the card it needs:
     --emit2test    the sender against nc's, line for line, from the top and mid-file
     --run2test     the run hands over what the program means, the machine arrives,
                    and the DRO floats only while it is busy
+    --live2test    the cut is the program's own: a taper comes off the stock with
+                   the tops untouched, a parked run keeps the part, the editor
+                   draws the stock whole, and the demo run from a park inside the
+                   stock leaves the material the program never cuts alone
     --manual2test  the jog keys move the machine, the stops are typed, the spindle
                    runs from the keys, and the axis zeroes and touches off
     --present2test every screen hands its frame to the panel (the copy the

@@ -376,6 +376,13 @@ python tools\test_nc_ui.py
   every column where it was), the parked RUN screen still holds the part, and
   EDIT draws the whole stock. No picture is compared: the counts of the stock's
   own pixels are.
+- `--live2test` also runs the demo card's own program - the two `G71`/`G70`
+  pairs, with the tool parked *inside* the stock's envelope first - and reads
+  the pane twice per column: where the contour reaches, the material has to end
+  at it; where it does not, the stock has to be whole. That is the bench's
+  *"g7x leaves more then needed to be cleared"*: the parking move used to cross
+  the stock and cut a wedge out of the part on the glass, so the drawing showed
+  stock left uncut where the `G71`'s X/Z say it is gone.
 - `--fps2test` checks the frame meter: the screen draws a second of frames -
   one per millisecond of the panel's own clock - and the meter has to have
   counted them, with the reading drawn in the header's far corner. It also

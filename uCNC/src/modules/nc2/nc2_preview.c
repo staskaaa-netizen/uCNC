@@ -598,6 +598,15 @@ static bool g_nc2_live_draw_all;
 static uint32_t g_nc2_preview_stock_us;
 static uint32_t g_nc2_preview_geom_us;
 
+/* The box the tool glyph was drawn in last frame. It rides the machine's
+   position and it can sit outside the stock - where a repaint that covers only
+   the stock never takes it back, so the drawings leave a trail of tools behind
+   them (bench: *"redraw does have some tail plus its covers only stock"*). The
+   box is filled with the pane's ground before the frame draws, and the mask's
+   band puts the material back under it. */
+static int g_nc2_tool_box_x;
+static int g_nc2_tool_box_y;
+
 void nc2_preview_times(uint32_t *stock_us, uint32_t *geom_us)
 {
     if (stock_us) {
@@ -667,6 +676,23 @@ static void nc2_live_reset(const nc2_preview_info_t *p, int stock_w, int stock_h
     g_nc2_live_dirty_y1 = g_nc2_live_h - 1;
     g_nc2_live_draw_all = true;
     g_nc2_live_ready = true;
+}
+
+/* Hand the mask's rows [y0, y1] to the drawing: something painted over them
+   (the tool's own box, taken back) and the material has to come back. */
+static void nc2_live_mark_rows(int y0, int y1)
+{
+    if (!g_nc2_live_ready) {
+        return;
+    }
+    y0 = nc2_clampi(y0, 0, g_nc2_live_h - 1);
+    y1 = nc2_clampi(y1, 0, g_nc2_live_h - 1);
+    if (y0 < g_nc2_live_dirty_y0) {
+        g_nc2_live_dirty_y0 = y0;
+    }
+    if (y1 > g_nc2_live_dirty_y1) {
+        g_nc2_live_dirty_y1 = y1;
+    }
 }
 
 /* Take a rectangle of material away. */
@@ -884,6 +910,25 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
         bool keep = run && run->screen_run && !run->busy && g_nc2_live_ready &&
                     !context_changed;
 
+        /* Last frame's tool, taken back before anything this frame is drawn:
+           its box is filled with the pane's ground - the tool rides the
+           machine's position, and it can sit outside the stock, where a repaint
+           that covered only the stock would leave it behind - and the rows of
+           the box that lie inside the stock go to the mask's band, which puts
+           the material back under it. */
+        if (!paint_all && g_nc2_tool_box_x >= 0) {
+            int span = 2 * NC2_LIVE_TOOL_GLYPH + 2;
+
+            nc2_fill(g_nc2_tool_box_x, g_nc2_tool_box_y, span, span,
+                     nc2_col_prev_bg());
+            if (g_nc2_tool_box_x + span > stock_left &&
+                g_nc2_tool_box_x < stock_left + stock_w) {
+                nc2_live_mark_rows(g_nc2_tool_box_y - stock_top,
+                                   g_nc2_tool_box_y + span - 1 - stock_top);
+            }
+        }
+        g_nc2_tool_box_x = -1;          /* this frame's own box is set below */
+
         /* A cut starts a part, and nothing else does: the mask is made again
            when the machine starts cutting, and a run that has parked keeps what
            it made (`nc`'s own rule - the finished part stays on the glass until
@@ -949,6 +994,9 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
             ty >= y && ty + NC2_LIVE_TOOL_GLYPH <= y + h) {
             nc2_draw_tool_glyph(tx, ty, NC2_LIVE_TOOL_GLYPH, run->tool,
                                 nc2_col_prev_bg());
+            /* Where it was drawn, so the next frame can take it back. */
+            g_nc2_tool_box_x = tx - NC2_LIVE_TOOL_GLYPH;
+            g_nc2_tool_box_y = ty - NC2_LIVE_TOOL_GLYPH;
         }
     }
         g_nc2_preview_geom_us = mcu_micros() - t0;

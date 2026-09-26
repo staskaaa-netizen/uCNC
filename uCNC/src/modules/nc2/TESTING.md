@@ -90,9 +90,13 @@ cannot have the spindle, the travel or the panel's glass.
   does them, on every screen: the panel's grey while nothing happens, the run's
   green while it moves, the red for a fault. It is the only place the state is
   said - the header must not repeat it.
-- The strip has to sit **on the screen's centre line**, and the space above the
-   3x3 has to carry the notes: the error first (red) and the screen's helpers
-   under it, with the pad's caption the line directly above the keys.
+- The strip has to sit **25 pixels above the screen's centre** (`NC2_SPLIT_RISE`)
+   and the space above the 3x3 has to carry the notes: the error first (red) and
+   the screen's helpers under it, with the pad's caption the line directly above
+   the keys.
+- **Watch the tool while it cuts**: no trail may be left behind it. The glyph
+   rides the machine's position, outside the stock as well as over it, and every
+   frame puts back the box the last one drew it in.
 - **The frame meter** (the reading in the header's far corner) is the instrument
    for the rest of this list: read it while the machine is *cutting* - a still
    screen legitimately reads low, because it only redraws what changed. Compare

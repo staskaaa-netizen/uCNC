@@ -701,12 +701,14 @@ static int host_screen2test(void)
         puts("screen2test: FAIL the drawing pane drew nothing");
         failures++;
     }
-    /* The split is the screen's own middle - the bench asked for it there, not
-       where a row count would put it - and the notes above the 3x3 carry what
-       the screen's keys do. */
-    if (NC2_DRO_Y + NC2_DRO_H / 2 != LVDS_VIEW_HEIGHT / 2) {
-        printf("screen2test: FAIL the strip sits at %d, not the middle\n",
-               NC2_DRO_Y + NC2_DRO_H / 2);
+    /* The split sits above the screen's middle by the bench's own 25 pixels
+       ("move tis all ~ 25 px to the top, its have plenty of space") and not
+       where the top of the bottom band would put it, and the notes above the 3x3
+       carry what the screen's keys do. */
+    if (NC2_DRO_Y + NC2_DRO_H / 2 != LVDS_VIEW_HEIGHT / 2 - NC2_SPLIT_RISE) {
+        printf("screen2test: FAIL the strip sits at %d, not %d\n",
+               NC2_DRO_Y + NC2_DRO_H / 2,
+               LVDS_VIEW_HEIGHT / 2 - NC2_SPLIT_RISE);
         failures++;
     }
     if (!host_view_ink_in(NC2_NOTES_X + 4, NC2_NOTES_Y + 4, NC2_NOTES_W - 8,
@@ -1653,6 +1655,13 @@ static int host_live2test(void)
     }
     host_pump_idle(64u);
     nc2_visual_draw();
+    /* And the tool is gone with the run: the glyph rides the machine's
+       position, and a frame that only repaints the stock must not leave the
+       last one it drew behind (bench: "redraw does have some tail"). */
+    if (host_preview_has_tool()) {
+        puts("live2test: FAIL the tool was left behind by the parked run");
+        failures++;
+    }
 
     cut_top = NC2_PREVIEW_X + NC2_PREVIEW_W;
     cut_bottom = NC2_PREVIEW_X;

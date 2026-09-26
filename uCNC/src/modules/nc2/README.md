@@ -38,13 +38,17 @@ this time."* Five bands, top to bottom:
    contour and the dimensions, as nc drew them. **Every screen has it**,
    MANUAL included - the part is what the machine is making, and a jog is worth
    watching against it.
-3. **The strip in the middle**, edge to edge - and the screen's own middle, not
-   a place chosen to fit a row count (bench: *"split is not per center ... make
-   it at the middle as asked"*): the machine's own numbers on one line - work X
-   and Z, the feed, the spindle's speed, and the state word at the far end. It
-   is the DRO *and* the one line the layout has between the two halves; it never
-   moves, and its colour is the machine's (the panel's grey idle, the run's
-   green, the fault's red).
+3. **The strip in the middle**, edge to edge - and the screen's own middle to
+   begin with, not a place chosen to fit a row count (bench: *"split is not per
+   center ... make it at the middle as asked"*), then 25 pixels above it once
+   the drawing had shown it had room to spare (bench: *"move tis all ~ 25 px to
+   the top, its have plenty of space"*; `NC2_SPLIT_RISE`). It carries the
+   machine's own numbers on one line - work X and Z, the feed, the spindle's
+   speed, and the state word at the far end. It is the DRO *and* the one line the
+   layout has between the two halves; it never moves, and its colour is the
+   machine's (the panel's grey idle, the run's green, the fault's red). The top
+   half gives up a row and a half of height for it, which the bottom band's text
+   gains.
 4. **The text pane**, on the left of the band under the strip: the program (or
    the tool table, or the card's list, or MANUAL's own stops and values), one
    word picked at a time. It holds whatever the half leaves it - the bench was
@@ -105,6 +109,14 @@ paints it whole, and the live stock's mask is painted over the rows the cut
 actually took material from - not the whole mask, and not the band below a cut
 that was painted when it was cut. The mask's own scan (516x165 bytes at this
 size) is what the first version read every frame.
+
+And what a frame paints has to include what the frame *moves*: the tool glyph
+rides the machine's position and can sit outside the stock, where a repaint that
+covered only the stock would leave every position it passed through on the glass
+(bench: *"redraw does have some tail plus its covers only stock"*). The glyph's
+own box is remembered, filled with the pane's ground before the frame draws, and
+the rows of it that lie inside the stock are handed to the mask's band so the
+material comes back under it.
 
 **Where a frame's time goes** is on the console, once a second, whenever the
 screen is drawing:

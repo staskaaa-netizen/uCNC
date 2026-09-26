@@ -230,6 +230,11 @@ void nc2_emit_stream_set_log(nc2_emit_stream_t *stream, bool log)
     }
 }
 
+bool nc2_emit_stream_failed(const nc2_emit_stream_t *stream)
+{
+    return stream && stream->error != G7X_OK;
+}
+
 size_t nc2_emit_stream_line(const nc2_emit_stream_t *stream)
 {
     return stream ? stream->source_line : 0u;

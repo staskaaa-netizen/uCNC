@@ -4,6 +4,7 @@
 #include "nc2.h"
 
 #include "../g7x/g7x_contour.h"
+#include "../g7x/g7x.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -76,6 +77,12 @@ void nc2_emit_stream_begin(nc2_emit_stream_t *stream,
                            const nc2_document_t *doc,
                            size_t start_line);
 void nc2_emit_stream_set_log(nc2_emit_stream_t *stream, bool log);
+
+/* Whether the stream stopped on a fault rather than on the end of the program:
+   a contour that never closed, a range the rows do not carry, a generated block
+   the parser refused. A run that ends on one of these is not a finished
+   program, and the pacer has to say so instead of "stream done". */
+bool nc2_emit_stream_failed(const nc2_emit_stream_t *stream);
 size_t nc2_emit_stream_line(const nc2_emit_stream_t *stream);
 nc2_emit_result_t nc2_emit_stream_next(nc2_emit_stream_t *stream,
                                        char *out,

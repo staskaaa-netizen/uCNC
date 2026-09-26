@@ -507,7 +507,17 @@ void nc2_run_pace(void)
 
     for (;;) {
         if (!g_nc2_run_stream.active) {
-            nc2_run_program_finish(NC2_RUN_WHY_COMPLETE);
+            /* End of the program, or the generator giving up on it: the two are
+               not the same thing, and the bench saw the second dressed as the
+               first - a run whose range never closed still said `STREAM DONE`
+               and the operator walked the rest of the file by hand. */
+            if (nc2_emit_stream_failed(&g_nc2_run_stream)) {
+                grbl_stream_printf("[MSG:NC2 STREAM STOPPED %s]\r\n",
+                                   g7x_result_text(g_nc2_run_stream.error));
+            }
+            nc2_run_program_finish(nc2_emit_stream_failed(&g_nc2_run_stream)
+                                       ? -1
+                                       : NC2_RUN_WHY_COMPLETE);
             return;
         }
         if (g_nc2_run_stream.source_line > g_nc2_run_end_line) {
@@ -517,6 +527,8 @@ void nc2_run_pace(void)
         result = nc2_emit_stream_next(&g_nc2_run_stream, emit, sizeof(emit),
                                       &emitted_line);
         if (result == NC2_EMIT_ERROR) {
+            grbl_stream_printf("[MSG:NC2 STREAM STOPPED %s]\r\n",
+                               g7x_result_text(g_nc2_run_stream.error));
             nc2_run_program_finish(-1);
             return;
         }

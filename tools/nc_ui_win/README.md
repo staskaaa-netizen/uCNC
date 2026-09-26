@@ -382,6 +382,12 @@ python tools\test_nc_ui.py
   question is case-insensitive, so a card full of old programs is listed, opened
   and run - and the preset scan asks the same question, or a card in use would be
   seeded again on every boot.
+- `--walk2test` walks the card the way the operator does - into a folder and back
+  out with `..` - and checks that asking for the folder above *answers* it
+  instead of scanning it and returning nothing, which had the caller scan an
+  uninitialised path. Every list the panel reads is logged to the console
+  (`[MSG:NC2 list + NAME]`, `- NAME`, and a summary line), because the list a card
+  hands back is the one thing the panel cannot show the operator.
 - `--block2test` reads the marks off the drawn frame on both code screens: the
   line in play is the bright selection colour, the rows of the block it heads are
   the pale one, and everything outside both is the pane's own ground. A mark the

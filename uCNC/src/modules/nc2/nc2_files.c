@@ -1,10 +1,18 @@
 #include "nc2_files.h"
 
 #include "../file_system.h"
+#include "../../interface/grbl_stream.h"
 
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+
+/* How many entries one scan reports to the console. The list a card hands back
+   is the one thing a panel cannot show the operator, so the scan says what it
+   saw: every name, and whether it became an entry (`+`) or was left out (`-`).
+   Bounded, because a card is not a log file - the first twenty say what shape
+   the names are in, and the summary line says how many there were. */
+#define NC2_LIST_LOG_MAX 20u
 
 /* The end of the path, if it is this suffix - **either case**.
 
@@ -158,11 +166,37 @@ static bool nc2_entry_less(const nc2_file_entry_t *a, const nc2_file_entry_t *b)
     return strcmp(a->name, b->name) < 0;
 }
 
+/* Can the panel show and open this name at all?
+
+   nc asked this of every entry it listed (`nc_files_valid_entry_name()`), and
+   nc2 did not - which is how a card whose driver hands back an entry the panel
+   cannot use put that entry on the glass. Printable ASCII only, and not the
+   two names a directory walk uses for itself: a byte the panel would draw as a
+   box, or a name a path cannot carry, is not a file the operator can open. */
+static bool nc2_name_is_usable(const char *name)
+{
+    const char *p;
+    bool has_text = false;
+
+    if (!name || !name[0] || strcmp(name, ".") == 0 || strcmp(name, "/") == 0) {
+        return false;
+    }
+    for (p = name; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+
+        if (c < 33u || c > 126u || c == '/' || c == '\\') {
+            return false;
+        }
+        has_text = true;
+    }
+    return has_text;
+}
+
 bool nc2_file_scan(const char *dir)
 {
     fs_file_t *dp;
-    fs_file_info_t info;
-    const char *name;
+    unsigned shown = 0u;
+    unsigned skipped = 0u;
 
     if (!dir || !dir[0]) {
         return false;
@@ -178,20 +212,45 @@ bool nc2_file_scan(const char *dir)
     }
     dp = fs_opendir(g_nc2_dir);
     if (!dp) {
+        grbl_stream_printf("[MSG:NC2 list %.32s: cannot read it]\r\n",
+                           g_nc2_dir);
         return false;
     }
-    while (fs_next_file(dp, &info) && g_nc2_entry_count < NC2_FILES_MAX) {
-        const char *slash = strrchr(info.full_name, '/');
+    while (g_nc2_entry_count < NC2_FILES_MAX) {
+        fs_file_info_t info;
+        const char *slash;
+        const char *name;
 
+        /* Every field of the info is the driver's to write, but the name goes
+           in first and a driver that only *appended* to it would grow a path
+           out of the last entry's. nc cleared it before every call
+           (`memset(&info, 0, ...)`); nc2 did not, and clears it here. */
+        memset(&info, 0, sizeof(info));
+        if (!fs_next_file(dp, &info)) {
+            break;
+        }
+        slash = strrchr(info.full_name, '/');
         name = slash ? slash + 1 : info.full_name;
-        if (!name[0] || (!info.is_dir && !nc2_path_is_text(name))) {
+        if (!nc2_name_is_usable(name) ||
+            (!info.is_dir && !nc2_path_is_text(name))) {
+            skipped++;
+            if (shown < NC2_LIST_LOG_MAX) {
+                grbl_stream_printf("[MSG:NC2 list - %.48s]\r\n", name);
+                shown++;
+            }
             continue;               /* folders, and what the editor can open */
+        }
+        if (shown < NC2_LIST_LOG_MAX) {
+            grbl_stream_printf("[MSG:NC2 list + %.48s]\r\n", name);
+            shown++;
         }
         snprintf(g_nc2_entries[g_nc2_entry_count].name, NC2_NAME_MAX, "%s", name);
         g_nc2_entries[g_nc2_entry_count].is_dir = info.is_dir;
         g_nc2_entry_count++;
     }
     fs_close(dp);
+    grbl_stream_printf("[MSG:NC2 list %.32s: %d entries, %u left out]\r\n",
+                       g_nc2_dir, g_nc2_entry_count, skipped);
     /* Sorted, because the card's order is whatever the drive feels like and a
        list that reshuffles under a finger is a list that gets things deleted. */
     {
@@ -258,16 +317,20 @@ bool nc2_file_selected_path(char *out, size_t out_sz)
     if (!entry || !out || out_sz == 0u) {
         return false;
     }
+    /* Up one level is a *path* like any other - the folder above this one - and
+       walking there is the caller's scan. It used to scan here as well and
+       return without writing `out`, so the caller scanned whatever its
+       uninitialised buffer held: a card that answered that with a directory got
+       a list nobody asked for, and one that did not got a garbage path into the
+       driver (bench: "it is stuck"). */
     if (strcmp(entry->name, "..") == 0) {
-        char parent[NC2_PATH_MAX];
         const char *slash = strrchr(g_nc2_dir, '/');
 
         if (!slash || slash == g_nc2_dir) {
             return false;
         }
-        snprintf(parent, sizeof(parent), "%.*s", (int)(slash - g_nc2_dir),
-                 g_nc2_dir);
-        return nc2_file_scan(parent);
+        n = snprintf(out, out_sz, "%.*s", (int)(slash - g_nc2_dir), g_nc2_dir);
+        return n > 0 && (size_t)n < out_sz;
     }
     n = snprintf(out, out_sz, "%s/%s", g_nc2_dir, entry->name);
     return n > 0 && (size_t)n < out_sz;

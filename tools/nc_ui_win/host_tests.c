@@ -2620,6 +2620,119 @@ static int host_case2test(void)
     return 0;
 }
 
+/* Walking the card, the way the operator does: into a folder and back out with
+   `..`.
+
+   This is where the second machine-only fault hid. `nc2_file_selected_path()`
+   used to *scan* the parent itself when the selection was `..` - and return
+   without writing the path it was asked for. The caller then scanned whatever
+   its uninitialised buffer held, so leaving a folder handed the driver a
+   garbage path: on the bench that is the panel frozen mid-walk ("it is stuck").
+   The question is a question again, and the check walks both ways around it. */
+static int host_walk2test(void)
+{
+    char path[NC2_PATH_MAX];
+    int failures = 0;
+    int i;
+    bool saw_up;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    /* The driver makes the folders a path needs, but a *new* folder is the
+       operator's to make: `mkdir` first, then the file inside it. */
+    (void)fs_mkdir("/D/nc/files/deep");
+    if (!host_fs_write_text("/D/nc/files/one.nc", "G0 X1 Z1\n") ||
+        !host_fs_write_text("/D/nc/files/deep/two.nc", "G0 X2 Z2\n")) {
+        puts("walk2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+
+    /* In: the picker walks into a folder with `D`. */
+    if (!nc2_file_scan("/D")) {
+        puts("walk2test: FAIL the card's root does not list");
+        return 1;
+    }
+    if (!nc2_file_scan("/D/nc/files")) {
+        puts("walk2test: FAIL the programs folder does not list");
+        return 1;
+    }
+    if (strcmp(nc2_file_dir(), "/D/nc/files") != 0) {
+        printf("walk2test: FAIL the list is at \"%s\"\n", nc2_file_dir());
+        return 1;
+    }
+
+    /* The `..` entry is there, and it names the folder above. */
+    saw_up = false;
+    for (i = 0; i < nc2_file_count(); i++) {
+        if (strcmp(nc2_file_entry(i)->name, "..") == 0) {
+            nc2_file_step(-i);            /* select it */
+            saw_up = true;
+            break;
+        }
+    }
+    if (!saw_up) {
+        puts("walk2test: FAIL the list has no `..`");
+        return 1;
+    }
+    path[0] = '\0';
+    if (!nc2_file_selected_path(path, sizeof(path)) ||
+        strcmp(path, "/D/nc") != 0) {
+        printf("walk2test: FAIL `..` answers \"%s\"\n", path);
+        failures++;
+    } else if (strcmp(nc2_file_dir(), "/D/nc/files") != 0) {
+        /* Asking is not walking: the list must not move under the caller. */
+        printf("walk2test: FAIL asking for the parent moved the list to \"%s\"\n",
+               nc2_file_dir());
+        failures++;
+    }
+
+    /* Out: the key handler scans what it was handed, and lands there. The walk
+       is the operator's - `0` opens the card, the picker selects `nc`, `D`
+       enters it - so this is the screen's own path and not a direct scan. */
+    nc2_visual_key('0');
+    if (!host_file2_select("nc")) {
+        puts("walk2test: FAIL the card's root has no `nc` folder");
+        return 1;
+    }
+    nc2_visual_key('D');
+    if (strcmp(nc2_visual_screen_name(), "FILES") != 0 ||
+        strcmp(nc2_file_dir(), "/D/nc") != 0) {
+        printf("walk2test: FAIL walking up lands at \"%s\" on \"%s\"\n",
+               nc2_file_dir(), nc2_visual_screen_name());
+        failures++;
+    }
+    /* and back down, to prove the walk is a walk and not one lucky answer */
+    if (!host_file2_select("files")) {
+        puts("walk2test: FAIL `nc` has no `files` folder");
+        return 1;
+    }
+    nc2_visual_key('D');
+    if (strcmp(nc2_file_dir(), "/D/nc/files") != 0) {
+        printf("walk2test: FAIL walking back down lands at \"%s\"\n",
+               nc2_file_dir());
+        failures++;
+    }
+    /* and up again, which is the path that used to hand out garbage: `..` is
+       the first entry of a folder, so `D` on it is the way up. */
+    nc2_visual_key('B');                  /* back to the first entry (`..`) */
+    nc2_visual_key('D');
+    if (strcmp(nc2_file_dir(), "/D/nc") != 0) {
+        printf("walk2test: FAIL the second walk up lands at \"%s\"\n",
+               nc2_file_dir());
+        failures++;
+    }
+
+    if (failures) {
+        printf("walk2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("walk2test: PASS the card is walked both ways, and asking for the "
+         "folder above does not move the list");
+    return 0;
+}
+
 /* nc2's value editor: a line is cut into fields at its letters, the keys walk
    them, and what is typed replaces the value that was there. The dumb editor the
    bench asked for, so the checks are about its two rules - where a field begins
@@ -3216,6 +3329,8 @@ int host_tests_run(int argc, char **argv)
             return host_contour2test();
         if (strcmp(argv[i], "--case2test") == 0)
             return host_case2test();
+        if (strcmp(argv[i], "--walk2test") == 0)
+            return host_walk2test();
         if (strcmp(argv[i], "--block2test") == 0)
             return host_block2test();
         if (strcmp(argv[i], "--label2test") == 0)

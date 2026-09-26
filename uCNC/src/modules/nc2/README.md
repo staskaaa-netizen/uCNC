@@ -31,6 +31,12 @@ screen is left where it is for now.
   and we may preserve it"*).
 - A DRO that is **not on screen unless the machine is doing something**: in RUN
   it floats over the preview; idle, the pane has the whole body.
+- **One band, and only at the top.** It carries the four screens - MANUAL,
+  EDIT, TOOLS, RUN - with the one in play bright and underlined, the file (the
+  folder, while the card's list is up), and what the panel has to say at the
+  right end. There is no footer and no status strip along the bottom: what a
+  footer said is one line, and one line belongs where the operator is already
+  looking (bench: *"i do not need any footer here. put messages into header"*).
 
 ## The keys, all of them
 

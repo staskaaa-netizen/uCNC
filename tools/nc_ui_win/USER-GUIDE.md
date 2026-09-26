@@ -38,8 +38,11 @@ folder), and nothing else on the PC is touched.
 
 **The panel (left)** is the machine. It has just three things:
 
-- a line across the top saying which screen you are on and which file it has
-  open;
+- the band across the top: the four screens - MANUAL, EDIT, TOOLS, RUN - with
+  the one you are on bright and underlined, the file it has open, and whatever
+  the panel has to say at the right end (a run starting, a stop, a key you
+  pressed, a fault). Everything the panel tells you appears there and nowhere
+  else; there is no strip along the bottom;
 - the body: the program down the left, the drawing of the part on the right;
 - the 3x3 pad in the bottom-right corner of the drawing, which is the machine's
   own nine keys.

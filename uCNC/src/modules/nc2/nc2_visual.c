@@ -643,22 +643,77 @@ void nc2_visual_idle_tasks(void)
 
 /* --- drawing -------------------------------------------------------------- */
 
+/* The header: the four screens with the one in play marked, then the file, and
+   the body's messages at the right end.
+
+   This is the panel's only band. There is no footer: what a footer says - which
+   screen you are on and what just happened - is one line of text, and one line
+   belongs where the operator is already looking. The machine's keys are the pad
+   in the drawing's corner, so nothing is left along the bottom. */
 static void nc2_draw_header(void)
 {
-    char line[80];
-    const char *path = g_doc.path[0] ? g_doc.path : "(no program)";
+    static const nc2_mode_t order[4] = {
+        NC2_MODE_MANUAL, NC2_MODE_PROGRAM, NC2_MODE_TOOLS, NC2_MODE_RUN
+    };
+    static const char *const names[4] = { "MANUAL", "EDIT", "TOOLS", "RUN" };
+    /* MANUAL is a machine panel: it has no file, so it shows none. The list
+       shows the folder it is walking. */
+    const char *path = g_list ? nc2_file_dir()
+                              : (g_mode == NC2_MODE_MANUAL
+                                     ? ""
+                                     : (g_doc.path[0] ? g_doc.path : ""));
+    int y = 6;
+    int x = 8;
+    int i;
 
     nc2_fill(0, 0, LVDS_HSTX_WIDTH, NC2_HEADER_H, nc2_col_header());
-    /* MANUAL is a machine panel: there is no file, so the header is only the
-       screen's name. */
-    if (g_mode == NC2_MODE_MANUAL) {
-        snprintf(line, sizeof(line), "%s", nc2_visual_screen_name());
-    } else {
-        snprintf(line, sizeof(line), "%s  %s%s", nc2_visual_screen_name(), path,
-                 g_doc.dirty ? " *" : "");
+    for (i = 0; i < 4; i++) {
+        bool active = order[i] == g_mode;
+        int w;
+
+        if (i) {
+            x += 10;
+        }
+        w = nc2_text_width(names[i], LVDS_FONT_NORMAL);
+        /* The active screen is the bright one, and is underlined: at a glance,
+           on a panel that may be at an angle, "which screen am I on" is one
+           word and one line. */
+        nc2_text(x, y, names[i], active ? nc2_col_text() : nc2_col_dim(),
+                 nc2_col_header(), LVDS_FONT_NORMAL);
+        if (active) {
+            nc2_hline(x, y + 16, w, nc2_col_accent());
+        }
+        x += w;
     }
-    nc2_text_clip(8, 6, line, (LVDS_HSTX_WIDTH - 16) / nc2_col_width(LVDS_FONT_NORMAL),
-                  nc2_col_text(), nc2_col_header(), LVDS_FONT_NORMAL);
+
+    /* The file, between the screens and the messages - and only the room that is
+       left, so a long path can never push a message off the glass. */
+    {
+        int small_w = nc2_col_width(LVDS_FONT_SMALL);
+        int msg_cols = g_status[0]
+                           ? (nc2_text_width(g_status, LVDS_FONT_SMALL) +
+                              small_w - 1) / small_w
+                           : 0;
+        int msg_x;
+        int path_cols;
+
+        if (msg_cols > LVDS_HSTX_WIDTH / (2 * small_w)) {
+            msg_cols = LVDS_HSTX_WIDTH / (2 * small_w);
+        }
+        msg_x = LVDS_HSTX_WIDTH - 8 - msg_cols * small_w;
+        path_cols = (msg_x - 12 - x) / small_w;
+        if (path_cols > 0 && path[0]) {
+            char line[NC2_PATH_MAX + 4];
+
+            snprintf(line, sizeof(line), "%s%s", path, g_doc.dirty ? " *" : "");
+            nc2_text_clip(x + 12, y + 1, line, path_cols, nc2_col_dim(),
+                          nc2_col_header(), LVDS_FONT_SMALL);
+        }
+        if (msg_cols > 0) {
+            nc2_text_clip(msg_x, y + 1, g_status, msg_cols, nc2_col_text(),
+                          nc2_col_header(), LVDS_FONT_SMALL);
+        }
+    }
 }
 
 /* The two panes: the program on the left, the drawing on the right, and the line
@@ -1007,12 +1062,6 @@ void nc2_visual_draw(void)
             nc2_draw_dro();
         }
         nc2_draw_pad_band();
-    }
-    if (g_status[0]) {
-        nc2_fill(0, LVDS_HSTX_HEIGHT - 22, LVDS_HSTX_WIDTH, 22, nc2_col_header());
-        nc2_text_clip(8, LVDS_HSTX_HEIGHT - 18, g_status,
-                      (LVDS_HSTX_WIDTH - 16) / nc2_col_width(LVDS_FONT_SMALL),
-                      nc2_col_text(), nc2_col_header(), LVDS_FONT_SMALL);
     }
     nc2_visual_clear_dirty();
     lvds_hstx_present();

@@ -172,7 +172,7 @@ standing still on a jog.
 build\nc_ui.exe --files tmp\shots --keys "F2,4" --dump tmp\helper.bmp
 ```
 
-That one is EDIT followed by the keypad's `4`, which in EDIT is the footer's
+That one is EDIT followed by the keypad's `4`, which in EDIT is the pad's
 `4 G7X`, so the dump is the floating 3x3 helper with its labelled line.
 
 Or straight from the tool directory:
@@ -191,6 +191,13 @@ machine's keypad attached to the right side, the way the proprietary keyboard
 sits next to the display. This is the *programming station* side of the tool:
 the panel is the machine, and the strip beside it is the desk. The keys are the
 hardware's, not a second menu:
+
+The panel itself is three things: the band across the top - the four screens
+with the one in play bright and underlined, the file, and everything the screen
+has to say at the right end - the program and the drawing below it, and the 3x3
+pad in the drawing's bottom-right corner. Nothing runs along the bottom: what a
+footer would say is one line, and it belongs in the band the operator is already
+looking at.
 
 | Keys | Function |
 | --- | --- |

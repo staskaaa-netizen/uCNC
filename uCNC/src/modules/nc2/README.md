@@ -225,7 +225,12 @@ as a target to squeeze into.
 | `nc2_preview.c` | 1 100 | stock, the live stock's mask, contour, dimensions |
 | `nc2_draw.c` | 450 | primitives, glyphs, the 3x3 grid |
 | headers, `nc2_layout.h` | 350 | the boundary and the shared numbers |
-| **total** | **~7 000** | the block scan is g7x's now, and the helper is kept - and neither figure is a ceiling |
+| **total** | **~7 450** | the block scan is g7x's now, the helper is kept, and the tool drawing came back (its reader, the glyph family and the tool view are ~800 lines) - and neither figure is a ceiling |
+
+The board's flash is at 1.2 %, so what the tool drawing costs is attention, not
+room: the gnarly part is `nc2_draw.c`'s insert polygons, which is the shape a
+four-digit orientation code describes and the only reason that part is not ten
+lines of triangle.
 
 Its own test target, `tools/test_nc2.py`, builds and runs the module against the
 same virtual machine the station uses (AGENTS.md 7), and `nc2/TESTING.md` keeps

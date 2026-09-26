@@ -1595,11 +1595,12 @@ static int host_stock_column(int x, uint32_t rgb, int *top, int *bottom)
    material below the tool is gone, its top is where it was, the RUN screen keeps
    the part while the machine is parked, and the editor draws the stock whole.
 
-   And then the demo card's own program, parked *inside* the stock first: the
-   material the program never cuts has to be whole, and where the contour reaches
-   the material has to end at it. A rapid - the parking move, a jog - is the
-   machine on its way somewhere, and it takes nothing off (bench: "g7x leaves
-   more then needed to be cleared").
+   And then the demo card's own program, from a tool parked off the stock, with
+   the panel standing on TOOLS for a stretch of the run: the material the
+   program never cuts has to be whole, where the contour reaches the material
+   has to end at it, and a frame that paints the pane whole has to read the same
+   material as the one before it - the glass may not lag behind the mask (bench:
+   "no remaing is bigger than x/z in g71 command. this was fixed before").
 
    This is a comparison of the stock's own colour per column of the drawing, not
    a picture: the cut is where nc's mask says it is or the counts say so. */
@@ -1792,18 +1793,22 @@ static int host_live2test(void)
     }
 
     /* And the cut is the *program's* own, in both directions. The run is the
-       demo card's cycle - two `G71`/`G70` pairs - parked *inside* the stock's
-       envelope so the move to the cycle's first point is a cut the program
-       never asked for, and every column is read twice: once for the contour
-       the finish draws, once for the material's edge.
+        demo card's program - two `G71`/`G70` pairs - from a tool parked off the
+        stock, as the operator is told to park it, and every column is read
+        twice: once for the contour the finish draws, once for the material's
+        edge.
 
          - A column the contour reaches may not keep material past it: that
            would be stock left uncut where the command says it is gone (bench:
            "no remaing is bigger than x/z in g71 command").
          - A column the contour never reaches may not lose any material at
-           all. The tool's parking - and a jog, and a one-shot block - is not a
-           cut, and the material follows the program, not the machine's way of
-           getting to it (bench: "g7x leaves more then needed to be cleared").
+           all: the parking move and the cycle's own rapids are at the
+           clearance, away from the stock, and a cut is the only thing that
+           takes material off.
+         - And the glass is the mask. A frame that paints the pane whole is
+           asked for at the end and the material has to read the same: the mask
+           is what the drawing paints, and a frame that leaves material on the
+           glass the mask has already cut is the fault the bench kept seeing.
 
        The bench's own program, with its own numbers. */
     {
@@ -1875,11 +1880,9 @@ static int host_live2test(void)
                     failures++;
                 }
 
-                /* Park the tool *inside* the envelope, at an X small enough to
-                   leave a wide sweep if the machine's way to the cycle were
-                   read as a cut. */
-                if (!nc2_run_send_line("G0 X5 Z-30")) {
-                    puts("live2test: FAIL the panel will not park in the stock");
+                /* Park it the way the operator is told to: off the stock. */
+                if (!nc2_run_send_line("G0 X60 Z10")) {
+                    puts("live2test: FAIL the panel will not park the tool");
                     failures++;
                 }
                 host_pump_idle(64u);
@@ -1890,6 +1893,18 @@ static int host_live2test(void)
                 nc2_visual_draw();
                 nc2_visual_key('3');            /* 3 FULL: run the program */
                 host_pump(1u);
+                nc2_visual_draw();
+                /* And the operator stands on the TOOLS screen for a while
+                   while it cuts: the pane there is the table's, and the live
+                   stock still has to keep up - a frozen mask catches up in one
+                   straight sweep across the material the tool really walked. */
+                host_pump(1u);
+                nc2_visual_select_mode(NC2_MODE_TOOLS);
+                for (i = 0u; i < 2000u; i++) {
+                    host_pump(1u);
+                    nc2_visual_draw();
+                }
+                nc2_visual_select_mode(NC2_MODE_RUN);
                 nc2_visual_draw();
                 for (i = 0u; i < 200000u; i++) {
                     if (host_machine_idle() && !nc2_run_streaming()) {
@@ -1981,6 +1996,30 @@ static int host_live2test(void)
                     printf("live2test: FAIL %d columns lost material outside "
                            "the profile\n", stolen);
                     failures++;
+                }
+                /* And the pane is what the mask says. A frame that paints the
+                   pane whole is asked for, and the material has to read the
+                   same either side of it: a difference is material the
+                   per-band repaint left on the glass - the part drawn short
+                   where the program has already cut it. */
+                {
+                    int before = host_count_rect(NC2_PREVIEW_X,
+                                                 NC2_PREVIEW_Y,
+                                                 NC2_PREVIEW_X + NC2_PREVIEW_W,
+                                                 NC2_PREVIEW_BOTTOM, stock_rgb);
+                    int after;
+
+                    nc2_visual_mark_dirty();
+                    nc2_visual_draw();
+                    after = host_count_rect(NC2_PREVIEW_X, NC2_PREVIEW_Y,
+                                            NC2_PREVIEW_X + NC2_PREVIEW_W,
+                                            NC2_PREVIEW_BOTTOM, stock_rgb);
+                    if (before != after) {
+                        printf("live2test: FAIL the glass holds %d material "
+                               "pixels where the mask has %d\n", before,
+                               after);
+                        failures++;
+                    }
                 }
             }
         }

@@ -79,16 +79,18 @@ cannot have the spindle, the travel or the panel's glass.
   and the stock is whole again. This is the one place the mask's timing can be
   seen: `--live2test` proves the same rule over frames the host draws, but not
   the panel's frame rate or what a long program costs a frame.
-- **The parking move does not cut**, on the glass: park the tool *inside* the
-  stock's envelope - at a small X and a Z inside the part - then run the demo.
-  The material the program does not cut must still be whole on the RUN screen at
-  the end, and the part must be the profile's own shape: the move from the park
-  to the cycle's first point crosses the stock on the glass, and reading it as a
-  cut left a wedge of the part gone (bench: *"g7x leaves more then needed to be
-  cleared"*, and the drawing then showed stock left uncut where the `G71`'s X/Z
-  say it is gone). A jog does the same thing - jog into the stock, run, and the
-  part is unchanged where the jog went. `--live2test`'s cycle check is the same
-  rule over host frames.
+- **The part after a roughing pass**, on the glass, against nc: run the demo's
+  two `G71`/`G70` pairs and watch the material come down. What is left when the
+  first roughing cycle ends must be the profile plus the `G71`'s X/Z allowance
+  and nothing more - the bench read *"no remaing is bigger than x/z in g71
+  command. this was fixed before"* here, and the run of nc beside it says what
+  the number is. `--live2test` checks the same rule over host frames, off the
+  pane's own pixels.
+- **Standing on TOOLS while it cuts**, on the glass: start the run, switch to
+  TOOLS for a stretch of it and come back to RUN. The part must be the same as
+  running with the screen left alone - the pane there is the table's, and the
+  live stock is walked without being painted. A mask frozen there catches up in
+  one straight sweep across the material the tool really walked.
 - Feed hold, Stop during queued motion, and a run that walks off the end of the
   card's file are bench items - the suites prove targets and ordering, not
   motion.

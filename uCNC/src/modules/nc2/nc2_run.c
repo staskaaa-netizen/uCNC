@@ -3,8 +3,6 @@
 #include "nc2_emit.h"
 #include "nc2_tools.h"
 
-#include "../g7x/g7x_contour.h"
-
 #include "../../cnc.h"
 #include "../../interface/grbl_stream.h"
 
@@ -25,14 +23,6 @@
 static bool g_nc2_run_active;
 static bool g_nc2_run_hold;
 static bool g_nc2_run_done;
-/* Whether the line the machine has been handed is one of the program's cuts.
-   The drawing asks: a rapid is the machine's way to the next cut, and the
-   material must not come off where the program never cuts (the parking move
-   between the tool's last place and the cycle's first point, a jog, a one-shot
-   block). The line the sender is on is the line the machine is on: a plain line
-   - or a new block - waits for the machine, and within a block the generator's
-   own rapids are at the clearance, away from the stock. */
-static bool g_nc2_run_cutting;
 static size_t g_nc2_run_line;
 static uint8_t g_nc2_run_error;
 static size_t g_nc2_run_error_line;
@@ -233,32 +223,6 @@ static bool nc2_run_line_sendable(const char *line)
     return true;
 }
 
-/* Is the line the machine is being handed one of the program's cuts? `G0` is
-   the machine moving - the cycle's own retract and return are `G0`s too, and
-   the generator keeps them at the clearance, away from the stock - and a jog
-   (`$J=`) is the operator moving. A row with no motion word inherits the motion
-   in force, and the panel's own inserts are feeds, so it cuts. */
-static bool nc2_run_line_cuts(const char *line)
-{
-    float x = 0.0f;
-    float z = 0.0f;
-    g7x_contour_cmd_t cmd;
-
-    while (line && (*line == ' ' || *line == '\t')) {
-        line++;
-    }
-    if (!line || !*line || *line == '(' || *line == '$') {
-        return false;
-    }
-    cmd = g7x_contour_cmd_from_line(line);
-    if (cmd == G7X_CONTOUR_RAPID || cmd == G7X_CONTOUR_END) {
-        return false;
-    }
-    /* A line that does not move the tool - a tool call, a spindle start, a
-       dwell - takes nothing off either. */
-    return nc2_emit_line_point(line, &x, &z, 0, 0u, 0);
-}
-
 void nc2_run_init(void)
 {
     static bool registered;
@@ -432,11 +396,6 @@ bool nc2_run_hold(void)
     return g_nc2_run_hold;
 }
 
-bool nc2_run_cutting(void)
-{
-    return g_nc2_run_cutting;
-}
-
 bool nc2_run_done(void)
 {
     return g_nc2_run_done && !nc2_run_active();
@@ -501,7 +460,6 @@ bool nc2_run_send_line(const char *line)
     if (!nc2_run_line_sendable(line)) {
         return false;
     }
-    g_nc2_run_cutting = nc2_run_line_cuts(line);
     if (!nc2_run_send_push(line)) {
         grbl_stream_printf("[MSG:NC2 SEND FULL %.96s]\r\n", line);
         return false;

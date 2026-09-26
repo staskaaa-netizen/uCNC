@@ -725,21 +725,16 @@ static void nc2_live_remove(int x0, int y0, int x1, int y1)
     for (y = y0; y <= y1; y++) {
         uint8_t *slice = g_nc2_live_mask + (size_t)y * NC2_LIVE_STOCK_MAX_W + x0;
         int span = x1 - x0 + 1;
-        int i;
-        bool was_material = false;
 
-        /* What the drawing has to paint again is what actually changed: the
-           material the tool took off, not everything below it - the band below
-           the cut was painted when it was cut. */
-        for (i = 0; i < span; i++) {
-            if (slice[i]) {
-                was_material = true;
-                break;
-            }
-        }
-        if (!was_material) {
-            continue;
-        }
+        /* **The whole rectangle is dirty, not only the cells that held
+           material.** The glass is not always in step with the mask - a frame
+           that painted the stock whole (another screen), the tool's own box -
+           and a row this removal leaves behind on the glass is a row the
+           drawing never takes back: the material then stays where the program
+           has already cut it, which is exactly what the bench kept seeing
+           ("no remaing is bigger than x/z in g71 command. this was fixed
+           before"). nc repainted its whole band every frame and never had this;
+           the band only has to be as tall as the cut, which is what this is. */
         memset(slice, 0, (size_t)span);
         if (y < g_nc2_live_dirty_y0) {
             g_nc2_live_dirty_y0 = y;
@@ -793,18 +788,6 @@ static void nc2_live_update(const nc2_preview_info_t *p,
        the walk is in diameters and the mapping halves it back. */
     float diam_x = (run->x < 0.0f ? -run->x : run->x) * 2.0f;
 
-    if (!run->cutting) {
-        /* The machine is on its way somewhere - the move from where the tool
-           was parked to the cycle's first point, a jog, a one-shot block, the
-           cycle's own retract. A rapid is not a cut: the walk follows the tool
-           so the next cut starts from where it really is, and takes nothing
-           off the drawing (bench: "g7x leaves more then needed to be
-           cleared"). */
-        g_nc2_live_last_x = diam_x;
-        g_nc2_live_last_z = run->z;
-        g_nc2_live_has_last = true;
-        return;
-    }
     if (g_nc2_live_has_last) {
         nc2_live_sweep(p, z0_x, stock_left, stock_w, stock_top, stock_h,
                        g_nc2_live_last_x, g_nc2_live_last_z, diam_x, run->z);
@@ -879,15 +862,18 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
     int stock_left;
     int stock_top;
     int z0_x;
+    bool paint = !run || run->paint;
 
     /* The pane is cleared when it is painted whole - and only then: on a frame
        that repaints what moved (the live stock's band) the rest of the pane is
        already right, and clearing it here would take the part off the glass. */
-    if (!run || run->full) {
+    if (paint && (!run || run->full)) {
         nc2_fill(x, y, w, h, nc2_col_prev_bg());
     }
     if (doc && doc->path[0] && !nc2_path_is_program(doc->path)) {
-        nc2_preview_text_file(doc, x, y, w, h);
+        if (paint) {
+            nc2_preview_text_file(doc, x, y, w, h);
+        }
         return;
     }
     nc2_preview_collect(doc, &preview);
@@ -933,7 +919,7 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
            that covered only the stock would leave it behind - and the rows of
            the box that lie inside the stock go to the mask's band, which puts
            the material back under it. */
-        if (!paint_all && g_nc2_tool_box_x >= 0) {
+        if (paint && !paint_all && g_nc2_tool_box_x >= 0) {
             int span = 2 * NC2_LIVE_TOOL_GLYPH + 2;
 
             nc2_fill(g_nc2_tool_box_x, g_nc2_tool_box_y, span, span,
@@ -947,12 +933,10 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
         g_nc2_tool_box_x = -1;          /* this frame's own box is set below */
 
         /* A cut starts a part, and nothing else does: the mask is made again
-           when the tool starts *cutting* - a rapid, a jog and a one-shot block
-           are the machine moving, not the part being made - and a run that has
-           parked keeps what it made (`nc`'s own rule: the finished part stays
-           on the glass until the drawing is asked for something else). */
-        if (run && run->cutting &&
-            (!g_nc2_live_was_cutting || context_changed)) {
+           when the machine starts cutting, and a run that has parked keeps what
+           it made (`nc`'s own rule - the finished part stays on the glass until
+           the drawing is asked for something else). */
+        if (live && (!g_nc2_live_was_cutting || context_changed)) {
             nc2_live_reset(&preview, stock_w, stock_h);
             paint_all = true;
         }
@@ -962,12 +946,14 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
                 nc2_live_update(&preview, run, z0_x, stock_left, stock_w,
                                 stock_top, stock_h);
             }
-            if (paint_all) {
+            if (paint && paint_all) {
                 nc2_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
             }
-            nc2_live_draw(stock_left, stock_top, paint_all);
+            if (paint) {
+                nc2_live_draw(stock_left, stock_top, paint_all);
+            }
         } else {
-            if (paint_all) {
+            if (paint && paint_all) {
                 nc2_chuck(&preview, stock_left, stock_top, stock_w, stock_h);
                 nc2_fill(stock_left, stock_top, stock_w, stock_h,
                          nc2_col_prev_stock());
@@ -982,7 +968,7 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
                     }
                 }
             }
-            if (live) {
+            if (paint && live) {
                 /* The mask is what shows the cut; with nowhere to put it, say so
                    rather than drawing a stock that never changes. */
                 nc2_text_clip(stock_left + 4, stock_top + 16,
@@ -995,6 +981,13 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
     {
         uint32_t t0 = mcu_micros();
 
+    if (!paint) {
+        /* Nothing of the pane is painted this frame (the TOOLS screen's rows
+           own it): the mask has moved, and the band it marked dirty is left for
+           the frame that really paints - clearing it here would lose it. */
+        g_nc2_preview_geom_us = 0u;
+        return;
+    }
     nc2_din_layer(&preview, stock_left, stock_top, stock_w, stock_h, z0_x);
     nc2_contour_points(doc, &preview, z0_x, stock_left, stock_left + stock_w,
                        stock_w, stock_top, stock_h);

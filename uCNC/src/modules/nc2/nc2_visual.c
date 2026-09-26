@@ -1505,17 +1505,18 @@ static void nc2_draw_preview(bool full)
     nc2_preview_run_t run;
     nc2_tool_t tool;
 
-    /* On the TOOLS screen the pane holds the table's rows, and the rows' own
-       fill would paint the part out anyway: drawing it first is work nobody
-       sees. (What the bench meant by "g7x leaves more then needed to be
-       cleared" is the cut itself and lives in `nc2_preview.c`.) */
-    if (g_mode == NC2_MODE_TOOLS) {
-        return;
-    }
+    /* Every screen draws it, the TOOLS screen included - its rows paint over
+       the pane in the same frame, so what that screen shows is unchanged, but
+       the live stock has to keep up wherever the operator is standing. Skipping
+       the drawing there froze the mask while the machine cut, and the pane on
+       the RUN screen then caught up with one straight sweep across the material
+       the tool had really walked. */
     nc2_state_runtime(&rt);
     run.busy = nc2_state_busy() || nc2_run_active() || nc2_run_hold();
-    run.cutting = nc2_run_cutting();
     run.screen_run = g_mode == NC2_MODE_RUN;
+    /* The TOOLS screen's rows own the pane: the live stock is kept up to date
+       there and not painted, so the table is what that screen shows. */
+    run.paint = g_mode != NC2_MODE_TOOLS;
     run.full = full;
     /* The drawing is in the program's own frame, so the machine's position is
        read through the offset in use - the same conversion the DRO makes. A

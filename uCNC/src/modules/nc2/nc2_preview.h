@@ -25,11 +25,12 @@
    the finished part stays until something else is drawn. */
 typedef struct {
     bool busy;                      /* it is doing anything at all */
-    /* The move the machine is on is one of the program's cuts. A rapid - the
-       way to the next cut, the parking move, a jog - is not: the drawing
-       follows the tool there but takes no material off. */
-    bool cutting;
     bool screen_run;                /* the RUN screen is the one being drawn */
+    /* The pane is this screen's to paint this frame. The TOOLS screen's rows
+       own the pane and paint over it, but the live stock still has to follow
+       the machine there - a frozen mask catches up in one straight sweep across
+       the material the tool really walked. */
+    bool paint;
     /* The screen painted the whole pane this frame (a different band, a mode
        change): the mask has to be drawn whole again, not only where it moved. */
     bool full;

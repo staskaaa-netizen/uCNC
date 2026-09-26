@@ -63,13 +63,13 @@ things, top to bottom:
 The drawing is the part, not a picture of the stock: while the tool is moving,
 the material it has taken off is shown where it went - the tool clears the stock
 from its own X down to the axis, so you watch the profile appear as the run
-goes, and the tool itself is drawn where the machine is. Only a *cut* takes
-material off: a rapid - the machine getting to the cycle's first point, a jog, a
-one-shot block - moves the tool on the drawing and leaves the stock alone, so
-what you see is what the program makes and not where the machine happened to be.
-When the run stops, the part stays on the RUN screen, and EDIT shows the stock
-whole again. In EDIT and TOOLS the word the cursor is on is named on the row
-above it (`>  X position`, `>  Depth/pass`).
+goes, and the tool itself is drawn where the machine is. Park the tool clear of
+the stock before a run - the stock comes off wherever the tool travels, so a run
+started from inside the bar cuts its way out. The part keeps coming while you
+look at another screen, so you can step over to TOOLS or EDIT and come back to
+the part where it is. When the run stops, the part stays on the RUN screen, and
+EDIT shows the stock whole again. In EDIT and TOOLS the word the cursor is on is
+named on the row above it (`>  X position`, `>  Depth/pass`).
 
 Walking the cursor down a program moves the *text*, not the cursor: six lines
 after it stay in view, because the next block is what you are reading for.

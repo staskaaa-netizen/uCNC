@@ -24,6 +24,12 @@ static bool g_nc2_dirty;
 static const char *nc2_state_key(nc2_mode_t mode)
 {
     switch (mode) {
+    case NC2_MODE_MANUAL:
+        return "MANUAL";
+    case NC2_MODE_TOOLS:
+        return "TOOLS";
+    case NC2_MODE_RUN:
+        return "RUN";
     case NC2_MODE_PROGRAM:
     default:
         return "EDIT";
@@ -32,14 +38,18 @@ static const char *nc2_state_key(nc2_mode_t mode)
 
 static bool nc2_state_key_matches(const char *key, nc2_mode_t *mode)
 {
+    nc2_mode_t i;
+
     if (!key) {
         return false;
     }
-    if (strcmp(key, "EDIT") == 0 || strcmp(key, "PROGRAM") == 0) {
-        *mode = NC2_MODE_PROGRAM;
-        return true;
+    for (i = 0; i < NC2_MODE_COUNT; i++) {
+        if (strcmp(key, nc2_state_key(i)) == 0) {
+            *mode = i;
+            return true;
+        }
     }
-    return false;
+    return strcmp(key, "PROGRAM") == 0 && (*mode = NC2_MODE_PROGRAM, true);
 }
 
 void nc2_state_set_mode(nc2_mode_t mode)

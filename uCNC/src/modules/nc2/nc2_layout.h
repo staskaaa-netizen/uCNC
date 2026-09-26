@@ -36,6 +36,14 @@
 #define NC2_PAD_X (NC2_RIGHT_PANE_X + NC2_RIGHT_PANE_W - NC2_PAD_W - 8)
 #define NC2_PAD_Y (NC2_PANE_BOTTOM - NC2_PAD_H)
 
+/* The floating DRO: a band over the preview's top, drawn only while the machine
+   is doing something, so the screen a stationary machine shows keeps the whole
+   drawing. */
+#define NC2_DRO_X (NC2_RIGHT_PANE_X + 6)
+#define NC2_DRO_Y (NC2_PANE_Y + 6)
+#define NC2_DRO_W (NC2_RIGHT_PANE_W - 12)
+#define NC2_DRO_H 74
+
 /* The code rows the pane holds, and the files the list shows. */
 #define NC2_CODE_ROWS ((NC2_PANE_H - 4) / NC2_ROW_H)
 #define NC2_FILES_MAX 32

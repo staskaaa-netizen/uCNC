@@ -12,6 +12,8 @@ flags, each of which sets up the card it needs:
     --screen2test  the program pane, the pad's corner and the program it writes
     --file2test    `0` opens the card, and the picker walks, opens, makes, deletes
     --emit2test    the sender against nc's, line for line, from the top and mid-file
+    --run2test     the run hands over what the program means, the machine arrives,
+                   and the DRO floats only while it is busy
 
 The station's own suite (`tools/test_nc_ui.py`) runs these with everything else;
 this target is for working on the module alone.
@@ -25,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_nc_ui as station  # noqa: E402  (the build is the station's)
 
 CHECKS = ("--seedtest", "--edit2test", "--pad2test", "--screen2test",
-          "--file2test", "--emit2test")
+          "--file2test", "--emit2test", "--run2test")
 
 
 def main():

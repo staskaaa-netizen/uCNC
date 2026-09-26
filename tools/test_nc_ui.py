@@ -389,6 +389,18 @@ if __name__ == "__main__":
         fail("FAIL nc2's sender does not agree with nc's",
              run.stdout[-1500:] or run.stderr[-1500:])
 
+    # nc2's run: the panel hands the machine what the program means one unit at
+    # a time, the machine arrives where the program says, and the floating DRO is
+    # up only while it is busy.
+    root = OUT / "run2-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--run2test"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "run2test: PASS" not in run.stdout:
+        fail("FAIL nc2's run does not hand over what the program means",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
     # The operator's own program and tool table, kept with the NC module
     # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
     # the firmware writes its state next to them, then checked through the

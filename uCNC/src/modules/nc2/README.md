@@ -243,7 +243,8 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built (6) | the sender: `nc2_emit.c` (the stream, the G7x feeding, the numbered range above a `G70`, `U`/`W` written out as the absolutes they mean) - `--emit2test` runs **both** modules' senders over the same programs and requires the same output, from the top and from a run started in the middle |
 | built (7) | the preview: `nc2_preview.c` drew the stock, the chuck, the DIN rulers and callouts, the contour's point dimensions and the emitted path - the drawing pane is nc's picture, checked for ink and looked at against nc's own frame |
 | built (8) | what the panel remembers: `nc2_state.c` reads and writes `/D/nc_state.txt` with nc's own keys (`MODE=`, `SPINDLE=`, one key per mode holding the file it had open), so a card carries its state across a reboot and across the panel switch - the cursor is the session's, the way nc keeps it. `nc2_visual_init()` loads the remembered program (an empty one on a card that remembers nothing) and `open`/`save` flush the path and cursor. `nc2_state_runtime()` reads the machine's own numbers, `nc2_state_busy()` answers whether it is doing anything |
-| next | the run: `nc2_run.c` (the pacer, `1 SINGLE`/`2 FROM`/`3 FULL`, hold/stop, `#` reload) and the floating DRO that appears only while the machine is busy - then the drawing's tool panel and live tip (they need the tool table, which is its own module later) |
+| built (9) | the run: `nc2_run.c` is the pacer over `nc2_emit` - the panel hands the machine one unit and waits, so the mark is the line the tool is on - with `1 SINGLE`/`2 FROM`/`3 FULL`, `4 HOLD`, `5 STOP` and `#` reload, and the floating DRO that appears only while the machine is busy (work X/Z, feed, spindle, and the machine's own state word). The generator's own notes (`(G71 rough X23.000)`) are a line of the stream but not a line of the program, so they are not sent. `--run2test` reads what the run hands over, requires the machine to arrive where the program says and the DRO to be up only while it is busy |
+| next | the drawing's tool panel and live tip (they need the tool table, which is its own module later) |
 | then | the tool table's screen and MANUAL (each its own module, later), and the panel switch: `nc` out, `nc2` in, one commit |
 
 One upstream landmine was found on the way, in `file_system.c`: `fs_opendir()`
@@ -260,3 +261,31 @@ preview is not the place to save lines: `nc2_preview.c` carries the stock, the
 chuck, the dimension and ruler layer (DIN), the contour points, the generated
 motion of the cycles, and the live tool - as nc has them - which is ~1 700 lines
 and takes the estimate for the finished module from ~5 700 to **~6 300**.
+
+## The run, and the DRO
+
+`nc2_run.c` is the pacer, and the boundary between it and `nc`'s `nc_run.c` is
+one sentence: **`nc` sends the program as written and the machine's own G7x
+parser expands the cycles; `nc2` expands them in the panel** (that is
+`nc2_emit.c`, the layer `--emit2test` compares line for line against `nc`'s), so
+what travels to the controller is plain motion. The pacer is the same
+one-unit-at-a-time rule: it hands the machine one line and waits until the
+planner and the interpolator are empty before handing over the next, *except*
+while a block is still being expanded - a contour is one cut, and its lines go
+out back to back rather than a stop per row. The mark is the line the operator
+stepped from, which is the line in play, and the pacer keeps it there until the
+operator takes the cursor with a line key.
+
+One thing `nc` does not have to say out loud: the generator's expansion carries
+its own notes - `(G71 rough X23.000)`, `(G7x finish contour)`. They are a line
+of the *stream* but not a line of the *program*, so the pacer does not hand them
+to the controller (it logs the skip) - the mistake that first stopped a run at
+the header of a cycle.
+
+The floating DRO is not a strip: it is drawn over the preview's top only while
+the machine has something to say - a run, a jog, a hold, a fault
+(`nc2_state_busy()` and the run's own state) - so a machine that is not moving
+keeps the whole drawing. It wears the panel's green while it runs and its red for
+a fault, and it carries the same state word (`uCNC RUN`, `HOLD`, `ALARM`) on
+every screen, which is why the tab strip above no longer repeats it: the bench
+asked for one place, and the DRO's corner is it.

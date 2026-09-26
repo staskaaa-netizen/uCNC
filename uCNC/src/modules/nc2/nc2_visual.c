@@ -7,9 +7,12 @@
 #include "nc2_layout.h"
 #include "nc2_preview.h"
 #include "nc2_presets.h"
+#include "nc2_run.h"
 #include "nc2_state.h"
 
 #include "../../cnc.h"
+#include "../../core/interpolator.h"
+#include "../../core/parser.h"
 #include "../lvds_renderer/lvds_hstx.h"
 
 #include <stdio.h>
@@ -21,6 +24,7 @@ static char g_status[64];
 static char g_labels[9][NC2_PRESET_ROW_MAX];
 static bool g_dirty;
 static bool g_list;                 /* the file list is the screen */
+static nc2_mode_t g_mode = NC2_MODE_PROGRAM;
 
 static void nc2_statusf(const char *text)
 {
@@ -51,17 +55,49 @@ void nc2_visual_init(void)
     nc2_address_reset(g_address);
     nc2_statusf("");
     g_dirty = true;
+    nc2_run_init();
     nc2_state_init();
+    g_mode = nc2_state_mode() == NC2_MODE_RUN ? NC2_MODE_RUN : NC2_MODE_PROGRAM;
     /* The one write the panel makes by itself, and only onto a card that has no
        entry of its own: after that every entry is a file. */
     (void)nc2_boot_seed();
     /* Onto the file the panel had open, and where it was in it. A card that
        remembers nothing opens on an empty program, which is a program. */
-    if (!nc2_state_load_document(NC2_MODE_PROGRAM, &g_doc)) {
+    if (!nc2_state_load_document(g_mode, &g_doc)) {
         nc2_document_init(&g_doc);
         (void)nc2_insert_line(&g_doc, 0u, "");
     }
     nc2_labels_at(g_address);
+}
+
+/* Jump to a screen. Only the program and the run are built; MANUAL and TOOLS
+   each bring their own module, and are refused until they do. */
+void nc2_visual_select_mode(nc2_mode_t mode)
+{
+    if (mode != NC2_MODE_PROGRAM && mode != NC2_MODE_RUN) {
+        return;
+    }
+    if (mode == g_mode) {
+        return;
+    }
+    if (g_mode == NC2_MODE_PROGRAM) {
+        nc2_state_remember_path(NC2_MODE_PROGRAM, g_doc.path);
+    }
+    g_list = false;
+    g_mode = mode;
+    nc2_state_set_mode(mode);
+    nc2_address_reset(g_address);
+    nc2_labels_at(g_address);
+    if (mode == NC2_MODE_RUN && !nc2_run_active()) {
+        nc2_run_set_line(&g_doc, g_doc.cursor);
+    }
+    nc2_statusf("");
+    g_dirty = true;
+}
+
+nc2_mode_t nc2_visual_mode(void)
+{
+    return g_mode;
 }
 
 bool nc2_visual_open(const char *path)
@@ -73,7 +109,7 @@ bool nc2_visual_open(const char *path)
     }
     nc2_address_reset(g_address);
     nc2_labels_at(g_address);
-    nc2_state_remember_path(NC2_MODE_PROGRAM, g_doc.path);
+    nc2_state_remember_path(g_mode, g_doc.path);
     nc2_state_flush();
     g_dirty = true;
     return true;
@@ -86,7 +122,10 @@ const char *nc2_visual_path(void)
 
 const char *nc2_visual_screen_name(void)
 {
-    return g_list ? "FILES" : "EDIT";
+    if (g_list) {
+        return "FILES";
+    }
+    return g_mode == NC2_MODE_RUN ? "RUN" : "EDIT";
 }
 
 bool nc2_visual_save(void)
@@ -187,6 +226,80 @@ static void nc2_pad_press(char key)
     }
 }
 
+/* The line the RUN screen is on: what the pane marks and what `1 SINGLE` acts
+   on. It is the line in play, not the sender's position, and it is clamped into
+   the program because a finished run stands just past its last line. */
+static size_t nc2_visual_run_line(void)
+{
+    size_t line = nc2_run_display_line();
+
+    if (g_doc.line_count && line >= g_doc.line_count) {
+        line = g_doc.line_count - 1u;
+    }
+    return line;
+}
+
+/* The run's own keys: `1 SINGLE 2 FROM 3 FULL 4 HOLD 5 STOP`, `#` reloads, and
+   `B`/`C` walk the mark while nothing is running. False when the key is not the
+   run's, so the screen can offer it to the modes. */
+static bool nc2_visual_run_key(char key)
+{
+    size_t line = nc2_visual_run_line();
+    char text[48];
+
+    switch (key) {
+    case '1':
+        nc2_statusf(nc2_run_send_unit(&g_doc, line) ? "SINGLE sent" : "Nothing to send");
+        break;
+    case '2':
+        if (nc2_run_start(&g_doc, line)) {
+            snprintf(text, sizeof(text), "Run from line %lu", (unsigned long)(line + 1u));
+            nc2_statusf(text);
+        } else {
+            nc2_statusf("Nothing to run");
+        }
+        break;
+    case '3':
+        nc2_statusf(nc2_run_start(&g_doc, 0u) ? "Full run" : "Nothing to run");
+        break;
+    case '4':
+        if (nc2_run_toggle_hold()) {
+            nc2_statusf(nc2_run_hold() ? "Hold" : "Resume");
+        } else {
+            nc2_statusf("No active run");
+        }
+        break;
+    case '5':
+        nc2_run_stop();
+        nc2_statusf("Stopped");
+        break;
+    case '#':
+        /* RELOAD: the fault and the run go, and the file is read back off the
+           card, so an edit made since it was opened is what runs next. */
+        nc2_run_reset();
+        (void)nc2_state_load_document(NC2_MODE_RUN, &g_doc);
+        nc2_statusf("Reloaded");
+        break;
+    case 'B':
+    case 'C':
+        if (nc2_run_active()) {
+            return true;            /* RUN owns the cursor while it runs */
+        }
+        if (key == 'B') {
+            line = line > 0u ? line - 1u : 0u;
+        } else if (line + 1u < g_doc.line_count) {
+            line++;
+        }
+        nc2_run_set_line(&g_doc, line);
+        g_doc.cursor = line;
+        break;
+    default:
+        return false;
+    }
+    g_dirty = true;
+    return true;
+}
+
 void nc2_visual_key(char key)
 {
     nc2_key_t editor_key = NC2_KEY_NONE;
@@ -275,6 +388,26 @@ void nc2_visual_key(char key)
     if (g_doc.line_count == 0u) {
         return;                     /* no program: the keys have nothing to act on */
     }
+    /* The run screen: `0` still opens the card and `A` still leaves, and the
+       rest of the pad is the run's. */
+    if (g_mode == NC2_MODE_RUN) {
+        if (key == '0') {
+            if (nc2_file_scan("/D")) {
+                g_list = true;
+                nc2_statusf("");
+            } else {
+                nc2_statusf("The card is not answering");
+            }
+            g_dirty = true;
+            return;
+        }
+        if (key == 'A') {
+            nc2_visual_select_mode(NC2_MODE_PROGRAM);
+            return;
+        }
+        (void)nc2_visual_run_key(key);
+        return;
+    }
     switch (key) {
     case 'B': editor_key = NC2_KEY_UP; break;
     case 'C': editor_key = NC2_KEY_DOWN; break;
@@ -306,14 +439,16 @@ void nc2_visual_key(char key)
         editor_key = NC2_KEY_DIGIT;
         break;
     case 'A':
-        /* Up a level. At the root it is the mode key, which is the screens'
-           business - there is one screen so far. */
+        /* Up a level, and at the root the mode key: the program and the run
+           are the two screens built so far. */
         if (g_address[0]) {
             nc2_address_pop(g_address);
             nc2_pad_close(&g_doc);
             nc2_labels_at(g_address);
             nc2_statusf("");
             g_dirty = true;
+        } else {
+            nc2_visual_select_mode(NC2_MODE_RUN);
         }
         return;
     default:
@@ -346,7 +481,7 @@ static void nc2_draw_header(void)
     const char *path = g_doc.path[0] ? g_doc.path : "(no program)";
 
     nc2_fill(0, 0, LVDS_HSTX_WIDTH, NC2_HEADER_H, nc2_col_header());
-    snprintf(line, sizeof(line), "%s  %s%s", g_list ? "FILES" : "EDIT", path,
+    snprintf(line, sizeof(line), "%s  %s%s", nc2_visual_screen_name(), path,
              g_doc.dirty ? " *" : "");
     nc2_text_clip(8, 6, line, (LVDS_HSTX_WIDTH - 16) / nc2_col_width(LVDS_FONT_NORMAL),
                   nc2_col_text(), nc2_col_header(), LVDS_FONT_NORMAL);
@@ -367,14 +502,16 @@ static void nc2_draw_panes(void)
                    nc2_col_dim());
 }
 
-/* One row of the program: its number, then the text - and, on the row the cursor
-   is on, the picked field drawn as the box being typed into, three pieces so
-   everything the operator did not touch keeps its own colour. */
-static void nc2_draw_row(size_t index, int y)
+/* One row of the program: its number, then the text. The row the cursor (or the
+   run) is on wears the selection colour, the rows of the block it heads wear
+   the pale one, and the picked field is drawn as the box being typed into -
+   three pieces, so everything the operator did not touch keeps its colour. */
+static void nc2_draw_row(size_t index, int y, bool selected, bool path)
 {
     const char *text = g_doc.lines[index];
-    bool cursor = index == g_doc.cursor;
-    lvds_color_t bg = cursor ? nc2_col_select() : nc2_col_bg();
+    bool cursor = selected;
+    lvds_color_t bg = cursor ? nc2_col_select()
+                             : (path ? nc2_col_block() : nc2_col_bg());
     int col_w = nc2_col_width(LVDS_FONT_NORMAL);
     char number[8];
     int x = NC2_LEFT_PANE_X + NC2_LINE_NO_PAD;
@@ -383,9 +520,9 @@ static void nc2_draw_row(size_t index, int y)
     int count;
     int picked = -1;
 
-    if (cursor) {
+    if (cursor || path) {
         nc2_fill(NC2_LEFT_PANE_X, y - 2, NC2_LEFT_PANE_W - 2, NC2_ROW_H - 2,
-                 nc2_col_select());
+                 cursor ? nc2_col_select() : nc2_col_block());
     }
     snprintf(number, sizeof(number), "%3u", (unsigned)(index + 1u));
     nc2_text(x, y, number, nc2_col_dim(), bg, LVDS_FONT_NORMAL);
@@ -395,7 +532,8 @@ static void nc2_draw_row(size_t index, int y)
         return;
     }
     count = nc2_fields(text, fields, NC2_MAX_FIELDS);
-    if (cursor && g_doc.field >= 0 && g_doc.field < count) {
+    if (cursor && g_mode == NC2_MODE_PROGRAM && g_doc.field >= 0 &&
+        g_doc.field < count) {
         picked = g_doc.field;
     }
     if (picked < 0) {
@@ -423,14 +561,27 @@ static void nc2_draw_row(size_t index, int y)
 
 static void nc2_draw_program(void)
 {
+    size_t mark = g_doc.cursor;
     size_t first = 0u;
+    size_t path_first = 0u;
+    size_t path_last = 0u;
+    bool have_path = false;
     size_t i;
 
-    if (g_doc.cursor >= NC2_CODE_ROWS) {
-        first = g_doc.cursor - NC2_CODE_ROWS + 1u;
+    if (g_mode == NC2_MODE_RUN) {
+        g7x_doc_t view = nc2_document_g7x(&g_doc);
+
+        mark = nc2_visual_run_line();
+        have_path = g7x_doc_line_path(&view, mark, &path_first, &path_last);
+    }
+    if (mark >= NC2_CODE_ROWS) {
+        first = mark - NC2_CODE_ROWS + 1u;
     }
     for (i = first; i < g_doc.line_count && i - first < NC2_CODE_ROWS; i++) {
-        nc2_draw_row(i, NC2_PANE_Y + 4 + (int)(i - first) * NC2_ROW_H);
+        bool selected = i == mark;
+        bool path = have_path && i >= path_first && i <= path_last && !selected;
+
+        nc2_draw_row(i, NC2_PANE_Y + 4 + (int)(i - first) * NC2_ROW_H, selected, path);
     }
 }
 
@@ -472,6 +623,24 @@ static void nc2_draw_list(void)
     }
 }
 
+/* The pad's nine labels on the run screen: the run's own keys. The rest of the
+   pad is empty there - the card's entries are the editor's. */
+static const char *const g_nc2_run_labels[9] = {
+    "SINGLE", "FROM", "FULL", "HOLD", "STOP", "", "", "", ""
+};
+
+/* The label of one pad key on the active screen, or "" when it has none. */
+static const char *nc2_pad_label(char key)
+{
+    if (key < '1' || key > '9') {
+        return "";
+    }
+    if (g_mode == NC2_MODE_RUN) {
+        return g_nc2_run_labels[key - '1'];
+    }
+    return g_labels[key - '1'];
+}
+
 /* The pad's own band: where the operator is, then the nine slots. */
 static void nc2_draw_pad_band(void)
 {
@@ -481,22 +650,106 @@ static void nc2_draw_pad_band(void)
     char key;
     int i;
 
-    /* The keys carry their own outlines (they are buttons); the band under them
-       is only the address line, with no box drawn around the lot. */
-    nc2_pad_name(name, sizeof(name));
-    if (g_address[0]) {
-        snprintf(line, sizeof(line), "%s  %s", g_address, name);
+    if (g_mode == NC2_MODE_RUN) {
+        snprintf(line, sizeof(line), "RUN  line %lu",
+                 (unsigned long)(nc2_visual_run_line() + 1u));
     } else {
-        snprintf(line, sizeof(line), "%s", name);
+        /* The keys carry their own outlines (they are buttons); the band under
+           them is only the address line, with no box drawn around the lot. */
+        nc2_pad_name(name, sizeof(name));
+        if (g_address[0]) {
+            snprintf(line, sizeof(line), "%s  %s", g_address, name);
+        } else {
+            snprintf(line, sizeof(line), "%s", name);
+        }
     }
     nc2_text_clip(NC2_PAD_X + 2, NC2_PAD_Y - 22, line,
                   (NC2_PAD_W - 4) / nc2_col_width(LVDS_FONT_SMALL),
                   nc2_col_text(), nc2_col_bg(), LVDS_FONT_SMALL);
     for (key = '1'; key <= '9'; key++) {
         i = key - '1';
-        labels[i] = g_labels[i];
+        labels[i] = nc2_pad_label(key);
     }
-    nc2_draw_pad(NC2_PAD_X, NC2_PAD_Y, NC2_PAD_W, NC2_PAD_H, labels, 0);
+    nc2_draw_pad(NC2_PAD_X, NC2_PAD_Y, NC2_PAD_W, NC2_PAD_H, labels,
+                 nc2_run_hold() ? '4' : 0);
+}
+
+/* The word the DRO's corner carries: what the machine is doing, or refusing to
+   do, right now. */
+static const char *nc2_state_label(const nc2_runtime_state_t *rt)
+{
+    uint16_t state = rt ? rt->exec_state : 0u;
+
+    if (cnc_has_alarm()) return "ALARM";
+    if (state & EXEC_KILL) return "KILLED";
+    if (state & EXEC_LIMITS) return "LIMITS";
+    if (state & EXEC_POSITION_MAYBE_LOST) return "POS LOST";
+    if (state & EXEC_DOOR) return "DOOR";
+    if (nc2_run_hold() || (state & EXEC_HOLD)) return "HOLD";
+    if (nc2_run_active() || (state & (EXEC_RUN | EXEC_JOG))) return "RUN";
+    if (state & EXEC_HOMING) return "HOMING";
+    if (nc2_run_error()) return "ERROR";
+    return "IDLE";
+}
+
+/* True when that state is a fault: it wears the same red as a message the panel
+   would show, so a machine that needs attention says so on the glass. */
+static bool nc2_state_is_fault(const nc2_runtime_state_t *rt)
+{
+    uint16_t state = rt ? rt->exec_state : 0u;
+
+    return cnc_has_alarm() ||
+           (state & (EXEC_KILL | EXEC_LIMITS | EXEC_POSITION_MAYBE_LOST)) ||
+           nc2_run_error();
+}
+
+/* The floating DRO: the work position, the feed and the spindle, and the
+   machine's own state word. It is drawn only while the machine has something to
+   say - a run, a jog, a hold, a fault - so a screen that is not running is all
+   drawing. */
+static void nc2_draw_dro(void)
+{
+    nc2_runtime_state_t rt;
+    float work[AXIS_COUNT] = { 0 };
+    lvds_color_t bg;
+    const char *state;
+    bool fault;
+    char buf[40];
+    int col_w = nc2_col_width(LVDS_FONT_NORMAL);
+
+    nc2_state_runtime(&rt);
+    work[AXIS_X] = rt.x;
+    work[AXIS_Z] = rt.z;
+    parser_machine_to_work(work);
+    state = nc2_state_label(&rt);
+    fault = nc2_state_is_fault(&rt);
+    bg = fault ? nc2_col_error()
+               : (nc2_run_active() || (rt.exec_state & EXEC_RUN)
+                      ? nc2_col_run()
+                      : nc2_col_header());
+
+    nc2_fill(NC2_DRO_X, NC2_DRO_Y, NC2_DRO_W, NC2_DRO_H, bg);
+    nc2_text(NC2_DRO_X + 6, NC2_DRO_Y + 4, "X", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
+    snprintf(buf, sizeof(buf), "%9.3f", (double)work[AXIS_X]);
+    nc2_text_clip(NC2_DRO_X + 24, NC2_DRO_Y + 4, buf, 9, nc2_col_text(), bg,
+                  LVDS_FONT_NORMAL);
+    nc2_text(NC2_DRO_X + 6, NC2_DRO_Y + 22, "Z", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
+    snprintf(buf, sizeof(buf), "%9.3f", (double)work[AXIS_Z]);
+    nc2_text_clip(NC2_DRO_X + 24, NC2_DRO_Y + 22, buf, 9, nc2_col_text(), bg,
+                  LVDS_FONT_NORMAL);
+
+    nc2_text(NC2_DRO_X + 120, NC2_DRO_Y + 4, "F", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
+    snprintf(buf, sizeof(buf), "%7.1f", (double)rt.feed);
+    nc2_text_clip(NC2_DRO_X + 138, NC2_DRO_Y + 4, buf, 7, nc2_col_text(), bg,
+                  LVDS_FONT_NORMAL);
+    nc2_text(NC2_DRO_X + 120, NC2_DRO_Y + 22, "S", nc2_col_dim(), bg, LVDS_FONT_NORMAL);
+    snprintf(buf, sizeof(buf), "%7u", rt.spindle);
+    nc2_text_clip(NC2_DRO_X + 138, NC2_DRO_Y + 22, buf, 7, nc2_col_text(), bg,
+                  LVDS_FONT_NORMAL);
+
+    snprintf(buf, sizeof(buf), "uCNC %s", state);
+    nc2_text_clip(NC2_DRO_X + 6, NC2_DRO_Y + 48, buf,
+                  (NC2_DRO_W - 12) / col_w, nc2_col_dim(), bg, LVDS_FONT_NORMAL);
 }
 
 void nc2_visual_draw(void)
@@ -522,6 +775,12 @@ void nc2_visual_draw(void)
            of the three. */
         nc2_preview_draw(&g_doc, NC2_RIGHT_PANE_X, NC2_PANE_Y, NC2_RIGHT_PANE_W,
                          NC2_PANE_H);
+        /* The DRO floats over the drawing and only while the machine has
+           something to say; the pad is the machine's keys and is drawn last. */
+        if (nc2_state_busy() || nc2_run_active() || nc2_run_hold() ||
+            nc2_run_error()) {
+            nc2_draw_dro();
+        }
         nc2_draw_pad_band();
     }
     if (g_status[0]) {
@@ -531,4 +790,111 @@ void nc2_visual_draw(void)
                       nc2_col_text(), nc2_col_header(), LVDS_FONT_SMALL);
     }
     nc2_visual_clear_dirty();
+}
+
+/* --- the shell's own questions -------------------------------------------- */
+
+bool nc2_visual_periodic_needed(void)
+{
+    return nc2_boot_active() || nc2_state_busy() || nc2_run_active() ||
+           nc2_run_hold() || nc2_run_error() || g_doc.dirty;
+}
+
+size_t nc2_visual_usage(const char *const **lines)
+{
+    static const char *const program[] = {
+        "The program, one line at a time.",
+        "D walks a line's fields.",
+        "A digit types the value, B is the",
+        "sign and C the point.",
+        "B/C move by line with nothing picked.",
+        "1-9 press the pad's entries.",
+        "A up a level, 0 the card, A the run."
+    };
+    static const char *const run[] = {
+        "Send the program to the machine.",
+        "1 SINGLE  2 FROM  3 FULL.",
+        "4 HOLD (again resumes)  5 STOP.",
+        "B/C pick the line, # reload, 0 files."
+    };
+    static const char *const files[] = {
+        "Pick a program from the card.",
+        "B/C step the list, D opens.",
+        "5 new  6 delete  8 refresh.",
+        "0 back to the program."
+    };
+    const char *const *table;
+    size_t count;
+
+    if (!lines) {
+        return 0u;
+    }
+    if (g_list) {
+        table = files;
+        count = sizeof(files) / sizeof(files[0]);
+    } else if (g_mode == NC2_MODE_RUN) {
+        table = run;
+        count = sizeof(run) / sizeof(run[0]);
+    } else {
+        table = program;
+        count = sizeof(program) / sizeof(program[0]);
+    }
+    *lines = table;
+    return count;
+}
+
+bool nc2_visual_key_meaning(char key, nc2_visual_key_meaning_t *meaning)
+{
+    if (!meaning) {
+        return false;
+    }
+    meaning->label = 0;
+    meaning->on_menu = false;
+    meaning->step = false;
+    if (g_list) {
+        switch (key) {
+        case 'B': meaning->label = "list -"; meaning->step = true; break;
+        case 'C': meaning->label = "list +"; meaning->step = true; break;
+        case 'D': meaning->label = "open"; break;
+        case '#': meaning->label = "open"; break;
+        case '5': meaning->label = "new"; break;
+        case '6': meaning->label = "delete"; break;
+        case '8': meaning->label = "refresh"; break;
+        case '0': meaning->label = "back"; break;
+        default: return false;
+        }
+        return true;
+    }
+    if (g_mode == NC2_MODE_RUN) {
+        if (key >= '1' && key <= '5') {
+            meaning->label = nc2_pad_label(key);
+            meaning->on_menu = true;
+            return true;
+        }
+        switch (key) {
+        case '#': meaning->label = "RELOAD"; break;
+        case '0': meaning->label = "files"; break;
+        case 'A': meaning->label = "edit"; break;
+        case 'B': meaning->label = "line -"; meaning->step = true; break;
+        case 'C': meaning->label = "line +"; meaning->step = true; break;
+        default: return false;
+        }
+        return true;
+    }
+    if (key >= '1' && key <= '9') {
+        meaning->label = nc2_pad_label(key);
+        meaning->on_menu = true;
+        return meaning->label[0] != '\0';
+    }
+    switch (key) {
+    case 'A': meaning->label = "level"; break;
+    case '0': meaning->label = "files"; break;
+    case 'B': meaning->label = "line -"; meaning->step = true; break;
+    case 'C': meaning->label = "line +"; meaning->step = true; break;
+    case 'D': meaning->label = "field"; break;
+    case '#': meaning->label = "type"; break;
+    case '*': meaning->label = "delete"; break;
+    default: return false;
+    }
+    return true;
 }

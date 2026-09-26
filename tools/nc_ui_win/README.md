@@ -54,6 +54,7 @@ build\nc_ui.exe --edit2test                      # nc2's fields and value editor
 build\nc_ui.exe --pad2test                       # nc2's pad is the file tree
 build\nc_ui.exe --screen2test                    # nc2's screen draws and writes
 build\nc_ui.exe --file2test                      # nc2's card list walks and opens
+build\nc_ui.exe --run2test                       # nc2's run and its floating DRO
 build\nc_ui.exe --dump-nc2 screen.bmp            # nc2's screen on its own
 python tools\test_nc2.py                         # nc2's own target (AGENTS.md 8)
 build\nc_ui.exe --dirtytest                      # a key repaints what it changed
@@ -378,6 +379,14 @@ python tools\test_nc_ui.py
   then `#` makes a numbered program in the folder being listed and opens it, `6`
   deletes the selected file, and `8` reads the folder again so the deleted file
   is gone from the list.
+- `--run2test` checks nc2's run: `3 FULL` hands the controller exactly what
+  `nc2_emit` says the program means (the generator's own `(G71 rough X23.000)`
+  notes are a line of the stream, not a line of the program, so they are not
+  sent), the machine really runs it one unit at a time and arrives where the
+  program says - the program's X is a diameter and the axis works in the radius,
+  so the machine's figure is half - and the floating DRO is on the glass while
+  the run is busy and gone when it is not. `1 SINGLE` sends the unit the mark is
+  on and leaves the mark on the line the operator stepped from.
 - `--dirtytest` checks the repaint contract: a key that changes the screen has
   to ask for the draw itself. RUN's line keys (`B`/`C`) did not - they moved the
   run line and returned without the dirty flag, so the highlight sat on the old

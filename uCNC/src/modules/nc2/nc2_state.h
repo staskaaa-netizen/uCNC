@@ -20,10 +20,14 @@ extern "C" {
 
 #define NC2_STATE_PATH "/D/nc_state.txt"
 
-/* nc2's screens so far: the program, and the card's list (a view, not a mode -
-   it is not remembered). MANUAL, TOOLS and RUN will each bring their own key. */
+/* nc2's screens, and the keys nc's state file uses for them, so a card written
+   by one module reads in the other. The card's list is a view, not a mode, and
+   is not remembered. */
 typedef enum {
     NC2_MODE_PROGRAM = 0,
+    NC2_MODE_MANUAL,
+    NC2_MODE_TOOLS,
+    NC2_MODE_RUN,
     NC2_MODE_COUNT
 } nc2_mode_t;
 

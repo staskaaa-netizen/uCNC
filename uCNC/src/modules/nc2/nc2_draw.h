@@ -22,6 +22,13 @@ lvds_color_t nc2_col_pad_key(void);
 lvds_color_t nc2_col_pad_hot(void);
 lvds_color_t nc2_col_field_bg(void);
 lvds_color_t nc2_col_field_fg(void);
+/* The weaker mark beside the line the run is on: the source rows of the block
+   that line heads. */
+lvds_color_t nc2_col_block(void);
+/* The run's own colours: the panel's green while the machine is moving, and its
+   red for a fault - the two things the floating DRO can say. */
+lvds_color_t nc2_col_run(void);
+lvds_color_t nc2_col_error(void);
 lvds_color_t nc2_col_prev_bg(void);
 lvds_color_t nc2_col_prev_frame(void);
 lvds_color_t nc2_col_prev_stock(void);

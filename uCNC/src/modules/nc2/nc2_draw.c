@@ -26,6 +26,9 @@ lvds_color_t nc2_col_pad_hot(void) { return lvds_palette_color(yellow); }
    row as much as on any other. */
 lvds_color_t nc2_col_field_bg(void) { return lvds_palette_color(white_warm); }
 lvds_color_t nc2_col_field_fg(void) { return lvds_palette_color(black); }
+lvds_color_t nc2_col_block(void) { return lvds_palette_color(yellow_light); }
+lvds_color_t nc2_col_run(void) { return lvds_palette_color(green); }
+lvds_color_t nc2_col_error(void) { return lvds_palette_element(LC_ELEM_ERROR); }
 
 /* The preview's own elements: the drawing has its own background, frame, stock
    and cut colours, so a pane can be read as a drawing and not as a screen. */

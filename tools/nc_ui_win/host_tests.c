@@ -40,10 +40,13 @@
 #include "nc_visual.h"
 #include "nc2_boot.h"
 #include "nc2.h"
+#include "nc2_draw.h"
 #include "nc2_emit.h"
 #include "nc2_files.h"
 #include "nc2_layout.h"
 #include "nc2_presets.h"
+#include "nc2_run.h"
+#include "nc2_state.h"
 #include "nc2_visual.h"
 #include "g7x.h"
 #include "host_fs.h"
@@ -62,6 +65,8 @@ static bool host_fs_write_text(const char *path, const char *text);
 static bool host_fs_read_text(const char *path, char *out, size_t out_sz);
 static void host_press(char key);
 static void host_run_to_end(void);
+static uint32_t host_frame_at(int x, int y);
+static uint32_t host_panel_rgb(lvds_color_t color);
 
 /* Headless check of the held feed, on the real parser, planner and virtual MCU.
 
@@ -2328,6 +2333,236 @@ static int host_emit2test(void)
     return 0;
 }
 
+/* True when the run hands this line to the controller: the generator's own
+   notes (`(G71 rough X23.000)`) are a line of the stream but not a line of the
+   program. Mirrors the run's own question, so the check and the sender agree. */
+static bool host_run2_sendable(const char *line)
+{
+    while (*line == ' ' || *line == '\t') {
+        line++;
+    }
+    if (!*line || *line == '(') {
+        return false;
+    }
+    return toupper((unsigned char)line[0]) == 'G' ||
+           toupper((unsigned char)line[0]) == 'M' ||
+           toupper((unsigned char)line[0]) == 'S' ||
+           toupper((unsigned char)line[0]) == 'T' ||
+           nc2_emit_line_is_direct(line);
+}
+
+/* Everything nc2's run sends for a program, one line per row, as the machine
+   reads it: the expansion of the cycles, joined with newlines. `end_x`/`end_z`
+   come back as the point the stream left the tool at, which is where the machine
+   has to arrive. */
+static bool host_nc2_expand(const nc2_document_t *doc,
+                            size_t start,
+                            char *out,
+                            size_t out_sz,
+                            float *end_x,
+                            float *end_z)
+{
+    nc2_emit_stream_t stream;
+    size_t line = 0u;
+    size_t used = 0u;
+    unsigned guard = 0u;
+
+    out[0] = '\0';
+    nc2_emit_stream_begin(&stream, doc, start);
+    nc2_emit_stream_set_log(&stream, false);
+    while (stream.active && guard++ < 100000u) {
+        char text[NC2_MAX_LINE_LEN];
+        nc2_emit_result_t r = nc2_emit_stream_next(&stream, text, sizeof(text),
+                                                   &line);
+        int n;
+
+        if (r == NC2_EMIT_ERROR) {
+            return false;
+        }
+        if (r != NC2_EMIT_LINE || !host_run2_sendable(text)) {
+            continue;
+        }
+        n = snprintf(out + used, out_sz - used, "%s\n", text);
+        if (n < 0 || (size_t)n >= out_sz - used) {
+            return false;
+        }
+        used += (size_t)n;
+    }
+    if (end_x) {
+        *end_x = stream.x;
+    }
+    if (end_z) {
+        *end_z = stream.z;
+    }
+    return true;
+}
+
+/* Read what nc2's run sends until it is over, the way `host_read_run()` reads
+   nc's: the machine is pumped between blocks, so the pacing is exercised, not
+   bypassed. */
+static void host_read_run2(char *sent, size_t sent_cap, size_t *sent_len)
+{
+    unsigned guard;
+
+    *sent_len = 0u;
+    for (guard = 0u; guard < 200000u; guard++) {
+        bool read_any = false;
+
+        while (grbl_stream_available()) {
+            char c = grbl_stream_getc();
+
+            read_any = true;
+            if (c) {
+                if (*sent_len + 1u < sent_cap) {
+                    sent[(*sent_len)++] = c;
+                }
+            } else if (*sent_len > 0u && sent[*sent_len - 1u] != '\n' &&
+                       *sent_len + 1u < sent_cap) {
+                sent[(*sent_len)++] = '\n';
+            }
+        }
+        if (read_any) {
+            continue;
+        }
+        if (host_machine_idle() && !nc2_run_streaming()) {
+            break;
+        }
+        host_pump(1u);
+    }
+    if (*sent_len > 0u && sent[*sent_len - 1u] != '\n' && *sent_len + 1u < sent_cap) {
+        sent[(*sent_len)++] = '\n';
+    }
+    sent[*sent_len] = '\0';
+}
+
+/* nc2's run: the sender hands the machine what the program means, one unit at a
+   time, and the machine really runs it. The check reads the same reader the
+   controller reads, compares the lines with the expansion `nc2_emit` produces,
+   requires the machine to have arrived where the program says, and looks at the
+   glass for the floating DRO - which is there while the machine is busy and gone
+   when it is not. */
+static int host_run2test(void)
+{
+    static const char *const program = "/D/nc/files/run2.nc";
+    static const char *const text =
+        "G0 X52 Z2\n"
+        "G71 U2 R1 X1 Z1 F500 P10 Q20\n"
+        "N10 G1 X50 Z2\n"
+        "G1 X40 Z2 C2\n"
+        "N20 G1 X40 Z-20\n"
+        "G70 P10 Q20\n"
+        "M5\n";
+    char sent[4096];
+    char want[4096];
+    size_t n = 0u;
+    float want_x = 0.0f;
+    float want_z = 0.0f;
+    nc2_document_t doc;
+    nc2_runtime_state_t rt;
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!host_fs_write_text(program, text)) {
+        puts("run2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);                 /* past the first start's logo */
+    if (!nc2_visual_open(program)) {
+        puts("run2test: FAIL the fixture does not load");
+        return 1;
+    }
+    nc2_visual_select_mode(NC2_MODE_RUN);
+    if (strcmp(nc2_visual_screen_name(), "RUN") != 0) {
+        printf("run2test: FAIL the screen is \"%s\", not RUN\n",
+               nc2_visual_screen_name());
+        failures++;
+    }
+
+    /* Nothing running: the DRO is not there, so the whole drawing is the
+       screen. */
+    nc2_visual_draw();
+    if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) ==
+        host_panel_rgb(nc2_col_run())) {
+        puts("run2test: FAIL the DRO is up on an idle machine");
+        failures++;
+    }
+
+    /* `3 FULL`: what the panel hands the controller, line for line. Reading the
+       reader here is what takes the lines, so the machine does not run them -
+       the next pass runs the same program for the machine's own sake. */
+    nc2_visual_key('3');
+    host_read_run2(sent, sizeof(sent), &n);
+
+    nc2_document_init(&doc);
+    if (!nc2_file_load(&doc, program) ||
+        !host_nc2_expand(&doc, 0u, want, sizeof(want), &want_x, &want_z)) {
+        puts("run2test: FAIL the fixture does not expand");
+        failures++;
+    } else if (strcmp(sent, want) != 0) {
+        printf("run2test: FAIL FULL sent\n  \"%s\"\nwanted\n  \"%s\"\n",
+               sent, want);
+        failures++;
+    }
+
+    /* The same program again, but this time the lines are left to the machine:
+       the run has to arrive where the expansion left the tool, the DRO has to be
+       on the glass while it is busy, and gone when it is over. */
+    nc2_run_reset();
+    host_pump_idle(64u);
+    nc2_visual_key('3');
+    host_pump(1u);
+    nc2_visual_draw();
+    if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) !=
+        host_panel_rgb(nc2_col_run())) {
+        puts("run2test: FAIL no DRO while the run is armed");
+        failures++;
+    }
+    for (n = 0u; n < 200000u; n++) {
+        if (host_machine_idle() && !nc2_run_streaming()) {
+            break;
+        }
+        host_pump(1u);
+    }
+    host_pump_idle(64u);
+    nc2_state_runtime(&rt);
+    /* The program's X is a diameter and the axis works in the radius, so the
+       machine's figure is half the program's (Z is the same in both). */
+    if (fabsf(rt.x * 2.0f - want_x) > 0.1f || fabsf(rt.z - want_z) > 0.05f) {
+        printf("run2test: FAIL the machine ended at X%.3f Z%.3f, not the "
+               "program's X%.3f Z%.3f\n", (double)rt.x, (double)rt.z,
+               (double)want_x, (double)want_z);
+        failures++;
+    }
+    nc2_visual_draw();
+    if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) ==
+        host_panel_rgb(nc2_col_run())) {
+        puts("run2test: FAIL the DRO stayed after the run");
+        failures++;
+    }
+
+    /* `1 SINGLE` sends the unit the mark is on, and the mark stays on the line
+       the operator stepped from. */
+    nc2_run_reset();
+    nc2_visual_key('C');
+    nc2_visual_key('C');                    /* the mark is on line 3 */
+    nc2_visual_key('1');                    /* SINGLE: the block it sits in */
+    host_pump_idle(64u);
+    if (nc2_run_display_line() != 2u) {
+        printf("run2test: FAIL SINGLE moved the mark to line %lu\n",
+               (unsigned long)(nc2_run_display_line() + 1u));
+        failures++;
+    }
+
+    if (failures) {
+        printf("run2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("run2test: PASS the run hands over what the program means, the "
+         "machine arrives, and the DRO floats only while it is busy");
+    return 0;
+}
 /* nc2's value editor: a line is cut into fields at its letters, the keys walk
    them, and what is typed replaces the value that was there. The dumb editor the
    bench asked for, so the checks are about its two rules - where a field begins
@@ -5033,6 +5268,8 @@ int host_tests_run(int argc, char **argv)
             return host_file2test();
         if (strcmp(argv[i], "--emit2test") == 0)
             return host_emit2test();
+        if (strcmp(argv[i], "--run2test") == 0)
+            return host_run2test();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

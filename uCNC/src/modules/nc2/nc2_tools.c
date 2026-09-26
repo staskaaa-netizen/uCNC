@@ -1,7 +1,9 @@
 #include "nc2_tools.h"
 
 #include "nc2_files.h"
+#include "../file_system.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -160,6 +162,88 @@ bool nc2_tools_from_row(const char *row, nc2_tool_t *tool)
 static nc2_tool_t g_nc2_tools[NC2_TOOL_MAX + 1];
 static bool g_nc2_tools_loaded;
 
+/* Walk a card's file one line at a time and hand every line to `visit`. A whole
+   `nc2_document_t` is 256 lines of 96 bytes - 24 KB - and a local one of those
+   is a stack frame no machine has: the table and the program are read as a
+   stream instead. */
+typedef void (*nc2_tools_line_fn)(const char *line, size_t index, void *ctx);
+
+static bool nc2_tools_walk(const char *path, nc2_tools_line_fn visit, void *ctx)
+{
+    fs_file_t *fp;
+    char line[NC2_MAX_LINE_LEN];
+    size_t used = 0u;
+    size_t index = 0u;
+    uint32_t guard = 0u;
+
+    if (!path || !path[0]) {
+        return false;
+    }
+    fp = fs_open(path, "r");
+    if (!fp) {
+        return false;
+    }
+    while (fs_available(fp) > 0 && guard++ < (NC2_MAX_LINES * 8u)) {
+        char c;
+
+        if (fs_read(fp, (uint8_t *)&c, 1u) != 1u) {
+            break;
+        }
+        if (c == '\n' || used + 1u >= sizeof(line)) {
+            line[used] = '\0';
+            if (visit) {
+                visit(line, index, ctx);
+            }
+            used = 0u;
+            index++;
+        } else if (c != '\r') {
+            line[used++] = c;
+        }
+    }
+    if (used > 0u) {
+        line[used] = '\0';
+        if (visit) {
+            visit(line, index, ctx);
+        }
+    }
+    fs_close(fp);
+    return true;
+}
+
+/* The table's own lines: a row per tool, the number its `T` word says. */
+static void nc2_tools_take_line(const char *line, size_t index, void *ctx)
+{
+    nc2_tool_t tool;
+    bool *any = (bool *)ctx;
+
+    (void)index;
+    if (!nc2_tool_from_line(line, &tool) || tool.t < 0 ||
+        tool.t > NC2_TOOL_MAX) {
+        return;
+    }
+    g_nc2_tools[tool.t] = tool;
+    *any = true;
+}
+
+/* The tool a program is using by the time it reaches `upto_line`: the last `T`
+   word at or above it. The machine's own answer, read from the card without
+   holding the program in RAM. */
+static void nc2_tools_find_tool(const char *line, size_t index, void *ctx)
+{
+    struct {
+        size_t upto;
+        int *tool;
+    } *find = ctx;
+    float v;
+
+    if (index > find->upto) {
+        return;
+    }
+    if (nc2_tool_word(line, 'T', &v)) {
+        *find->tool = (int)(v + 0.5f);
+    }
+}
+
 void nc2_tools_clear(void)
 {
     memset(g_nc2_tools, 0, sizeof(g_nc2_tools));
@@ -168,30 +252,32 @@ void nc2_tools_clear(void)
 
 bool nc2_tools_load(const char *path)
 {
-    nc2_document_t doc;
-    size_t i;
     bool any = false;
 
     nc2_tools_clear();
-    if (!path || !path[0]) {
+    if (!nc2_tools_walk(path, nc2_tools_take_line, &any)) {
         return false;
-    }
-    nc2_document_init(&doc);
-    if (!nc2_file_load(&doc, path)) {
-        return false;
-    }
-    for (i = 0u; i < doc.line_count; i++) {
-        nc2_tool_t tool;
-
-        if (!nc2_tool_from_line(doc.lines[i], &tool) ||
-            tool.t < 0 || tool.t > NC2_TOOL_MAX) {
-            continue;
-        }
-        g_nc2_tools[tool.t] = tool;
-        any = true;
     }
     g_nc2_tools_loaded = any;
     return any;
+}
+
+bool nc2_tools_program_tool(const char *program_path, size_t upto_line,
+                            int *tool)
+{
+    struct {
+        size_t upto;
+        int *tool;
+    } find;
+
+    if (!tool || !program_path || !program_path[0]) {
+        return false;
+    }
+    *tool = -1;
+    find.upto = upto_line;
+    find.tool = tool;
+    (void)nc2_tools_walk(program_path, nc2_tools_find_tool, &find);
+    return *tool >= 0;
 }
 
 bool nc2_tools_active(const nc2_document_t *program, size_t line,

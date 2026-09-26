@@ -302,12 +302,35 @@ static void nc2_visual_load_tools(void)
         nc2_statusf("New tool table");
     }
     nc2_state_remember_path(NC2_MODE_TOOLS, g_doc.path);
-    /* The tool view draws the row the cursor is on, so a cursor that landed on
-       a comment or a blank row moves to the first tool: the table is what this
-       screen is for, and nc put the cursor on the first tool the same way. */
+    /* The pointer lands on the tool the machine is using: the last `T` the
+       program has by the line the editor is on, looked up in this table - so
+       opening TOOLS puts the operator on the tool the cut is with, and the
+       machine never moves it after that (bench: "we push tool to state of
+       mashine but not jump around"). A program that names no tool - or a table
+       that does not hold it - leaves the cursor on the first tool row, which is
+       where this screen is worth reading from. */
     {
         nc2_tool_t tool;
+        int wanted = -1;
+        const char *program = nc2_state_path(NC2_MODE_PROGRAM);
 
+        if (program[0]) {
+            (void)nc2_tools_program_tool(program,
+                                         nc2_state_cursor(NC2_MODE_PROGRAM),
+                                         &wanted);
+        }
+        if (wanted >= 0 && g_doc.line_count &&
+            (!nc2_tool_from_line(g_doc.lines[g_doc.cursor], &tool) ||
+             tool.t != wanted)) {
+            /* The cursor is not on that tool's row already. */
+            for (i = 0u; i < g_doc.line_count; i++) {
+                if (nc2_tool_from_line(g_doc.lines[i], &tool) &&
+                    tool.t == wanted) {
+                    g_doc.cursor = i;
+                    break;
+                }
+            }
+        }
         if (g_doc.line_count &&
             !nc2_tool_from_line(g_doc.lines[g_doc.cursor], &tool)) {
             for (i = 0u; i < g_doc.line_count; i++) {
@@ -342,6 +365,17 @@ void nc2_visual_select_mode(nc2_mode_t mode)
         return;
     }
     if (mode == g_mode) {
+        return;
+    }
+    /* TOOLS loads the tool table *into the screen's document*, and a run is
+       sending that same document: a look at the tools in the middle of a
+       program would have the pacer cut the table. The screen is not allowed
+       while the run is armed - the same rule a jog's block has - and the rest
+       of the screens are safe (MANUAL has no file; EDIT and RUN are the file the
+       run is already sending). */
+    if (mode == NC2_MODE_TOOLS && nc2_run_streaming()) {
+        nc2_statusf("Program running - TOOLS waits");
+        g_dirty = true;
         return;
     }
     if (g_mode == NC2_MODE_MANUAL) {

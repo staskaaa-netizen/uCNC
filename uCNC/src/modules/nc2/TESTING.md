@@ -34,9 +34,20 @@ cannot have the spindle, the travel or the panel's glass.
   shape on the crosshair and its numbers under it. Walk the cursor down the
   table and the drawing has to change with it; a row that is not a tool shows
   nothing.
+- Open TOOLS on the machine, from every screen: it has to come up at once, with
+  the pointer on the tool the program is using. This is the screen that read the
+  table through a 24 KB stack frame before (see the module README) - a hang or a
+  scramble here is that fault come back.
 - In a run: the **mark follows the cut**, line by line, and the tool glyph rides
   the machine's own position on the drawing. Walk the cursor before the run and
   the mark is the line the operator left it on.
+- The mark is the **unit** the machine is cutting, not a row of its expansion: a
+  `G71` block stays marked as the block while its roughing passes go out, and the
+  pale path behind it covers the same rows (bench: *"it seems to when try to mark
+  each one line inside g7x cycle. not stay in whole block as is"*).
+- `A` to TOOLS **while a program is running** has to refuse - "Program running -
+  TOOLS waits" - and the run has to carry on. Looking at MANUAL, EDIT or RUN
+  while it cuts is fine.
 
 ## The run
 

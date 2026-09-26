@@ -98,6 +98,14 @@ const char *nc2_state_path(nc2_mode_t mode)
     return g_nc2_path[mode];
 }
 
+size_t nc2_state_cursor(nc2_mode_t mode)
+{
+    if (mode < 0 || mode >= NC2_MODE_COUNT) {
+        return 0u;
+    }
+    return g_nc2_cursor[mode];
+}
+
 void nc2_state_remember_cursor(const nc2_document_t *doc)
 {
     nc2_mode_t mode;

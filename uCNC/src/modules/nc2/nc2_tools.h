@@ -46,6 +46,11 @@ bool nc2_tool_orient_valid(int orient);
    read in a frame loop is what the frame meter would show). */
 void nc2_tools_clear(void);
 bool nc2_tools_load(const char *path);
+/* The tool a program is using by the time it reaches `upto_line`: the last `T`
+   word at or above it, read from the card. False when the program names none -
+   `tool` is then -1. */
+bool nc2_tools_program_tool(const char *program_path, size_t upto_line,
+                            int *tool);
 /* The tool the program is using at `line`: the last `T` word at or above it,
    looked up in the loaded table (or the shipped row when the table has none). */
 bool nc2_tools_active(const nc2_document_t *program, size_t line,

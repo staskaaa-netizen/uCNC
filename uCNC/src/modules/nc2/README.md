@@ -90,6 +90,11 @@ EDIT draws the stock whole again. **The tool is on it**: the glyph rides the
 machine's own position while it cuts, drawn as the shape its row's orientation
 code describes (`nc`'s live tool, which the port had left out).
 
+The drawing starts just under the header: the band above it is what the rulers
+and the dimension callouts reach (54 pixels) and nothing more - the bench kept
+asking for the empty part of it to go (*"i still 25-30 empty px on top of our
+image of preview"*).
+
 **The tools screen** (`TOOLS`) is two halves, the bench's own arrangement: *"top
 one is text lines, bottom one is tool view."* The table's rows are the text in
 the pane under the header - the widest pane, so a whole row reads without
@@ -97,6 +102,15 @@ scrolling - and the tool the cursor is on is drawn below it: its shape on its ow
 X0/Z0 crosshair, and the numbers its row holds under that. The row's meaning is
 the table's own letters, read by `nc2_tools.c` (the tool table is `nc2`'s now;
 `nc_tools.c` stays in the tree as the record of the module it replaced).
+
+The **pointer lands on the tool the machine is using**: the last `T` the program
+has by the line the editor is on, read from the card and looked up in the table
+(bench: *"we push tool to state of mashine but not jump around"*). Once it is
+there, nothing moves it but the operator's own keys. And TOOLS is **refused while
+a run is armed** ("Program running - TOOLS waits"): TOOLS loads the table into
+the screen's document - the same document the pacer is sending - so a look at the
+tools in the middle of a program would have the run cut the tool table. MANUAL,
+EDIT and RUN are safe to look at: they are the same file, or no file at all.
 
 **A frame only paints what changed.** The header, the rows, the notes and the pad
 are drawn when something they show has changed (a key, the line in play, the
@@ -190,6 +204,13 @@ digits type into the picked one, and nothing is checked while editing. Sanity
 checking happens where it already does - the loader, G7x and the sender.
 
 ## The entries: one file per address
+
+**A card's file is read as a stream, never into a local document.** An
+`nc2_document_t` is 256 lines of 96 bytes - 24 KB - so a local one is a stack
+frame no machine has; the tool table and the program's own `T` are read a line at
+a time (`nc2_tools_walk()`). This was found the hard way: the tool table was
+loaded through a local document, and on the machine that is a 24 KB frame on a
+stack of a few KB - the one thing about TOOLS that was genuinely broken.
 
 **Decided: a folder of files, one per address - not one big file.** The single
 file was tried and removed (`docs/nc-preset-file.md`, "What this replaced"): it

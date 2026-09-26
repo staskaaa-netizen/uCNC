@@ -50,6 +50,9 @@ void nc2_state_set_mode(nc2_mode_t mode);
 nc2_mode_t nc2_state_mode(void);
 void nc2_state_remember_path(nc2_mode_t mode, const char *path);
 const char *nc2_state_path(nc2_mode_t mode);
+/* Where the cursor was in the file that mode had open. Asked for by the tools
+   screen, which reads the program's own answer without opening it. */
+size_t nc2_state_cursor(nc2_mode_t mode);
 void nc2_state_remember_cursor(const nc2_document_t *doc);
 /* Read the file the mode last had open into `doc`, and put its cursor back.
    False when nothing is remembered, or the card cannot answer. */

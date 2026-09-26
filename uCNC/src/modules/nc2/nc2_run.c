@@ -33,9 +33,13 @@ static size_t g_nc2_run_end_line;
 static size_t g_nc2_run_running_line;
 static bool g_nc2_run_running_valid;
 static bool g_nc2_run_step_in_flight;
-/* A single step holds the mark on the line the operator stepped from; a program
-   run lets it follow the unit that is starting. */
-static bool g_nc2_run_mark_held;
+/* The unit the mark is on: a whole G7x block, or a single line outside every
+   block. The mark is the unit's *first* line and stays there while the unit's
+   lines go out, so a cycle is marked as the block it is and not one row at a
+   time as its expansion walks (`nc`'s own rule: "the unit is also what the pane
+   marks"). */
+static size_t g_nc2_run_unit_first;
+static size_t g_nc2_run_unit_last;
 static nc2_emit_stream_t g_nc2_run_stream;
 
 /* The console log's own code for a normal end (`nc_run.c`'s STEP_COMPLETE). */
@@ -256,6 +260,9 @@ static bool nc2_run_parser_reset(void *args)
     return EVENT_CONTINUE;
 }
 
+static void nc2_run_unit(const nc2_document_t *doc, size_t line,
+                         size_t *first, size_t *last);
+
 /* Arm the pacer: the machine is given the program from `line` to `end_line`. */
 static bool nc2_run_arm(const nc2_document_t *doc, size_t line, size_t end_line)
 {
@@ -282,7 +289,9 @@ static bool nc2_run_arm(const nc2_document_t *doc, size_t line, size_t end_line)
     g_nc2_run_done = false;
     g_nc2_run_running_valid = false;
     g_nc2_run_step_in_flight = false;
-    g_nc2_run_mark_held = false;
+    /* The unit the armed line is in: the mark holds this block until a line
+       outside it starts the next one. */
+    nc2_run_unit(doc, line, &g_nc2_run_unit_first, &g_nc2_run_unit_last);
     return true;
 }
 
@@ -327,7 +336,6 @@ bool nc2_run_send_unit(const nc2_document_t *doc, size_t line)
     g_nc2_run_running_line = line;
     g_nc2_run_running_valid = true;
     g_nc2_run_step_in_flight = true;
-    g_nc2_run_mark_held = true;
     return true;
 }
 
@@ -343,7 +351,8 @@ void nc2_run_reset(void)
     g_nc2_run_end_line = (size_t)-1;
     g_nc2_run_running_valid = false;
     g_nc2_run_step_in_flight = false;
-    g_nc2_run_mark_held = false;
+    g_nc2_run_unit_first = 0u;
+    g_nc2_run_unit_last = 0u;
 }
 
 void nc2_run_stop(void)
@@ -462,7 +471,6 @@ void nc2_run_pace(void)
     if (!g_nc2_run_program_active && g_nc2_run_send_count == 0u &&
         nc2_run_machine_idle()) {
         g_nc2_run_step_in_flight = false;
-        g_nc2_run_mark_held = false;    /* the step is over: the mark is free */
     }
 
     if (!g_nc2_run_program_active || !g_nc2_run_doc) {
@@ -517,10 +525,22 @@ void nc2_run_pace(void)
         }
     }
 
-    /* The mark follows the unit that is starting - except in a single step,
-       where it stays on the line the operator stepped from. */
-    if (!g_nc2_run_mark_held) {
-        g_nc2_run_running_line = emitted_line;
+    /* The mark follows the *unit* that is starting, and only that: a line that
+       belongs to the block already in play leaves the mark where it is, so a
+       cycle is marked as the block it is while its expansion walks through it.
+       A line outside the block opens the next one (or the operator has taken
+       the cursor: `nc_run_set_line` clears the flag and the pane goes back to
+       the machine's answer at the next block). `nc`'s own rule. */
+    if (!g_nc2_run_running_valid ||
+        !(emitted_line >= g_nc2_run_unit_first &&
+          emitted_line <= g_nc2_run_unit_last)) {
+        size_t first = emitted_line;
+        size_t last = emitted_line;
+
+        nc2_run_unit(g_nc2_run_doc, emitted_line, &first, &last);
+        g_nc2_run_unit_first = first;
+        g_nc2_run_unit_last = last;
+        g_nc2_run_running_line = first;
         g_nc2_run_running_valid = true;
     }
     if (!nc2_run_send_line(emit)) {

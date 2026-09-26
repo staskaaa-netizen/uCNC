@@ -22,7 +22,12 @@
 /* The pane's furniture: a band at the top for the ruler labels, a margin under
    the drawing, and the chuck at the left of the stock. The numbers are nc's
    (`nc_layout.h`), so the drawing sits where the old one sat. */
-#define NC2_PREVIEW_TOP_BAND 82
+/* The band the rulers and the callouts live in. nc's was 82 and the bench kept
+   asking to take the empty part of it away - *"i still 25-30 empty px on top of
+   our image of preview"* - so the drawing starts 28 pixels higher and the band
+   is what the dimension layer actually reaches (the tallest callout sits 34
+   pixels above the stock). */
+#define NC2_PREVIEW_TOP_BAND 54
 #define NC2_CHUCK_C 15.0f
 
 /* The live tool's own size: nc drew it at twenty pixels across, and the pane is

@@ -1491,6 +1491,24 @@ static int host_run2test(void)
         failures++;
     }
 
+    /* TOOLS is refused while a run is armed: it loads the tool table into the
+       document the run is sending, and the pacer would cut the table. The screen
+       stays where it is, the run goes on, and the panel says why. */
+    nc2_run_reset();
+    host_pump_idle(64u);
+    nc2_visual_key('3');                    /* FULL */
+    host_pump(1u);
+    nc2_visual_select_mode(NC2_MODE_TOOLS);
+    if (strcmp(nc2_visual_screen_name(), "RUN") != 0 ||
+        !strstr(nc2_visual_status(), "Program running")) {
+        printf("run2test: FAIL TOOLS during a run: screen \"%s\", status "
+               "\"%s\"\n", nc2_visual_screen_name(), nc2_visual_status());
+        failures++;
+    }
+    nc2_run_stop();
+    host_pump_idle(64u);
+    nc2_run_reset();
+
     if (failures) {
         printf("run2test: FAILED (%d)\n", failures);
         return 1;
@@ -2209,7 +2227,7 @@ static int host_tools2test(void)
         failures++;
     }
     {
-        /* The tool's own colour, in the view: the glyph the row describes. */
+    /* The tool's own colour, in the view: the glyph the row describes. */
         uint32_t tool_rgb = host_panel_rgb(nc2_col_tool());
         uint32_t fill_rgb = host_panel_rgb(nc2_col_tool_fill());
         int x;
@@ -2254,6 +2272,52 @@ static int host_tools2test(void)
         printf("tools2test: FAIL leaving TOOLS left \"%s\" at \"%s\"\n",
                nc2_visual_screen_name(), nc2_visual_path());
         failures++;
+    }
+
+    /* The pointer lands on the tool the machine is using: a program that calls
+       `T2` and a table that holds it puts the table's cursor on that row when
+       TOOLS opens (bench: "we push tool to state of mashine but not jump
+       around"). */
+    {
+        static const char *const two = "/D/nc/files/two.nc";
+        static const char *const table =
+            "T1 R0.8 O3 F120 Q60 D2.0 E0.5 S800 X0 Z0\n"
+            "T2 R0.4 O276 F100 Q50 D1.0 E0.2 S900 X0 Z0\n";
+        size_t cursor;
+        bool on_t2 = false;
+
+        if (!host_fs_write_text(tool, table) ||
+            !host_fs_write_text(two, "G0 X1 Z1\nT2\nG0 X2 Z2\n") ||
+            !nc2_visual_open(two)) {
+            puts("tools2test: FAIL cannot write the two-tool fixtures");
+            failures++;
+        } else {
+            nc2_visual_key('C');        /* the editor's line is the T2 one */
+            nc2_visual_select_mode(NC2_MODE_TOOLS);
+            cursor = nc2_visual_cursor();
+            if (!host_fs_read_text(tool, text, sizeof(text))) {
+                puts("tools2test: FAIL cannot read the table back");
+                failures++;
+            } else {
+                const char *row = text;     /* the row the cursor names */
+                size_t seen = 0u;
+                size_t i;
+
+                for (i = 0u; text[i] && seen < cursor; i++) {
+                    if (text[i] == '\n') {
+                        seen++;
+                        row = text + i + 1u;
+                    }
+                }
+                on_t2 = strncmp(row, "T2", 2) == 0;
+            }
+            if (!on_t2) {
+                printf("tools2test: FAIL the pointer is on row %u, not the "
+                       "program's T2\n", (unsigned)cursor);
+                failures++;
+            }
+            nc2_visual_select_mode(NC2_MODE_PROGRAM);
+        }
     }
 
     if (failures) {
@@ -2542,8 +2606,11 @@ static int host_pace2test(void)
     size_t prev_now = 0u;
     size_t prev_mark = 0u;
     unsigned mark_moves = 0u;
+    bool mark_allowed[NC2_MAX_LINES];
     unsigned guard;
     int failures = 0;
+
+    memset(mark_allowed, 0, sizeof(mark_allowed));
 
     host_fs_mount(g_files_root[0] ? g_files_root : NULL);
     host_init_core();
@@ -2564,6 +2631,23 @@ static int host_pace2test(void)
 
     nc2_visual_key('3');                    /* FULL */
     prev_now = nc2_run_line();
+    /* The units of the fixture, so the check knows which lines may be marked:
+       a block's own first line, or a line outside every block. */
+    {
+        g7x_doc_t view = nc2_document_g7x(&doc);
+        size_t i;
+
+        for (i = 0u; i < doc.line_count; i++) {
+            size_t first = i;
+            size_t last = i;
+
+            if (g7x_doc_line_path(&view, i, &first, &last) && first == i) {
+                mark_allowed[i] = true;
+            } else if (!g7x_doc_line_path(&view, i, &first, &last)) {
+                mark_allowed[i] = true;
+            }
+        }
+    }
     for (guard = 0u; guard < 200000u; guard++) {
         bool expanding_before = nc2_run_expanding();
         bool idle_at_pacer;
@@ -2612,6 +2696,16 @@ static int host_pace2test(void)
         if (nc2_run_display_line() != prev_mark) {
             prev_mark = nc2_run_display_line();
             mark_moves++;
+            /* ... and it is the *unit* it marks, not the row the expansion is
+               on: a cycle stays marked as the block it is (bench: "try to mark
+               each one line inside g7x cycle. not stay in whole block as is"). */
+            if (prev_mark >= sizeof(mark_allowed) / sizeof(mark_allowed[0]) ||
+                !mark_allowed[prev_mark]) {
+                printf("pace2test: FAIL the mark moved onto line %u, which "
+                       "opens no block\n", (unsigned)(prev_mark + 1u));
+                failures++;
+                break;
+            }
         }
         if (!nc2_run_streaming() && host_machine_idle()) {
             break;

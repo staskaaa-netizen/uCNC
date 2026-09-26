@@ -57,6 +57,14 @@ static const nc2_default_t g_nc2_defaults[] = {
     { "33", "RND", " R0" },
     { "34", "U INC", " U" },
     { "35", "W INC", " W" },
+    /* The words the pad had before the port put its entries in files and only
+       these four were carried across (`5fc2225e` dropped the G, and the insert
+       table that named the rest went with `2c53109d`): the line number, the
+       code, and the P/Q the cycles name their profile rows with. */
+    { "36", "LINE NO", " N" },
+    { "37", "G CODE", " G" },
+    { "38", "PROFILE START", " P" },
+    { "39", "PROFILE END", " Q" },
     { "41", "OD ROUGH", "G71 U0 R0 X0 Z0 F0 P0 Q0" },
     { "42", "ID BORE", "G72 W0 R0 X0 Z0 F0 P0 Q0" },
     { "43", "FACE", "G72 W0 R0 X0 Z0 F0 P0 Q0" },
@@ -105,15 +113,20 @@ bool nc2_boot_seed(void)
     g_nc2_boot_active = false;
     g_nc2_boot_written = 0;
     g_nc2_boot_total = 0;
-    if (nc2_presets_any()) {
-        return false;               /* the operator's folder is not touched */
-    }
     (void)fs_mkdir(NC2_PRESET_DIR);
     g_nc2_boot_total = (int)(sizeof(g_nc2_defaults) /
                              sizeof(g_nc2_defaults[0]));
     for (i = 0u; i < sizeof(g_nc2_defaults) / sizeof(g_nc2_defaults[0]); i++) {
         const nc2_default_t *d = &g_nc2_defaults[i];
 
+        /* Only what the card does not have: an address the operator has - his
+           own words among them - is left exactly as it is. A card that already
+           carries the shipped set is not written at all, which is what makes
+           this the one start that has to do it (bench: a file the release added
+           never reached a card that already had a folder). */
+        if (nc2_preset_exists(d->address)) {
+            continue;
+        }
         if (nc2_preset_write(d->address, d->name, d->rows) == 1) {
             g_nc2_boot_written++;
         }

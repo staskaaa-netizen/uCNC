@@ -4112,8 +4112,8 @@ static int host_seedtest(void)
     fs_close(dir);
     /* The shipped entries: the seven groups, the table rows the TOOLS screen's
        pad offers, and the rows the groups hold. */
-    if (files != 31) {
-        printf("seedtest: FAIL %d files were written, wanted 31\n", files);
+    if (files != 35) {
+        printf("seedtest: FAIL %d files were written, wanted 35\n", files);
         failures++;
     } else {
         puts("seedtest: the empty card got the shipped entries");
@@ -4166,18 +4166,35 @@ static int host_seedtest(void)
         failures++;
     }
 
-    /* 5. a deleted file means the address is not an entry - and it stays that
-       way, because the seed only ever fills a folder with nothing in it. */
+    /* 5. a deleted file is put back on the next start, and *only* things that
+       are missing: the file the operator changed above is still his. That is
+       the one start the release added entries need - a card that already had a
+       folder kept whatever it had, and a shipped file it never got stayed
+       missing (bench: the WORD pad came back with four entries and the line
+       number, the code and the profile start/end were not among them). */
     if (!fs_remove("/D/presets/34.txt") || nc2_preset_exists("34") ||
         nc2_preset_read("34", name, sizeof(name), rows, sizeof(rows)) >= 0) {
         puts("seedtest: FAIL a deleted entry still answers");
         failures++;
     }
-    if (nc2_boot_seed()) {
-        puts("seedtest: FAIL the seed put a deleted file back");
+    if (!nc2_boot_seed()) {
+        puts("seedtest: FAIL the seed left the card short a shipped file");
         failures++;
     } else {
-        puts("seedtest: deleting an entry is how an address stops being one");
+        if (nc2_preset_read("34", name, sizeof(name), rows, sizeof(rows)) != 1 ||
+            strcmp(name, "U INC") != 0 || strcmp(rows, " U") != 0) {
+            printf("seedtest: FAIL the restored entry reads \"%s\" / \"%s\"\n",
+                   name, rows);
+            failures++;
+        } else if (!host_fs_read_text("/D/presets/37.txt", text,
+                                     sizeof(text)) ||
+                   strcmp(text, "G CODE\n G\n") != 0) {
+            printf("seedtest: FAIL the word entry reads \"%s\"\n", text);
+            failures++;
+        } else {
+            puts("seedtest: the start puts back what the card is missing - and "
+                 "only that");
+        }
     }
 
     if (failures) {

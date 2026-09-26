@@ -7,6 +7,7 @@
 #include "nc2_layout.h"
 #include "nc2_preview.h"
 #include "nc2_presets.h"
+#include "nc2_state.h"
 
 #include "../../cnc.h"
 #include "../lvds_renderer/lvds_hstx.h"
@@ -50,9 +51,16 @@ void nc2_visual_init(void)
     nc2_address_reset(g_address);
     nc2_statusf("");
     g_dirty = true;
+    nc2_state_init();
     /* The one write the panel makes by itself, and only onto a card that has no
        entry of its own: after that every entry is a file. */
     (void)nc2_boot_seed();
+    /* Onto the file the panel had open, and where it was in it. A card that
+       remembers nothing opens on an empty program, which is a program. */
+    if (!nc2_state_load_document(NC2_MODE_PROGRAM, &g_doc)) {
+        nc2_document_init(&g_doc);
+        (void)nc2_insert_line(&g_doc, 0u, "");
+    }
     nc2_labels_at(g_address);
 }
 
@@ -65,6 +73,8 @@ bool nc2_visual_open(const char *path)
     }
     nc2_address_reset(g_address);
     nc2_labels_at(g_address);
+    nc2_state_remember_path(NC2_MODE_PROGRAM, g_doc.path);
+    nc2_state_flush();
     g_dirty = true;
     return true;
 }
@@ -87,6 +97,8 @@ bool nc2_visual_save(void)
         return false;
     }
     g_doc.dirty = false;
+    nc2_state_remember_cursor(&g_doc);
+    nc2_state_flush();
     g_dirty = true;
     return true;
 }

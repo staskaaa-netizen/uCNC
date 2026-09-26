@@ -55,6 +55,7 @@ build\nc_ui.exe --pad2test                       # nc2's pad is the file tree
 build\nc_ui.exe --screen2test                    # nc2's screen draws and writes
 build\nc_ui.exe --file2test                      # nc2's card list walks and opens
 build\nc_ui.exe --dump-nc2 screen.bmp            # nc2's screen on its own
+python tools\test_nc2.py                         # nc2's own target (AGENTS.md 8)
 build\nc_ui.exe --dirtytest                      # a key repaints what it changed
 build\nc_ui.exe --runtest                        # FROM/FULL send the program
 build\nc_ui.exe --blocktest                      # RUN marks the block it runs

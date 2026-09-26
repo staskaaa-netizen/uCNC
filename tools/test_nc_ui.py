@@ -231,6 +231,8 @@ if __name__ == "__main__":
          "nc2's RUN does not show the tool taking the stock off"),
         ("--fps2test", "fps2test: PASS",
          "nc2's frame meter does not count the frames it draws"),
+        ("--scroll2test", "scroll2test: PASS",
+         "nc2's pane lets the cursor reach the last row"),
         ("--manual2test", "manual2test: PASS",
          "nc2's MANUAL does not jog, stop or run the spindle"),
         ("--tools2test", "tools2test: PASS",

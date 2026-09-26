@@ -378,7 +378,13 @@ python tools\test_nc_ui.py
   own pixels are.
 - `--fps2test` checks the frame meter: the screen draws a second of frames -
   one per millisecond of the panel's own clock - and the meter has to have
-  counted them, with the reading drawn in the header's far corner.
+  counted them, with the reading drawn in the header's far corner. It also
+  damages a pixel in the pad's corner and draws again: a frame that changes
+  nothing has to leave it (only the drawing and the strip are painted), and a
+  key has to paint over it.
+- `--scroll2test` checks the code pane's scroll: twenty lines down a thirty-line
+  program, the cursor's row has to be six rows short of the pane's last, and the
+  six rows under it have to carry the next lines.
 - `--manual2test` checks nc2's MANUAL: the digits jog the axis each names (X is
   a diameter, so a 0.100 mm step is written `X0.200`), a jog is always the
   `G91 G1 ...` block followed by the `G90` that puts the machine back, `1`/`3`
@@ -388,7 +394,9 @@ python tools\test_nc_ui.py
   stop, `0` zeroes the axis and `D` touches it off.
 - `--tools2test` checks that nc2's TOOLS is the editor on the tool table: the
   file is made with the shipped row when the card has none, a pad press lands in
-  it, and leaving TOOLS leaves the program where it was.
+  it, leaving TOOLS leaves the program where it was, and the screen is the
+  bench's two halves: the table's rows in the top pane and the tool the cursor
+  is on drawn in the one below, in the tool's own colours.
 - `--contour2test` checks the path builder (G7X's `7`, the address `47`) and the
   pad's own order: the digits run up (`7 8 9` is the top row), one press writes
   one `G1` row with the axis that does not move carried over from the row above,

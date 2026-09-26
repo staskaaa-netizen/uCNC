@@ -34,6 +34,7 @@ CHECKS = ("--seedtest", "--edit2test", "--pad2test", "--screen2test",
           "--file2test", "--emit2test", "--run2test", "--manual2test",
           "--live2test",
           "--fps2test",
+          "--scroll2test",
           "--tools2test", "--block2test", "--label2test", "--pace2test",
           "--demo2test", "--present2test", "--pump2test", "--contour2test",
           "--case2test", "--walk2test", "--vocab2test")

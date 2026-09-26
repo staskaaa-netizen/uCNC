@@ -63,9 +63,19 @@ things, top to bottom:
 The drawing is the part, not a picture of the stock: while the tool is moving,
 the material it has taken off is shown where it went - the tool clears the stock
 from its own X down to the axis, so you watch the profile appear as the run
-goes. When the run stops, the part stays on the RUN screen, and EDIT shows the
-stock whole again. In EDIT and TOOLS the word the cursor is on is named on the
-row above it (`>  X position`, `>  Depth/pass`).
+goes, and the tool itself is drawn where the machine is. When the run stops, the
+part stays on the RUN screen, and EDIT shows the stock whole again. In EDIT and
+TOOLS the word the cursor is on is named on the row above it (`>  X position`,
+`>  Depth/pass`).
+
+Walking the cursor down a program moves the *text*, not the cursor: six lines
+after it stay in view, because the next block is what you are reading for.
+On a run the bright row follows the cut, line by line.
+
+**TOOLS** is split in two: the tool table's own rows on top - edit them the way
+you edit a program - and the tool the cursor is on drawn below, its shape on its
+X0/Z0 crosshair with its numbers (radius, orientation, DOC, feeds, speed,
+offsets) under it.
 
 **The strip (right)** is not a second menu:
 

@@ -10,6 +10,7 @@
 #include "nc2_presets.h"
 #include "nc2_run.h"
 #include "nc2_state.h"
+#include "nc2_tools.h"
 #include "nc2_vocab.h"
 
 #include "../../cnc.h"
@@ -28,6 +29,14 @@ static bool g_dirty;
 static bool g_list;                 /* the file list is the screen */
 static nc2_mode_t g_mode = NC2_MODE_PROGRAM;
 static uint32_t g_last_key_ms;      /* when the screen was last touched */
+static size_t g_pane_first;         /* the code pane's first visible line */
+
+/* How many rows of the file stay in view below the cursor's. In G-code the next
+   block is what the operator is reading for, so the pane never lets the cursor
+   reach its last row: the *text* moves instead (bench: "cursor should never
+   reach last line. in g code it is always necessary to see next line. so as
+   before leave - 6 lines and move text, but not the cursor to the end."). */
+#define NC2_LOOKAHEAD_ROWS 6
 
 /* The frame meter - back by the bench's own request ("give me back fps meter it
    need to be tested"). One frame is one `nc2_visual_draw()`, and the reading is
@@ -79,6 +88,7 @@ uint16_t nc2_visual_fps(void)
 #define NC2_IDLE_SAVE_MS 1500u
 
 static void nc2_visual_load_tools(void);
+static void nc2_visual_load_tool_table(void);
 static const char *nc2_pad_label(char key);
 
 static void nc2_statusf(const char *text)
@@ -140,20 +150,28 @@ void nc2_visual_init(void)
        remembers nothing opens on an empty program, which is a program. */
     if (g_mode == NC2_MODE_TOOLS) {
         nc2_visual_load_tools();
-    } else if (!nc2_state_load_document(g_mode, &g_doc)) {
+        nc2_visual_load_tool_table();
+    } else if (!nc2_state_load_document(
+                   g_mode == NC2_MODE_RUN ? NC2_MODE_PROGRAM : g_mode, &g_doc)) {
         /* A card that remembers a file it cannot open says so, instead of
            showing an empty program the operator would take for their own: the
            remembered name may be one the card's short names cannot answer to
            (`FACING~1.NC` is what the machine reads for `facing.nc`). */
-        if (nc2_state_path(g_mode)[0]) {
+        if (nc2_state_path(g_mode == NC2_MODE_RUN ? NC2_MODE_PROGRAM : g_mode)[0]) {
             char text[80];
 
             snprintf(text, sizeof(text), "Cannot open %.48s",
-                     nc2_state_path(g_mode));
+                     nc2_state_path(g_mode == NC2_MODE_RUN ? NC2_MODE_PROGRAM
+                                                           : g_mode));
             nc2_statusf(text);
         }
         nc2_document_init(&g_doc);
         (void)nc2_insert_line(&g_doc, 0u, "");
+    }
+    if (g_mode == NC2_MODE_RUN) {
+        /* The run and the editor are the same file, so a boot into RUN opens the
+           program - and the tool table the glyph reads is loaded with it. */
+        nc2_visual_load_tool_table();
     }
     nc2_labels_at(g_address);
 }
@@ -168,6 +186,7 @@ void nc2_visual_init(void)
 static void nc2_visual_load_tools(void)
 {
     const char *path = nc2_state_path(NC2_MODE_TOOLS);
+    size_t i;
 
     if (!path[0]) {
         path = NC2_TOOL_PATH;
@@ -180,6 +199,34 @@ static void nc2_visual_load_tools(void)
         nc2_statusf("New tool table");
     }
     nc2_state_remember_path(NC2_MODE_TOOLS, g_doc.path);
+    /* The tool view draws the row the cursor is on, so a cursor that landed on
+       a comment or a blank row moves to the first tool: the table is what this
+       screen is for, and nc put the cursor on the first tool the same way. */
+    {
+        nc2_tool_t tool;
+
+        if (g_doc.line_count &&
+            !nc2_tool_from_line(g_doc.lines[g_doc.cursor], &tool)) {
+            for (i = 0u; i < g_doc.line_count; i++) {
+                if (nc2_tool_from_line(g_doc.lines[i], &tool)) {
+                    g_doc.cursor = i;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/* The tool table the drawing and the tool view read, loaded once: a FAT read in
+   a frame loop is exactly what the frame meter would show. */
+static void nc2_visual_load_tool_table(void)
+{
+    const char *path = nc2_state_path(NC2_MODE_TOOLS);
+
+    if (!path[0]) {
+        path = NC2_TOOL_PATH;
+    }
+    (void)nc2_tools_load(path);
 }
 
 /* Jump to a screen: the program (and the run, which shows the same file), the
@@ -210,6 +257,7 @@ void nc2_visual_select_mode(nc2_mode_t mode)
     nc2_labels_at(g_address);
     if (mode == NC2_MODE_TOOLS) {
         nc2_visual_load_tools();
+        nc2_visual_load_tool_table();
     } else if (mode == NC2_MODE_PROGRAM || mode == NC2_MODE_RUN) {
         /* The run and the editor are the same file. The mode key walks EDIT,
            TOOLS, RUN, and TOOLS holds the tool table - so a run that kept
@@ -221,6 +269,9 @@ void nc2_visual_select_mode(nc2_mode_t mode)
         }
         if (mode == NC2_MODE_RUN && !nc2_run_active()) {
             nc2_run_set_line(&g_doc, g_doc.cursor);
+        }
+        if (mode == NC2_MODE_RUN) {
+            nc2_visual_load_tool_table();   /* what the glyph rides the cut with */
         }
     }
     nc2_statusf("");
@@ -302,6 +353,9 @@ bool nc2_visual_save(void)
     nc2_state_remember_path(g_mode == NC2_MODE_TOOLS ? NC2_MODE_TOOLS
                                                       : NC2_MODE_PROGRAM,
                             g_doc.path);
+    if (g_mode == NC2_MODE_TOOLS) {
+        nc2_visual_load_tool_table();   /* the table the run and the view read */
+    }
     nc2_state_remember_cursor(&g_doc);
     nc2_state_flush();
     g_dirty = true;
@@ -830,7 +884,8 @@ static void nc2_draw_header(void)
    run) is on wears the selection colour, the rows of the block it heads wear
    the pale one, and the picked field is drawn as the box being typed into -
    three pieces, so everything the operator did not touch keeps its colour. */
-static void nc2_draw_row(size_t index, int y, bool selected, bool path)
+static void nc2_draw_row(size_t index, int x, int y, int w, bool selected,
+                         bool path)
 {
     const char *text = g_doc.lines[index];
     bool cursor = selected;
@@ -838,20 +893,20 @@ static void nc2_draw_row(size_t index, int y, bool selected, bool path)
                              : (path ? nc2_col_block() : nc2_col_bg());
     int col_w = nc2_col_width(LVDS_FONT_NORMAL);
     char number[8];
-    int x = NC2_TEXT_X + NC2_LINE_NO_PAD;
+    int text_x = x + NC2_LINE_NO_PAD;
     int cols;
     nc2_field_t fields[NC2_MAX_FIELDS];
     int count;
     int picked = -1;
 
     if (cursor || path) {
-        nc2_fill(NC2_TEXT_X, y - 2, NC2_TEXT_W - 2, NC2_ROW_H - 2,
+        nc2_fill(x, y - 2, w - 2, NC2_ROW_H - 2,
                  cursor ? nc2_col_select() : nc2_col_block());
     }
     snprintf(number, sizeof(number), "%3u", (unsigned)(index + 1u));
-    nc2_text(x, y, number, nc2_col_dim(), bg, LVDS_FONT_NORMAL);
-    x += 4 * col_w;
-    cols = (NC2_TEXT_W - (x - NC2_TEXT_X) - 4) / col_w;
+    nc2_text(text_x, y, number, nc2_col_dim(), bg, LVDS_FONT_NORMAL);
+    text_x += 4 * col_w;
+    cols = (w - (text_x - x) - 4) / col_w;
     if (cols <= 0) {
         return;
     }
@@ -861,7 +916,8 @@ static void nc2_draw_row(size_t index, int y, bool selected, bool path)
         picked = g_doc.field;
     }
     if (picked < 0) {
-        nc2_text_clip(x, y, text, cols, nc2_col_text(), bg, LVDS_FONT_NORMAL);
+        nc2_text_clip(text_x, y, text, cols, nc2_col_text(), bg,
+                      LVDS_FONT_NORMAL);
         return;
     }
     {
@@ -875,25 +931,34 @@ static void nc2_draw_row(size_t index, int y, bool selected, bool path)
         if (field > cols - head) {
             field = cols - head;
         }
-        nc2_text_clip(x, y, text, head, nc2_col_text(), bg, LVDS_FONT_NORMAL);
-        nc2_text_clip(x + head * col_w, y, text + f->start, field,
+        nc2_text_clip(text_x, y, text, head, nc2_col_text(), bg,
+                      LVDS_FONT_NORMAL);
+        nc2_text_clip(text_x + head * col_w, y, text + f->start, field,
                       nc2_col_field_fg(), nc2_col_field_bg(), LVDS_FONT_NORMAL);
-        nc2_text_clip(x + (head + field) * col_w, y, text + f->end,
+        nc2_text_clip(text_x + (head + field) * col_w, y, text + f->end,
                       cols - head - field, nc2_col_text(), bg, LVDS_FONT_NORMAL);
     }
 }
 
-static void nc2_draw_program(void)
+/* The rows of the file the screen has open, in the rectangle it is handed: the
+   line numbers, the text, the mark on the line in play (or the cursor's) and the
+   pale block around it - and the word under the cursor named on the row above.
+   The window moves only when the cursor would leave it: six rows of the file
+   after the cursor's stay in view, because in G-code the next block is what the
+   operator is reading for. */
+static void nc2_draw_rows(int x, int y, int w, int h)
 {
-    size_t mark = g_doc.cursor;
-    size_t first = 0u;
+    int rows = h / NC2_ROW_H;
+    size_t mark = (g_mode == NC2_MODE_RUN) ? nc2_visual_run_line()
+                                           : g_doc.cursor;
+    size_t first;
     size_t path_first = 0u;
     size_t path_last = 0u;
     bool have_path = false;
-    size_t i;
+    int i;
 
-    if (g_mode == NC2_MODE_RUN) {
-        mark = nc2_visual_run_line();
+    if (rows <= 0) {
+        return;
     }
     /* The line in play heads a path: the cycle's rows are the pale mark beside
        it, on the run screen and in the editor alike - the editor is where the
@@ -904,15 +969,29 @@ static void nc2_draw_program(void)
 
         have_path = g7x_doc_line_path(&view, mark, &path_first, &path_last);
     }
-    if (mark >= NC2_CODE_ROWS) {
-        first = mark - NC2_CODE_ROWS + 1u;
+    /* The window: full at the end of the file, and never letting the cursor
+       come closer than the look-ahead to the pane's last row. */
+    if (g_doc.line_count > (size_t)rows &&
+        g_pane_first + (size_t)rows > g_doc.line_count) {
+        g_pane_first = g_doc.line_count - (size_t)rows;
     }
-    for (i = first; i < g_doc.line_count && i - first < NC2_CODE_ROWS; i++) {
-        bool selected = i == mark;
-        bool path = have_path && i >= path_first && i <= path_last && !selected;
+    if (mark < g_pane_first) {
+        g_pane_first = mark;
+    }
+    if (mark > g_pane_first + (size_t)(rows - 1 - NC2_LOOKAHEAD_ROWS)) {
+        g_pane_first = mark - (size_t)(rows - 1 - NC2_LOOKAHEAD_ROWS);
+    }
+    first = g_pane_first;
+    if (first > mark) {
+        first = mark;
+    }
+    for (i = 0; i < rows && first + (size_t)i < g_doc.line_count; i++) {
+        size_t index = first + (size_t)i;
+        bool selected = index == mark;
+        bool path = have_path && index >= path_first && index <= path_last &&
+                    !selected;
 
-        nc2_draw_row(i, NC2_TEXT_Y + 4 + (int)(i - first) * NC2_ROW_H, selected,
-                     path);
+        nc2_draw_row(index, x, y + 4 + i * NC2_ROW_H, w, selected, path);
     }
     /* The legend of the word being read, on the row above the cursor's - the
        row the operator's eye is already on, so the meaning of the word they are
@@ -926,18 +1005,16 @@ static void nc2_draw_program(void)
 
         if (g_doc.field < count) {
             int at = (int)(g_doc.cursor - first);
-            int hint_y = at > 0 ? NC2_TEXT_Y + 4 + (at - 1) * NC2_ROW_H
-                                : NC2_TEXT_Y + 4;
+            int hint_y = at > 0 ? y + 4 + (at - 1) * NC2_ROW_H : y + 4;
             char text[48];
-            int cols = (NC2_TEXT_W - NC2_LINE_TEXT_PAD - 4) /
+            int cols = (w - NC2_LINE_TEXT_PAD - 4) /
                        nc2_col_width(LVDS_FONT_NORMAL);
 
             snprintf(text, sizeof(text), ">  %s",
                      nc2_vocab_label(g_doc.lines[g_doc.cursor],
                                      &fields[g_doc.field]));
-            nc2_fill(NC2_TEXT_X, hint_y - 2, NC2_TEXT_W - 2,
-                     NC2_ROW_H - 2, nc2_col_bg());
-            nc2_text_clip(NC2_TEXT_X + NC2_LINE_TEXT_PAD, hint_y, text, cols,
+            nc2_fill(x, hint_y - 2, w - 2, NC2_ROW_H - 2, nc2_col_bg());
+            nc2_text_clip(x + NC2_LINE_TEXT_PAD, hint_y, text, cols,
                           nc2_col_accent(), nc2_col_bg(), LVDS_FONT_NORMAL);
         }
     }
@@ -1144,6 +1221,75 @@ static void nc2_draw_notes(void)
     }
 }
 
+/* The tool the cursor is on, drawn in the pane the tools screen leaves for it:
+   its shape, tip on the crosshair of its own X0/Z0, and the numbers its row
+   holds under it. The names are the table's own letters - the same file the
+   rows above edit, read the other way (bench: *"on tools - bring it back just
+   fit into current screen so top one is text lines, bottom one is tool
+   view"*). */
+static void nc2_draw_tool_view(int x, int y, int w, int h)
+{
+    static const struct {
+        char letter;
+        const char *name;
+    } params[] = {
+        { 'T', "Tool" }, { 'O', "Orient" }, { 'R', "Radius" }, { 'D', "DOC" },
+        { 'E', "FDOC" }, { 'F', "Feed" }, { 'Q', "F.feed" }, { 'S', "RPM" },
+        { 'X', "X offset" }, { 'Z', "Z offset" }
+    };
+    const char *row = (g_doc.line_count && g_doc.cursor < g_doc.line_count)
+                          ? g_doc.lines[g_doc.cursor]
+                          : "";
+    nc2_tool_t tool;
+    int box = nc2_clampi(w - 80, 80, 170);
+    int gx = x + (w - box) / 2;
+    int gy = y + 26;
+    int cx = gx + box / 2;
+    int cy = gy + box / 2;
+    int line_y = gy + box + 16;
+    char buf[48];
+    size_t i;
+
+    if (nc2_tool_from_line(row, &tool)) {
+        snprintf(buf, sizeof(buf), "TOOL T%d", tool.t);
+    } else {
+        memset(&tool, 0, sizeof(tool));
+        snprintf(buf, sizeof(buf), "TOOL  -");
+    }
+    nc2_text_clip(x + 4, y + 2, buf, (w - 8) / nc2_col_width(LVDS_FONT_NORMAL),
+                  nc2_col_text(), nc2_col_bg(), LVDS_FONT_NORMAL);
+
+    /* The crosshair is the tool's own X0/Z0: the picture is read against it, so
+       it goes on the glass before the tool does. */
+    lvds_draw_line(gx, cy, gx + box, cy, nc2_col_dim());
+    lvds_draw_line(cx, gy, cx, gy + box, nc2_col_dim());
+    nc2_text_clip(gx + 2, cy + 4, "X0", 2, nc2_col_dim(), nc2_col_bg(),
+                  LVDS_FONT_SMALL);
+    nc2_text_clip(cx + 4, gy + box - 10, "Z0", 2, nc2_col_dim(), nc2_col_bg(),
+                  LVDS_FONT_SMALL);
+    if (tool.valid) {
+        nc2_draw_tool_glyph_centered(gx, gy, box, box / 2, &tool,
+                                     nc2_col_bg());
+    }
+
+    for (i = 0u; i < sizeof(params) / sizeof(params[0]); i++) {
+        char value[24];
+        int cols = (w - 96) / nc2_col_width(LVDS_FONT_NORMAL);
+
+        if (!nc2_tool_word_text(row, params[i].letter, value, sizeof(value))) {
+            snprintf(value, sizeof(value), "-");
+        }
+        nc2_text_clip(x + 4, line_y, params[i].name, 10, nc2_col_dim(),
+                      nc2_col_bg(), LVDS_FONT_NORMAL);
+        nc2_text_clip(x + 92, line_y, value, cols, nc2_col_text(), nc2_col_bg(),
+                      LVDS_FONT_NORMAL);
+        line_y += 18;
+        if (line_y + 18 > y + h) {
+            break;
+        }
+    }
+}
+
 /* The machine's own strip, across the middle of the screen: the work position,
    the feed and the spindle, and the state word, on one line. It is the DRO and
    the line between the two halves at once - the top is what the machine is
@@ -1198,8 +1344,75 @@ static void nc2_draw_dro(void)
                   y, buf, 16, nc2_col_dim(), bg, LVDS_FONT_NORMAL);
 }
 
+/* The drawing, every screen and whatever the screen has open: the machine is
+   making a part, and the part belongs at the top where the operator looks. What
+   the machine is doing is read once, and the tool the program has chosen is what
+   the glyph rides the cut with. */
+static void nc2_draw_preview(void)
+{
+    nc2_runtime_state_t rt;
+    nc2_preview_run_t run;
+    nc2_tool_t tool;
+
+    nc2_state_runtime(&rt);
+    run.busy = nc2_state_busy() || nc2_run_active() || nc2_run_hold();
+    run.screen_run = g_mode == NC2_MODE_RUN;
+    run.x = rt.x;
+    run.z = rt.z;
+    run.tool = 0;
+    if (run.busy && nc2_tools_active(&g_doc, nc2_visual_run_line(), &tool)) {
+        run.tool = &tool;
+    }
+    nc2_preview_draw(&g_doc, &run, NC2_PREVIEW_X, NC2_PREVIEW_Y, NC2_PREVIEW_W,
+                     NC2_PREVIEW_PANE_H);
+}
+
+/* What the last frame showed that does not move on its own. While none of this
+   changes, only the drawing and the machine's strip are painted again - the
+   header, the rows, the notes and the pad keep the pixels they already have.
+   The bench: "fps is dead slow - again full screen is refreshed not only
+   preview area?" */
+typedef struct {
+    nc2_mode_t mode;
+    bool list;
+    size_t cursor;
+    size_t mark;                /* the line the rows draw their mark on */
+    int field;
+    size_t lines;
+    bool fault;
+    char pad_hot;               /* MANUAL's key flash, and the run's hold */
+    char status[64];
+    char address[NC2_ADDR_MAX + 1];
+    uint16_t fps;
+} nc2_frame_key_t;
+
+static nc2_frame_key_t g_frame_key;
+static bool g_frame_key_valid;
+
+static void nc2_frame_key_of(nc2_frame_key_t *key)
+{
+    nc2_runtime_state_t rt;
+
+    memset(key, 0, sizeof(*key));
+    key->mode = g_mode;
+    key->list = g_list;
+    key->cursor = g_doc.cursor;
+    key->mark = (g_mode == NC2_MODE_RUN) ? nc2_visual_run_line() : g_doc.cursor;
+    key->field = g_doc.field;
+    key->lines = g_doc.line_count;
+    nc2_state_runtime(&rt);
+    key->fault = nc2_state_is_fault(&rt);
+    key->pad_hot = nc2_pad_hot();
+    snprintf(key->status, sizeof(key->status), "%s", g_status);
+    snprintf(key->address, sizeof(key->address), "%s", g_address);
+    key->fps = g_nc2_fps;
+}
+
 void nc2_visual_draw(void)
 {
+    nc2_frame_key_t key;
+    bool full;
+
     if (nc2_boot_active()) {
         nc2_boot_draw();
         /* The renderer draws into the PSRAM backbuffer and the scanout reads
@@ -1209,26 +1422,23 @@ void nc2_visual_draw(void)
         lvds_hstx_present();
         return;
     }
-    nc2_fill(0, 0, LVDS_VIEW_WIDTH, LVDS_VIEW_HEIGHT, nc2_col_bg());
-    nc2_draw_header();
-    /* The drawing, every screen and whatever the screen has open: the machine
-       is making a part, and the part belongs at the top where the operator
-       looks. What the machine is doing is read once, for the live stock. */
-    {
-        nc2_runtime_state_t rt;
-        nc2_preview_run_t run;
-
-        nc2_state_runtime(&rt);
-        run.busy = nc2_state_busy() || nc2_run_active() || nc2_run_hold();
-        run.screen_run = g_mode == NC2_MODE_RUN;
-        run.x = rt.x;
-        run.z = rt.z;
-        nc2_preview_draw(&g_doc, &run, NC2_PREVIEW_X, NC2_PREVIEW_Y,
-                         NC2_PREVIEW_W, NC2_PREVIEW_PANE_H);
+    nc2_frame_key_of(&key);
+    full = g_dirty || !g_frame_key_valid ||
+           memcmp(&key, &g_frame_key, sizeof(key)) != 0;
+    if (full) {
+        nc2_fill(0, 0, LVDS_VIEW_WIDTH, LVDS_VIEW_HEIGHT, nc2_col_bg());
+        nc2_draw_header();
     }
-    /* The strip under the drawing, and then the bottom band: the text on the
-       left, the keys in the corner. */
+    /* The two bands that move on their own: the drawing (the machine's own
+       position, and the tool with it) and the strip's figures. Everything else
+       is drawn when something it shows has changed. */
+    nc2_draw_preview();
     nc2_draw_dro();
+    if (!full) {
+        nc2_fps_tick();
+        lvds_hstx_present();
+        return;
+    }
     if (g_list) {
         /* The list is one column, not the editor's pane: it takes the whole
            bottom band while it is up, the way a picker does. */
@@ -1241,11 +1451,26 @@ void nc2_visual_draw(void)
         nc2_manual_draw_pane(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H);
         nc2_draw_notes();
         nc2_draw_pad_band();
+    } else if (g_mode == NC2_MODE_TOOLS) {
+        /* The tools screen: the table's own rows in the pane under the header -
+           they are the text the operator edits, and the top half is where the
+           eye reads it - and the tool the cursor is on drawn in the pane below
+           (bench: "on tools - bring it back just fit into current screen so top
+           one is text lines, bottom one is tool view"). */
+        nc2_fill(NC2_PREVIEW_X, NC2_PREVIEW_Y, NC2_PREVIEW_W,
+                 NC2_PREVIEW_PANE_H, nc2_col_bg());
+        nc2_draw_rows(NC2_PREVIEW_X, NC2_PREVIEW_Y, NC2_PREVIEW_W,
+                      NC2_PREVIEW_PANE_H);
+        nc2_draw_tool_view(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H);
+        nc2_draw_notes();
+        nc2_draw_pad_band();
     } else {
-        nc2_draw_program();
+        nc2_draw_rows(NC2_TEXT_X, NC2_TEXT_Y, NC2_TEXT_W, NC2_TEXT_H);
         nc2_draw_notes();
         nc2_draw_pad_band();
     }
+    g_frame_key = key;
+    g_frame_key_valid = true;
     nc2_visual_clear_dirty();
     lvds_hstx_present();
     nc2_fps_tick();

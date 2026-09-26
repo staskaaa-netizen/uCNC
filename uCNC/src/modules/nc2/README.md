@@ -50,6 +50,11 @@ this time."* Five bands, top to bottom:
    word picked at a time. It holds whatever the half leaves it - the bench was
    plain that the row count is not what the split is for: *"no not needed here
    at all."*
+   The cursor walks down the pane and the **text** moves: six rows of the file
+   after it stay in view, because in G-code the next block is what the operator
+   is reading for (bench: *"cursor should never reach last line. in g code it is
+   always necessary to see next line. so as before leave - 6 lines and move
+   text, but not the cursor to the end."*).
 5. **The 3x3 pad**, pinned in the bottom-right corner. It is the only menu there
    is: no footer strip and no submenu tables, and no borders anywhere - the strip
    above it is the whole of the layout's furniture (the bench: *"only middle
@@ -77,7 +82,23 @@ drawing changes is the one *while the machine is cutting*.
 what the tool has taken off (nc's live stock): the machine's own position, frame
 by frame, painted as the material still there. A run that has parked keeps the
 finished part on the RUN screen until the drawing is asked for something else;
-EDIT draws the stock whole again.
+EDIT draws the stock whole again. **The tool is on it**: the glyph rides the
+machine's own position while it cuts, drawn as the shape its row's orientation
+code describes (`nc`'s live tool, which the port had left out).
+
+**The tools screen** (`TOOLS`) is two halves, the bench's own arrangement: *"top
+one is text lines, bottom one is tool view."* The table's rows are the text in
+the pane under the header - the widest pane, so a whole row reads without
+scrolling - and the tool the cursor is on is drawn below it: its shape on its own
+X0/Z0 crosshair, and the numbers its row holds under that. The row's meaning is
+the table's own letters, read by `nc2_tools.c` (the tool table is `nc2`'s now;
+`nc_tools.c` stays in the tree as the record of the module it replaced).
+
+**A frame only paints what changed.** The header, the rows, the notes and the pad
+are drawn when something they show has changed (a key, the line in play, the
+message, the cursor); a frame that changes nothing paints the drawing and the
+machine's strip and leaves the rest of the pixels alone - the bench: *"fps is
+dead slow - again full screen is refreshed not only preview area?"*
 
 **The word under the cursor is named**, on the row above it, in EDIT and TOOLS:
 `>  X position`, `>  Depth/pass`, from the same table nc kept (`nc2_vocab.c`).
@@ -199,6 +220,7 @@ as a target to squeeze into.
 | `nc2_tools.c` | 250 | the tool table |
 | `nc2_text.c` | 300 | typing into the picked word |
 | `nc2_vocab.c` | 220 | the G-code templates and the legends |
+| `nc2_tools.c` | 240 | the tool table: a row's numbers, the table the run reads |
 | `nc2_visual.c` | 850 | the screen: the header, the drawing, the strip, the text and the 3x3 |
 | `nc2_preview.c` | 1 100 | stock, the live stock's mask, contour, dimensions |
 | `nc2_draw.c` | 450 | primitives, glyphs, the 3x3 grid |
@@ -330,6 +352,7 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built (17) | the live stock, the one thing the port had not carried over: while the tool moves, `nc2_preview.c` paints the material still there from the machine's own position, one sample per turn of the screen's loop, into a one-byte-per-pixel mask in PSRAM (nc's own offset, 512 KiB). The tool takes the material off from its X down to the axis, so what is left of a column still starts where the whole stock did; the stock's bore is not material; a run that parks keeps the part on RUN and EDIT draws the stock whole. `--live2test` reads the glass column by column: the cut is where nc's mask puts it, the tops are untouched, the parked screen holds the part, and the editor has the whole stock again |
 | built (18) | the turned screen and its layout: the renderer turns the picture a quarter (`lvds_hstx.h` states it once, `lvds_renderer/README.md` says why the scanout is untouched), and `nc2` is redrawn for a 600x800 screen - header, drawing, one strip, then the text with the pad beside it. The strip is the DRO: work X and Z, feed, spindle and the state word on one line, drawn on every screen, the machine's colour on it. The drawing is on every screen now, MANUAL's included. Two things the new shape exposed and this change fixes: the **run used to inherit the tool table** (the mode key walks EDIT, TOOLS, RUN, and TOOLS edits the table - so `3 FULL` straight after a look at the tools would have sent the table to the machine), and the station's window, its frames and every check now read the picture through the same turn. `--live2test` and `--label2test` are the two that read the new bands |
 | built (19) | the second bench pass on that layout: the strip is the screen's **centre line** (it was a few rows below it, put there to fit seventeen program rows - the bench: *"split is not per center ... no not needed here at all. so make it at the middle as asked"*), the space above the 3x3 carries the **notes** - an error first, in the fault's red, then the screen's helpers - and the **frame meter** is back (`nc2_visual_fps()`, `--fps2test`), because it is the instrument a layout change is measured with. The helpers moved onto the glass from the station's side strip, which still draws them: the owner of the words is `nc2_visual_usage()` and both read it |
+| built (20) | the third pass, on the things the bench found by using it: the **scroll** keeps six rows after the cursor (`--scroll2test`), the **mark follows the run** - the pacer updated the line in play only while one had never been set, so a full run sat on line 1 (bench: *"on run - it still does not moves the cursors it stays at first ilen"*, pinned by `--pace2test` now counting the moves), **the tool is drawn again** (`nc2_tools.c` + `nc2_draw.c`'s glyph: the live tool on the drawing, and the tool view the TOOLS screen is half made of), and a frame **only paints what changed** (`--fps2test` damages a pixel in the pad's corner and insists a still frame leaves it) |
 | **switched over** | `nc` is retired: `module.c` loads `nc2`, `rp2350.ini` compiles `modules/nc2/`, and the station builds and drives nc2 (`tools/nc_ui_win/`, `tools/test_nc_ui.py`). nc's sources stay in the tree, unbuilt, as the record of the dialect nc2 replaces (`nc/TODO.md` says so at the top) |
 | next | the drawing's tool panel and the tool glyph that rides the live stock (they need the tool table parsed, which is its own module later) |
 

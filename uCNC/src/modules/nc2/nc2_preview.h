@@ -2,6 +2,7 @@
 #define NC2_PREVIEW_H
 
 #include "nc2.h"
+#include "nc2_tools.h"
 
 /* The drawing: the stock, the profile the program cuts, the dimensions in the
    DIN style nc draws them, and the part as the cycles rough it out.
@@ -27,6 +28,10 @@ typedef struct {
     bool screen_run;                /* the RUN screen is the one being drawn */
     float x;
     float z;
+    /* The tool the program is using, for the glyph that rides the cut: the
+       caller owns it (it is the loaded table's), and a run without one is drawn
+       without a tool. */
+    const nc2_tool_t *tool;
 } nc2_preview_run_t;
 
 void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,

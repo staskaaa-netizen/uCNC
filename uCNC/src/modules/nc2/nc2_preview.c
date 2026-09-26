@@ -25,6 +25,10 @@
 #define NC2_PREVIEW_TOP_BAND 82
 #define NC2_CHUCK_C 15.0f
 
+/* The live tool's own size: nc drew it at twenty pixels across, and the pane is
+   read at the same distance, so it is the same here. */
+#define NC2_LIVE_TOOL_GLYPH 20
+
 /* What there is to draw: the stock, the contour's extent and the setup rows. */
 typedef struct {
     float stock_x;
@@ -845,4 +849,20 @@ void nc2_preview_draw(const nc2_document_t *doc, const nc2_preview_run_t *run,
     nc2_contour_points(doc, &preview, z0_x, stock_left, stock_left + stock_w,
                        stock_w, stock_top, stock_h);
     nc2_emitted_preview(doc, &preview, z0_x, stock_w, stock_top, stock_h);
+    /* The tool, riding the cut: the machine's own position, drawn as the shape
+       its table row describes - nc's live tool, which the port had left out. It
+       is only drawn while the machine is moving, and only when the whole glyph
+       is inside the pane: a tool drawn outside the area that repaints would
+       stay on the glass (`nc`'s own rule). */
+    if (run && run->busy && run->tool && run->tool->valid) {
+        int tx = nc2_map_z(&preview, z0_x, stock_w, run->z);
+        int ty = nc2_map_x(&preview, stock_top, stock_h,
+                           (run->x < 0.0f ? -run->x : run->x) * 2.0f);
+
+        if (tx >= x && tx + NC2_LIVE_TOOL_GLYPH <= x + w &&
+            ty >= y && ty + NC2_LIVE_TOOL_GLYPH <= y + h) {
+            nc2_draw_tool_glyph(tx, ty, NC2_LIVE_TOOL_GLYPH, run->tool,
+                                nc2_col_prev_bg());
+        }
+    }
 }

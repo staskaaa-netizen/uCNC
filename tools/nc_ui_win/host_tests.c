@@ -56,6 +56,7 @@ static uint32_t host_frame_at(int x, int y);
 static uint32_t host_panel_rgb(lvds_color_t color);
 static uint32_t host_view_at(int x, int y);
 static int host_view_ink_in(int x, int y, int w, int h);
+static uint32_t host_pane2_row_bg(int row);
 
 
 
@@ -378,6 +379,27 @@ static int host_view_ink_in(int x, int y, int w, int h)
     for (r = 0; r < h; r++) {
         for (c = 0; c < w; c++) {
             if (host_view_at(x + c, y + r) != bg) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Is the tool drawn in the drawing pane? Its two colours are its own: nothing
+   else in the preview wears the tool's orange. */
+static int host_preview_has_tool(void)
+{
+    uint32_t edge = host_panel_rgb(nc2_col_tool());
+    uint32_t fill = host_panel_rgb(nc2_col_tool_fill());
+    int x;
+    int y;
+
+    for (y = NC2_PREVIEW_Y; y < NC2_PREVIEW_Y + NC2_PREVIEW_PANE_H; y++) {
+        for (x = NC2_PREVIEW_X; x < NC2_PREVIEW_X + NC2_PREVIEW_W; x++) {
+            uint32_t c = host_view_at(x, y);
+
+            if (c == edge || c == fill) {
                 return 1;
             }
         }
@@ -1381,13 +1403,18 @@ static int host_run2test(void)
 
     /* Nothing running: the strip is up - it is the layout's own line between
        the drawing and the keys - and it wears the machine's grey, not the
-       run's green. */
+       run's green. There is no tool on the drawing either: the glyph rides the
+       cut, and nothing is cutting. */
     nc2_visual_draw();
     if (host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) !=
         host_panel_rgb(nc2_col_header())) {
         printf("run2test: FAIL the idle strip is 0x%06lX, not the machine's "
                "own colour\n",
                (unsigned long)host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3));
+        failures++;
+    }
+    if (host_preview_has_tool()) {
+        puts("run2test: FAIL a tool is drawn on an idle machine");
         failures++;
     }
 
@@ -1420,6 +1447,10 @@ static int host_run2test(void)
     if (host_view_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) !=
         host_panel_rgb(nc2_col_run())) {
         puts("run2test: FAIL the strip is not green while the run is armed");
+        failures++;
+    }
+    if (!host_preview_has_tool()) {
+        puts("run2test: FAIL the tool glyph is not on the drawing in a run");
         failures++;
     }
     for (n = 0u; n < 200000u; n++) {
@@ -1706,6 +1737,86 @@ static int host_live2test(void)
     return 0;
 }
 
+/* The code pane's scroll: the cursor walks down and the *text* moves, so the
+   rows after the cursor's stay in view. The bench: "cursor should never reach
+   last line. in g code it is always necessary to see next line. so as before
+   leave - 6 lines and move text, but not the cursor to the end." */
+static int host_scroll2test(void)
+{
+    static const char *const program = "/D/nc/files/scroll2.nc";
+    char text[2048];
+    size_t used = 0u;
+    uint32_t select_rgb;
+    int failures = 0;
+    int i;
+    int sel_row = -1;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    for (i = 1; i <= 30; i++) {
+        int n = snprintf(text + used, sizeof(text) - used, "G1 X%d Z-%d\n", i, i);
+
+        if (n <= 0 || (size_t)n >= sizeof(text) - used) {
+            break;
+        }
+        used += (size_t)n;
+    }
+    if (!host_fs_write_text(program, text)) {
+        puts("scroll2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    if (!nc2_visual_open(program)) {
+        puts("scroll2test: FAIL the fixture does not load");
+        return 1;
+    }
+    /* Twenty lines down: the pane has to have moved, and the cursor has to be
+       short of its last row. */
+    for (i = 0; i < 20; i++) {
+        nc2_visual_key('C');
+    }
+    nc2_visual_draw();
+    select_rgb = host_panel_rgb(nc2_col_select());
+    for (i = 0; i < NC2_CODE_ROWS; i++) {
+        if (host_pane2_row_bg(i) == select_rgb) {
+            sel_row = i;
+            break;
+        }
+    }
+    if (sel_row < 0) {
+        puts("scroll2test: FAIL the cursor's row is not on the glass");
+        failures++;
+    } else if (sel_row > NC2_CODE_ROWS - 1 - 6) {
+        printf("scroll2test: FAIL the cursor sits on row %d of %d - fewer than "
+               "six rows after it\n", sel_row + 1, NC2_CODE_ROWS);
+        failures++;
+    } else {
+        /* And the rows after it are the *next* lines: ink, not empty pane. */
+        int below;
+
+        for (below = sel_row + 1; below <= sel_row + 6; below++) {
+            int y = NC2_TEXT_Y + 4 + below * NC2_ROW_H;
+
+            if (!host_view_ink_in(NC2_TEXT_X + NC2_LINE_TEXT_PAD, y,
+                                  NC2_TEXT_W - NC2_LINE_TEXT_PAD - 4,
+                                  NC2_ROW_H)) {
+                printf("scroll2test: FAIL row %d after the cursor is empty\n",
+                       below + 1);
+                failures++;
+                break;
+            }
+        }
+    }
+    if (failures) {
+        printf("scroll2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    printf("scroll2test: PASS the cursor stops on row %d with six rows of the "
+           "program after it\n", sel_row + 1);
+    return 0;
+}
+
 /* The frame meter, which the bench asked for back to test what a change costs
    the panel ("give me back fps meter it need to be tested"). The screen counts
    the frames it draws and keeps the last whole second's worth; the check draws
@@ -1734,6 +1845,32 @@ static int host_fps2test(void)
     if (!host_view_ink_in(LVDS_VIEW_WIDTH - 60, 12, 56, 16)) {
         puts("fps2test: FAIL the reading is not on the glass");
         failures++;
+    }
+    /* And a frame that changes nothing must not repaint what does not change:
+       the check damages a pixel in the pad's corner and draws again - a partial
+       frame leaves it (the pad's pixels are the ones already on the glass), and
+       a key paints over it, because a key is something the screen shows. */
+    {
+        uint32_t *px = (uint32_t *)lvds_host_pixels();
+        int vx = NC2_PAD_X + 4;
+        int vy = NC2_PAD_Y + 4;
+        size_t stride = (size_t)(lvds_host_stride() / 4);
+        size_t index = (size_t)LVDS_PANEL_Y(vx, vy) * stride +
+                       (size_t)LVDS_PANEL_X(vx, vy);
+        uint32_t damage = 0x00FF00FFu;      /* a colour nothing draws */
+
+        px[index] = damage;
+        nc2_visual_draw();                  /* nothing changed */
+        if (px[index] != damage) {
+            puts("fps2test: FAIL an unchanged frame repainted the pad");
+            failures++;
+        }
+        nc2_visual_key('C');                /* a key: the text moves */
+        nc2_visual_draw();
+        if (px[index] == damage) {
+            puts("fps2test: FAIL a changed frame left the pad alone");
+            failures++;
+        }
     }
     if (failures) {
         printf("fps2test: FAILED (%d)\n", failures);
@@ -1963,6 +2100,43 @@ static int host_tools2test(void)
         !strstr(text, "T1 ")) {
         printf("tools2test: FAIL the new table reads \"%s\"\n", text);
         failures++;
+    }
+    /* The screen is two halves: the table's rows in the pane under the header -
+       the text the operator edits - and the tool the cursor is on drawn below
+       it (bench: "top one is text lines, bottom one is tool view"). */
+    nc2_visual_draw();
+    if (!host_view_ink_in(NC2_PREVIEW_X + 8, NC2_PREVIEW_Y + 8,
+                          NC2_PREVIEW_W - 16, NC2_PREVIEW_PANE_H - 16)) {
+        puts("tools2test: FAIL the table is not drawn in the top pane");
+        failures++;
+    }
+    if (!host_view_ink_in(NC2_TEXT_X + 4, NC2_TEXT_Y + 4, NC2_TEXT_W - 8,
+                          NC2_TEXT_H - 8)) {
+        puts("tools2test: FAIL the tool view is not drawn below the table");
+        failures++;
+    }
+    {
+        /* The tool's own colour, in the view: the glyph the row describes. */
+        uint32_t tool_rgb = host_panel_rgb(nc2_col_tool());
+        uint32_t fill_rgb = host_panel_rgb(nc2_col_tool_fill());
+        int x;
+        int y;
+        int found = 0;
+
+        for (y = NC2_TEXT_Y; y < NC2_TEXT_Y + NC2_TEXT_H && !found; y++) {
+            for (x = NC2_TEXT_X; x < NC2_TEXT_X + NC2_TEXT_W; x++) {
+                uint32_t c = host_view_at(x, y);
+
+                if (c == tool_rgb || c == fill_rgb) {
+                    found = 1;
+                    break;
+                }
+            }
+        }
+        if (!found) {
+            puts("tools2test: FAIL the tool view has no tool drawn in it");
+            failures++;
+        }
     }
 
     /* The pad inserts into the table like it inserts into a program: `4` walks
@@ -2273,6 +2447,8 @@ static int host_pace2test(void)
     nc2_document_t doc;
     nc2_runtime_state_t rt;
     size_t prev_now = 0u;
+    size_t prev_mark = 0u;
+    unsigned mark_moves = 0u;
     unsigned guard;
     int failures = 0;
 
@@ -2337,9 +2513,21 @@ static int host_pace2test(void)
             }
         }
         prev_now = now;
+        /* The pane's mark follows the run: it is the line in play, and the
+           operator reads the program from it (bench: "on run - it still does not
+           moves the cursors it stays at first line"). */
+        if (nc2_run_display_line() != prev_mark) {
+            prev_mark = nc2_run_display_line();
+            mark_moves++;
+        }
         if (!nc2_run_streaming() && host_machine_idle()) {
             break;
         }
+    }
+    if (mark_moves < 3u) {
+        printf("pace2test: FAIL the pane's mark moved %u times in a full run\n",
+               mark_moves);
+        failures++;
     }
     if (nc2_run_streaming()) {
         puts("pace2test: FAIL the run never ended");
@@ -3584,8 +3772,13 @@ static int host_dump_nc2(const char *path)
     host_init_core();
     nc2_visual_init();
     nc2_visual_tick(4000u);             /* past the first start's logo */
-    if (!nc2_visual_open("/D/nc/files/lathe-demo.nc")) {
-        (void)nc2_visual_open("/D/nc/files/screen.nc");
+    /* The card's state decides what is open: the demo is opened only when the
+       panel came up with nothing, so a dump of TOOLS or MANUAL shows the file
+       that screen really has - not the program the dump wanted to look at. */
+    if (!nc2_visual_path()[0]) {
+        if (!nc2_visual_open("/D/nc/files/lathe-demo.nc")) {
+            (void)nc2_visual_open("/D/nc/files/screen.nc");
+        }
     }
     /* `--keys` presses nc2's own keys, one character at a time, so a frame of a
        screen that only appears after input can be looked at. */
@@ -3735,6 +3928,8 @@ int host_tests_run(int argc, char **argv)
             return host_live2test();
         if (strcmp(argv[i], "--fps2test") == 0)
             return host_fps2test();
+        if (strcmp(argv[i], "--scroll2test") == 0)
+            return host_scroll2test();
         if (strcmp(argv[i], "--manual2test") == 0)
             return host_manual2test();
         if (strcmp(argv[i], "--tools2test") == 0)

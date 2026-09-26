@@ -27,12 +27,23 @@ cannot have the spindle, the travel or the panel's glass.
   exactly one level.
 - Write a program long enough to scroll (more than 17 rows) and check the cursor
   keeps the line in view and the line numbers still line up with the rows.
+- Walk the cursor down a long program: the **text** has to move while six rows
+  of it stay in view after the cursor - the cursor must not reach the pane's
+  last row (`--scroll2test` proves the rule, the glass has to look right).
+- On TOOLS: the table's rows above and the tool the cursor is on below - its
+  shape on the crosshair and its numbers under it. Walk the cursor down the
+  table and the drawing has to change with it; a row that is not a tool shows
+  nothing.
+- In a run: the **mark follows the cut**, line by line, and the tool glyph rides
+  the machine's own position on the drawing. Walk the cursor before the run and
+  the mark is the line the operator left it on.
 
 ## The run
 
 - `3 FULL` on a two-cycle program: the tool has to follow the same path the
-  preview draws, and the marked line has to be the line being cut - not one
-  ahead of it (that is the fault the pacer exists for).
+  preview draws, and the marked line has to be the line being cut - it moves
+  with the cut and is never one ahead of what has been handed over (that is the
+  fault the pacer exists for).
 - `4 HOLD` mid-cut and `4` again: the axis stops and resumes without losing the
   block. `5 STOP` mid-cut: the machine stops and the panel says so.
 - `1 SINGLE` from a row inside a cycle: the whole block goes out, and the mark
@@ -82,6 +93,9 @@ cannot have the spindle, the travel or the panel's glass.
    for the rest of this list: read it while the machine is *cutting* - a still
    screen legitimately reads low, because it only redraws what changed. Compare
    it against the last build before a change to the drawing or the live stock.
+  With the tool glyph on the drawing and the live stock under it, a cut is the
+  heaviest frame the panel draws: if the meter drops below the panel's own
+  period there, the next change is in the drawing, not in the layout.
 - The drawing is on every screen, MANUAL included: start a jog and the part is
   in view above the strip.
 - Read the code pane outdoors and with the panel at an angle: the selected row,

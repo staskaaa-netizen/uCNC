@@ -33,6 +33,9 @@ static size_t g_nc2_run_end_line;
 static size_t g_nc2_run_running_line;
 static bool g_nc2_run_running_valid;
 static bool g_nc2_run_step_in_flight;
+/* A single step holds the mark on the line the operator stepped from; a program
+   run lets it follow the unit that is starting. */
+static bool g_nc2_run_mark_held;
 static nc2_emit_stream_t g_nc2_run_stream;
 
 /* The console log's own code for a normal end (`nc_run.c`'s STEP_COMPLETE). */
@@ -279,6 +282,7 @@ static bool nc2_run_arm(const nc2_document_t *doc, size_t line, size_t end_line)
     g_nc2_run_done = false;
     g_nc2_run_running_valid = false;
     g_nc2_run_step_in_flight = false;
+    g_nc2_run_mark_held = false;
     return true;
 }
 
@@ -323,6 +327,7 @@ bool nc2_run_send_unit(const nc2_document_t *doc, size_t line)
     g_nc2_run_running_line = line;
     g_nc2_run_running_valid = true;
     g_nc2_run_step_in_flight = true;
+    g_nc2_run_mark_held = true;
     return true;
 }
 
@@ -338,6 +343,7 @@ void nc2_run_reset(void)
     g_nc2_run_end_line = (size_t)-1;
     g_nc2_run_running_valid = false;
     g_nc2_run_step_in_flight = false;
+    g_nc2_run_mark_held = false;
 }
 
 void nc2_run_stop(void)
@@ -456,6 +462,7 @@ void nc2_run_pace(void)
     if (!g_nc2_run_program_active && g_nc2_run_send_count == 0u &&
         nc2_run_machine_idle()) {
         g_nc2_run_step_in_flight = false;
+        g_nc2_run_mark_held = false;    /* the step is over: the mark is free */
     }
 
     if (!g_nc2_run_program_active || !g_nc2_run_doc) {
@@ -510,8 +517,9 @@ void nc2_run_pace(void)
         }
     }
 
-    /* The mark follows the unit that is starting. */
-    if (!g_nc2_run_running_valid) {
+    /* The mark follows the unit that is starting - except in a single step,
+       where it stays on the line the operator stepped from. */
+    if (!g_nc2_run_mark_held) {
         g_nc2_run_running_line = emitted_line;
         g_nc2_run_running_valid = true;
     }

@@ -3,6 +3,8 @@
 
 #include "../lvds_renderer/lvds_draw_api.h"
 
+#include "nc2_tools.h"
+
 #include <stdbool.h>
 
 /* nc2's drawing vocabulary: the colours it uses, text with the panel's own
@@ -35,6 +37,9 @@ lvds_color_t nc2_col_prev_stock(void);
 lvds_color_t nc2_col_prev_hatch(void);
 lvds_color_t nc2_col_prev_cut(void);
 lvds_color_t nc2_col_prev_profile(void);
+/* The tool, on the drawing and in the tool view. */
+lvds_color_t nc2_col_tool(void);
+lvds_color_t nc2_col_tool_fill(void);
 
 /* Keep a value inside a range: the drawing code is full of it, and it belongs
    with the drawing rather than with each screen that draws. */
@@ -60,6 +65,14 @@ void nc2_hline(int x, int y, int w, lvds_color_t color);
    `hot` is the key whose cell is drawn as the one in play, 0 for none. */
 void nc2_draw_pad(int x, int y, int w, int h, const char *const *labels,
                   char hot);
+
+/* The tool, tip on (tip_x, tip_y), its body `size` across: the shape its
+   orientation code describes. `bg` is what the tip's nose is cut out of. */
+void nc2_draw_tool_glyph(int tip_x, int tip_y, int size, const nc2_tool_t *tool,
+                         lvds_color_t bg);
+/* The same glyph centred in a box of its own. */
+void nc2_draw_tool_glyph_centered(int x, int y, int box_size, int marker_size,
+                                  const nc2_tool_t *tool, lvds_color_t bg);
 
 /* Which key a cell stands for. The pad mirrors the machine's keypad, the way
    nc's pad did: the numeric block's own rows run the other way up, so `7 8 9`

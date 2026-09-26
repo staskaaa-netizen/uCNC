@@ -55,6 +55,7 @@ build\nc_ui.exe --pad2test                       # nc2's pad is the file tree
 build\nc_ui.exe --screen2test                    # nc2's screen draws and writes
 build\nc_ui.exe --file2test                      # nc2's card list walks and opens
 build\nc_ui.exe --run2test                       # nc2's run and its floating DRO
+build\nc_ui.exe --manual2test                    # nc2's jog panel
 build\nc_ui.exe --dump-nc2 screen.bmp            # nc2's screen on its own
 python tools\test_nc2.py                         # nc2's own target (AGENTS.md 8)
 build\nc_ui.exe --dirtytest                      # a key repaints what it changed
@@ -387,6 +388,13 @@ python tools\test_nc_ui.py
   so the machine's figure is half - and the floating DRO is on the glass while
   the run is busy and gone when it is not. `1 SINGLE` sends the unit the mark is
   on and leaves the mark on the line the operator stepped from.
+- `--manual2test` checks nc2's MANUAL: the digits jog the axis each names (X is
+  a diameter, so a 0.100 mm step is written `X0.200`), a jog is always the
+  `G91 G1 ...` block followed by the `G90` that puts the machine back, `1`/`3`
+  change the step the next press uses, the spindle keys send `M3`/`M4`/`M5` at
+  the remembered speed, `*` types the two stops of the picked axis, `#` swaps a
+  step for feeding and a held direction key sends one `$J=G91` block toward the
+  stop, `0` zeroes the axis and `D` touches it off.
 - `--dirtytest` checks the repaint contract: a key that changes the screen has
   to ask for the draw itself. RUN's line keys (`B`/`C`) did not - they moved the
   run line and returned without the dirty flag, so the highlight sat on the old

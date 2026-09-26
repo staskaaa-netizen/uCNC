@@ -401,6 +401,18 @@ if __name__ == "__main__":
         fail("FAIL nc2's run does not hand over what the program means",
              run.stdout[-1500:] or run.stderr[-1500:])
 
+    # nc2's MANUAL: the machine panel. The digits jog, the stops are typed, the
+    # spindle runs from the keys, and a jog is always the G91 pair with the G90
+    # that puts the machine back.
+    root = OUT / "manual2-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--manual2test"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "manual2test: PASS" not in run.stdout:
+        fail("FAIL nc2's MANUAL does not jog, stop or run the spindle",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
     # The operator's own program and tool table, kept with the NC module
     # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
     # the firmware writes its state next to them, then checked through the

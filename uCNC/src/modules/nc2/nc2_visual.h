@@ -41,6 +41,10 @@ void nc2_visual_tick(unsigned ms);
 bool nc2_visual_dirty(void);
 void nc2_visual_clear_dirty(void);
 const char *nc2_visual_status(void);
+/* The screen's own status line, for a screen that lives beside it (MANUAL). */
+void nc2_visual_status_set(const char *text);
+/* Ask for the next frame: a screen that changed something on its own. */
+void nc2_visual_mark_dirty(void);
 
 /* Draw the whole panel. */
 void nc2_visual_draw(void);

@@ -44,6 +44,7 @@
 #include "nc2_emit.h"
 #include "nc2_files.h"
 #include "nc2_layout.h"
+#include "nc2_manual.h"
 #include "nc2_presets.h"
 #include "nc2_run.h"
 #include "nc2_state.h"
@@ -2563,6 +2564,193 @@ static int host_run2test(void)
          "machine arrives, and the DRO floats only while it is busy");
     return 0;
 }
+
+/* Drain what the panel queued for the controller, one line after another, into
+   one string separated by `|`. Nothing here pumps the machine: these are the
+   blocks the panel sends on its own (a jog, a zero, a spindle start). */
+static void host_drain_panel(char *out, size_t out_sz)
+{
+    size_t used = 0u;
+    unsigned guard;
+
+    out[0] = '\0';
+    for (guard = 0u; guard < 20000u; guard++) {
+        bool any = false;
+
+        while (grbl_stream_available()) {
+            char c = grbl_stream_getc();
+
+            any = true;
+            if (c == '\n' || c == '\r' || c == 0) {
+                if (used > 0u && out[used - 1u] != '|' && used + 1u < out_sz) {
+                    out[used++] = '|';
+                }
+            } else if (used + 1u < out_sz) {
+                out[used++] = c;
+            }
+        }
+        if (!any) {
+            break;
+        }
+    }
+    out[used] = '\0';
+}
+
+/* nc2's MANUAL: the machine panel. The digits jog, the spindle runs from the
+   keys, `#` swaps a step for feeding, `*` types the two stops of the picked
+   axis, `D` touches it off and `0` zeroes it - and a jog is always the pair
+   `G91 G1 ...` then `G90`, so nothing after it runs in the wrong distance mode.
+   What each key sends is read off the same reader the controller reads. */
+static int host_manual2test(void)
+{
+    char sent[512];
+    float value = 0.0f;
+    bool typed = false;
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    nc2_visual_select_mode(NC2_MODE_MANUAL);
+    if (strcmp(nc2_visual_screen_name(), "MANUAL") != 0) {
+        printf("manual2test: FAIL the screen is \"%s\", not MANUAL\n",
+               nc2_visual_screen_name());
+        return 1;
+    }
+    host_pump_idle(32u);
+
+    /* A step jog is the move and the G90 that puts the machine back, in that
+       order: X is a diameter, so a 0.100 mm step is written X0.200. */
+    nc2_visual_key('B');                      /* the axis is X */
+    nc2_visual_key('2');                      /* X+ */
+    host_drain_panel(sent, sizeof(sent));
+    if (!strstr(sent, "G91 G1 X0.200 F500") || !strstr(sent, "G90")) {
+        printf("manual2test: FAIL the X+ step sent \"%s\"\n", sent);
+        failures++;
+    }
+    host_pump_idle(64u);
+
+    /* The value keys change the step the next press uses. */
+    nc2_visual_key('3');                      /* one step bigger: 0.250 */
+    nc2_visual_key('2');
+    host_drain_panel(sent, sizeof(sent));
+    if (!strstr(sent, "X0.500")) {
+        printf("manual2test: FAIL the bigger step sent \"%s\"\n", sent);
+        failures++;
+    }
+    host_pump_idle(64u);
+
+    /* One more press, this time left to the machine: the axis has to move off
+       the stop it is standing on, or the feed below would be refused - which is
+       the answer the screen gives, and not what this check is about. */
+    nc2_visual_key('2');
+    host_pump_idle(64u);
+    {
+        nc2_runtime_state_t rt;
+
+        nc2_state_runtime(&rt);
+        if (!(rt.x > 0.05f)) {
+            printf("manual2test: FAIL the X+ jog left the axis at %.3f\n",
+                   (double)rt.x);
+            failures++;
+        }
+    }
+
+    /* The spindle keys are the machine's, and the speed is the remembered one. */
+    nc2_visual_key('9');                      /* CW */
+    host_drain_panel(sent, sizeof(sent));
+    if (!strstr(sent, "M3 S")) {
+        printf("manual2test: FAIL the CW key sent \"%s\"\n", sent);
+        failures++;
+    }
+    nc2_visual_key('7');                      /* CCW */
+    host_drain_panel(sent, sizeof(sent));
+    if (!strstr(sent, "M4 S")) {
+        printf("manual2test: FAIL the CCW key sent \"%s\"\n", sent);
+        failures++;
+    }
+    nc2_visual_key('5');                      /* stop */
+    host_drain_panel(sent, sizeof(sent));
+    if (!strstr(sent, "M5")) {
+        printf("manual2test: FAIL the stop key sent \"%s\"\n", sent);
+        failures++;
+    }
+    host_pump_idle(64u);
+
+    /* The stops are typed: `*` opens the minus side, `*` takes it and opens the
+       plus one, `*` once more takes that and closes. */
+    nc2_visual_key('*');
+    if (!nc2_manual_field_active()) {
+        puts("manual2test: FAIL `*` did not open the minus stop");
+        failures++;
+    }
+    nc2_visual_key('0');
+    nc2_visual_key('*');                      /* takes 0, opens the plus side */
+    nc2_visual_key('7');
+    nc2_visual_key('0');
+    nc2_visual_key('*');                      /* takes 70, closes */
+    if (nc2_manual_field_active()) {
+        puts("manual2test: FAIL the stop field stayed open");
+        failures++;
+    }
+    if (!nc2_manual_stop(0, 0, &value, &typed) || !typed ||
+        fabsf(value) > 0.01f) {
+        printf("manual2test: FAIL the X- stop is %.3f (typed=%d)\n",
+               (double)value, (int)typed);
+        failures++;
+    }
+    if (!nc2_manual_stop(0, 1, &value, &typed) || !typed ||
+        fabsf(value - 70.0f) > 0.01f) {
+        printf("manual2test: FAIL the X+ stop is %.3f (typed=%d)\n",
+               (double)value, (int)typed);
+        failures++;
+    }
+
+    /* `#` swaps the step for feeding while a key is held. */
+    nc2_visual_key('#');
+    if (!nc2_manual_continuous()) {
+        puts("manual2test: FAIL `#` did not swap to the feed");
+        failures++;
+    }
+    nc2_visual_key('8');                      /* X- toward the minus stop */
+    host_drain_panel(sent, sizeof(sent));
+    if (!strstr(sent, "$J=G91 X-")) {
+        printf("manual2test: FAIL the held X- key sent \"%s\"\n", sent);
+        failures++;
+    }
+    nc2_manual_hold(0);                       /* the key came up */
+    host_pump_idle(64u);
+
+    /* Zero writes the work offset for the picked axis. */
+    nc2_visual_key('0');
+    host_drain_panel(sent, sizeof(sent));
+    if (!strstr(sent, "G10 L20 P0 X0")) {
+        printf("manual2test: FAIL the zero key sent \"%s\"\n", sent);
+        failures++;
+    }
+    host_pump_idle(64u);
+
+    /* Touch-off types a value and `D` takes it. */
+    nc2_visual_key('D');
+    nc2_visual_key('1');
+    nc2_visual_key('2');
+    nc2_visual_key('D');
+    host_drain_panel(sent, sizeof(sent));
+    if (!strstr(sent, "G10 L20 P0 X12")) {
+        printf("manual2test: FAIL the touch-off sent \"%s\"\n", sent);
+        failures++;
+    }
+
+    if (failures) {
+        printf("manual2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("manual2test: PASS the jog keys move the machine, the stops are typed, "
+         "the spindle runs from the keys and the axis is zeroed and touched off");
+    return 0;
+}
+
 /* nc2's value editor: a line is cut into fields at its letters, the keys walk
    them, and what is typed replaces the value that was there. The dumb editor the
    bench asked for, so the checks are about its two rules - where a field begins
@@ -5270,6 +5458,8 @@ int host_tests_run(int argc, char **argv)
             return host_emit2test();
         if (strcmp(argv[i], "--run2test") == 0)
             return host_run2test();
+        if (strcmp(argv[i], "--manual2test") == 0)
+            return host_manual2test();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

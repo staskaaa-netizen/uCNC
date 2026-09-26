@@ -197,11 +197,17 @@ static bool nc2_run_line_sendable(const char *line)
     if (!*line || *line == '(') {
         return false;
     }
-    return toupper((unsigned char)line[0]) == 'G' ||
-           toupper((unsigned char)line[0]) == 'M' ||
-           toupper((unsigned char)line[0]) == 'S' ||
-           toupper((unsigned char)line[0]) == 'T' ||
-           nc2_emit_line_is_direct(line);
+    /* The setup rows a G7x program carries are the panel's, not the controller's
+       (`nc_run.c` asks the same question). Everything else the panel hands over
+       goes: a jog is a `$J=` block and a zero is a `G10`, and neither is a line
+       of a program. */
+    if (toupper((unsigned char)line[0]) == 'G' &&
+        line[1] == '9' && line[2] == '7' &&
+        line[3] >= '0' && line[3] <= '3' &&
+        (line[4] == '\0' || line[4] == ' ' || line[4] == '\t')) {
+        return false;
+    }
+    return true;
 }
 
 void nc2_run_init(void)

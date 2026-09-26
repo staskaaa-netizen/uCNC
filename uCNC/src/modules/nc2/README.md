@@ -118,7 +118,8 @@ as a target to squeeze into.
 | `nc2_presets.c` | 450 | addresses -> files: names, rows, the pad's tree |
 | `nc2_files.c` | 350 | the card: listing, load, save, new, delete |
 | `nc2_emit.c` | 700 | the sender: stream, G7x feeding, `U`/`W` |
-| `nc2_run.c` | 600 | the run: pacing, the DRO's numbers, hold/stop |
+| `nc2_run.c` | 600 | the run: pacing, hold/stop, the panel's own blocks |
+| `nc2_manual.c` | 700 | MANUAL: the jog, the stops, the spindle, zero and touch-off |
 | `nc2_state.c` | 380 | what the panel remembers between boots |
 | `nc2_tools.c` | 250 | the tool table |
 | `nc2_text.c` | 300 | typing into the picked word |
@@ -244,8 +245,9 @@ format's reader and its writer. `--seedtest` in the station checks all of it.
 | built (7) | the preview: `nc2_preview.c` drew the stock, the chuck, the DIN rulers and callouts, the contour's point dimensions and the emitted path - the drawing pane is nc's picture, checked for ink and looked at against nc's own frame |
 | built (8) | what the panel remembers: `nc2_state.c` reads and writes `/D/nc_state.txt` with nc's own keys (`MODE=`, `SPINDLE=`, one key per mode holding the file it had open), so a card carries its state across a reboot and across the panel switch - the cursor is the session's, the way nc keeps it. `nc2_visual_init()` loads the remembered program (an empty one on a card that remembers nothing) and `open`/`save` flush the path and cursor. `nc2_state_runtime()` reads the machine's own numbers, `nc2_state_busy()` answers whether it is doing anything |
 | built (9) | the run: `nc2_run.c` is the pacer over `nc2_emit` - the panel hands the machine one unit and waits, so the mark is the line the tool is on - with `1 SINGLE`/`2 FROM`/`3 FULL`, `4 HOLD`, `5 STOP` and `#` reload, and the floating DRO that appears only while the machine is busy (work X/Z, feed, spindle, and the machine's own state word). The generator's own notes (`(G71 rough X23.000)`) are a line of the stream but not a line of the program, so they are not sent. `--run2test` reads what the run hands over, requires the machine to arrive where the program says and the DRO to be up only while it is busy |
+| built (10) | MANUAL, its own module: `nc2_manual.c` is the machine panel - the pad is the jog keys (`2`/`8` X, `4`/`6` Z, `7`/`9` the spindle, `5` its stop, `1`/`3` the value the pane shows, `#` swaps a step for feeding, `*` types the two stops of the picked axis, `D` touches off, `0` zeroes, `B`/`C` pick the axis) - and the pane carries the stops with the axis limit the setup states dimmer behind them and the STEP or FEED value. A jog is the `G91 G1` pair with the `G90` that puts the machine back, a held key feeds toward the stop, and the spindle starts at the speed the machine has. `--manual2test` checks what each key sends, that the axis moves, and that the stops and the value are the ones on the glass |
 | next | the drawing's tool panel and live tip (they need the tool table, which is its own module later) |
-| then | the tool table's screen and MANUAL (each its own module, later), and the panel switch: `nc` out, `nc2` in, one commit |
+| then | the tool table's screen - the bench's "tool table is just as file as other ... basically just inserts", so it is the editor on the table - and the panel switch: `nc` out, `nc2` in, one commit |
 
 One upstream landmine was found on the way, in `file_system.c`: `fs_opendir()`
 writes into the string it is handed to drop a trailing `/` (`char *newpath =

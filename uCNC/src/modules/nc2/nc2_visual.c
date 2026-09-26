@@ -5,6 +5,7 @@
 #include "nc2_draw.h"
 #include "nc2_files.h"
 #include "nc2_layout.h"
+#include "nc2_manual.h"
 #include "nc2_preview.h"
 #include "nc2_presets.h"
 #include "nc2_run.h"
@@ -29,6 +30,17 @@ static nc2_mode_t g_mode = NC2_MODE_PROGRAM;
 static void nc2_statusf(const char *text)
 {
     snprintf(g_status, sizeof(g_status), "%s", text ? text : "");
+}
+
+void nc2_visual_status_set(const char *text)
+{
+    nc2_statusf(text);
+    g_dirty = true;
+}
+
+void nc2_visual_mark_dirty(void)
+{
+    g_dirty = true;
 }
 
 /* The nine labels of the address the operator is standing at. Read every frame
@@ -57,7 +69,15 @@ void nc2_visual_init(void)
     g_dirty = true;
     nc2_run_init();
     nc2_state_init();
-    g_mode = nc2_state_mode() == NC2_MODE_RUN ? NC2_MODE_RUN : NC2_MODE_PROGRAM;
+    switch (nc2_state_mode()) {
+    case NC2_MODE_MANUAL:
+    case NC2_MODE_RUN:
+        g_mode = nc2_state_mode();
+        break;
+    default:
+        g_mode = NC2_MODE_PROGRAM;
+        break;
+    }
     /* The one write the panel makes by itself, and only onto a card that has no
        entry of its own: after that every entry is a file. */
     (void)nc2_boot_seed();
@@ -70,15 +90,20 @@ void nc2_visual_init(void)
     nc2_labels_at(g_address);
 }
 
-/* Jump to a screen. Only the program and the run are built; MANUAL and TOOLS
-   each bring their own module, and are refused until they do. */
+/* Jump to a screen. The program, the run and MANUAL are built; TOOLS brings its
+   own module (the tool table is a file like any other) and is refused until it
+   does. */
 void nc2_visual_select_mode(nc2_mode_t mode)
 {
-    if (mode != NC2_MODE_PROGRAM && mode != NC2_MODE_RUN) {
+    if (mode != NC2_MODE_PROGRAM && mode != NC2_MODE_RUN &&
+        mode != NC2_MODE_MANUAL) {
         return;
     }
     if (mode == g_mode) {
         return;
+    }
+    if (g_mode == NC2_MODE_MANUAL) {
+        nc2_manual_feed_cancel();      /* a jog must not run behind the next screen */
     }
     if (g_mode == NC2_MODE_PROGRAM) {
         nc2_state_remember_path(NC2_MODE_PROGRAM, g_doc.path);
@@ -98,6 +123,23 @@ void nc2_visual_select_mode(nc2_mode_t mode)
 nc2_mode_t nc2_visual_mode(void)
 {
     return g_mode;
+}
+
+/* The mode key: the screens built so far, in the machine's own order. */
+static void nc2_visual_next_mode(void)
+{
+    switch (g_mode) {
+    case NC2_MODE_MANUAL:
+        nc2_visual_select_mode(NC2_MODE_PROGRAM);
+        break;
+    case NC2_MODE_PROGRAM:
+        nc2_visual_select_mode(NC2_MODE_RUN);
+        break;
+    case NC2_MODE_RUN:
+    default:
+        nc2_visual_select_mode(NC2_MODE_MANUAL);
+        break;
+    }
 }
 
 bool nc2_visual_open(const char *path)
@@ -125,7 +167,10 @@ const char *nc2_visual_screen_name(void)
     if (g_list) {
         return "FILES";
     }
-    return g_mode == NC2_MODE_RUN ? "RUN" : "EDIT";
+    if (g_mode == NC2_MODE_RUN) {
+        return "RUN";
+    }
+    return g_mode == NC2_MODE_MANUAL ? "MANUAL" : "EDIT";
 }
 
 bool nc2_visual_save(void)
@@ -385,6 +430,19 @@ void nc2_visual_key(char key)
         g_dirty = true;
         return;
     }
+    /* MANUAL is a machine panel, not the editor: the pad is the jog keys, `A`
+       leaves (when no field is open), and the digits never touch the program -
+       so MANUAL works with no program at all. */
+    if (g_mode == NC2_MODE_MANUAL) {
+        if (key == 'A' && !nc2_manual_field_active()) {
+            nc2_manual_feed_cancel();
+            nc2_visual_next_mode();
+            return;
+        }
+        (void)nc2_manual_key(key);
+        g_dirty = true;
+        return;
+    }
     if (g_doc.line_count == 0u) {
         return;                     /* no program: the keys have nothing to act on */
     }
@@ -402,7 +460,7 @@ void nc2_visual_key(char key)
             return;
         }
         if (key == 'A') {
-            nc2_visual_select_mode(NC2_MODE_PROGRAM);
+            nc2_visual_next_mode();
             return;
         }
         (void)nc2_visual_run_key(key);
@@ -448,7 +506,7 @@ void nc2_visual_key(char key)
             nc2_statusf("");
             g_dirty = true;
         } else {
-            nc2_visual_select_mode(NC2_MODE_RUN);
+            nc2_visual_next_mode();
         }
         return;
     default:
@@ -481,8 +539,14 @@ static void nc2_draw_header(void)
     const char *path = g_doc.path[0] ? g_doc.path : "(no program)";
 
     nc2_fill(0, 0, LVDS_HSTX_WIDTH, NC2_HEADER_H, nc2_col_header());
-    snprintf(line, sizeof(line), "%s  %s%s", nc2_visual_screen_name(), path,
-             g_doc.dirty ? " *" : "");
+    /* MANUAL is a machine panel: there is no file, so the header is only the
+       screen's name. */
+    if (g_mode == NC2_MODE_MANUAL) {
+        snprintf(line, sizeof(line), "%s", nc2_visual_screen_name());
+    } else {
+        snprintf(line, sizeof(line), "%s  %s%s", nc2_visual_screen_name(), path,
+                 g_doc.dirty ? " *" : "");
+    }
     nc2_text_clip(8, 6, line, (LVDS_HSTX_WIDTH - 16) / nc2_col_width(LVDS_FONT_NORMAL),
                   nc2_col_text(), nc2_col_header(), LVDS_FONT_NORMAL);
 }
@@ -638,7 +702,30 @@ static const char *nc2_pad_label(char key)
     if (g_mode == NC2_MODE_RUN) {
         return g_nc2_run_labels[key - '1'];
     }
+    if (g_mode == NC2_MODE_MANUAL) {
+        return nc2_manual_pad_label(key);
+    }
     return g_labels[key - '1'];
+}
+
+/* The key the pad draws as the one in play: the run holds `4`, and MANUAL
+   flashes the key the machine just acted on. */
+static char nc2_pad_hot(void)
+{
+    char key;
+
+    if (g_mode == NC2_MODE_RUN) {
+        return nc2_run_hold() ? '4' : 0;
+    }
+    if (g_mode != NC2_MODE_MANUAL) {
+        return 0;
+    }
+    for (key = '1'; key <= '9'; key++) {
+        if (nc2_manual_flash(key)) {
+            return key;
+        }
+    }
+    return 0;
 }
 
 /* The pad's own band: where the operator is, then the nine slots. */
@@ -653,6 +740,11 @@ static void nc2_draw_pad_band(void)
     if (g_mode == NC2_MODE_RUN) {
         snprintf(line, sizeof(line), "RUN  line %lu",
                  (unsigned long)(nc2_visual_run_line() + 1u));
+    } else if (g_mode == NC2_MODE_MANUAL) {
+        snprintf(line, sizeof(line), "MANUAL  %c %s",
+                 nc2_manual_axis() ? 'Z' : 'X',
+                 nc2_manual_continuous()
+                     ? "feed" : "step");
     } else {
         /* The keys carry their own outlines (they are buttons); the band under
            them is only the address line, with no box drawn around the lot. */
@@ -671,7 +763,7 @@ static void nc2_draw_pad_band(void)
         labels[i] = nc2_pad_label(key);
     }
     nc2_draw_pad(NC2_PAD_X, NC2_PAD_Y, NC2_PAD_W, NC2_PAD_H, labels,
-                 nc2_run_hold() ? '4' : 0);
+                 nc2_pad_hot());
 }
 
 /* The word the DRO's corner carries: what the machine is doing, or refusing to
@@ -767,6 +859,18 @@ void nc2_visual_draw(void)
                  NC2_RIGHT_PANE_X + NC2_RIGHT_PANE_W - NC2_LEFT_PANE_X, NC2_PANE_H,
                  nc2_col_bg());
         nc2_draw_list();
+    } else if (g_mode == NC2_MODE_MANUAL) {
+        /* MANUAL is a machine panel: the pane carries the stops and the value
+           the keys change, the pad its jog keys, and there is no drawing - the
+           machine's own figures are the DRO's. */
+        nc2_draw_panes();
+        nc2_manual_draw_pane(NC2_LEFT_PANE_X, NC2_PANE_Y, NC2_LEFT_PANE_W,
+                             NC2_PANE_H);
+        if (nc2_state_busy() || nc2_run_active() || nc2_run_hold() ||
+            nc2_run_error()) {
+            nc2_draw_dro();
+        }
+        nc2_draw_pad_band();
     } else {
         nc2_draw_panes();
         nc2_draw_program();
@@ -797,7 +901,8 @@ void nc2_visual_draw(void)
 bool nc2_visual_periodic_needed(void)
 {
     return nc2_boot_active() || nc2_state_busy() || nc2_run_active() ||
-           nc2_run_hold() || nc2_run_error() || g_doc.dirty;
+           nc2_run_hold() || nc2_run_error() || g_doc.dirty ||
+           g_mode == NC2_MODE_MANUAL;   /* the flash, and a held feed */
 }
 
 size_t nc2_visual_usage(const char *const **lines)
@@ -817,6 +922,15 @@ size_t nc2_visual_usage(const char *const **lines)
         "4 HOLD (again resumes)  5 STOP.",
         "B/C pick the line, # reload, 0 files."
     };
+    static const char *const manual[] = {
+        "Jog the machine by hand.",
+        "Digits jog: 2/8 X, 4/6 Z.",
+        "7/9 spindle CCW/CW, 5 stop.",
+        "1/3 change the step or the feed.",
+        "# swaps step for feeding.",
+        "* types the stops, D touches off,",
+        "0 zeroes the axis, B/C pick it."
+    };
     static const char *const files[] = {
         "Pick a program from the card.",
         "B/C step the list, D opens.",
@@ -832,6 +946,9 @@ size_t nc2_visual_usage(const char *const **lines)
     if (g_list) {
         table = files;
         count = sizeof(files) / sizeof(files[0]);
+    } else if (g_mode == NC2_MODE_MANUAL) {
+        table = manual;
+        count = sizeof(manual) / sizeof(manual[0]);
     } else if (g_mode == NC2_MODE_RUN) {
         table = run;
         count = sizeof(run) / sizeof(run[0]);
@@ -861,6 +978,24 @@ bool nc2_visual_key_meaning(char key, nc2_visual_key_meaning_t *meaning)
         case '6': meaning->label = "delete"; break;
         case '8': meaning->label = "refresh"; break;
         case '0': meaning->label = "back"; break;
+        default: return false;
+        }
+        return true;
+    }
+    if (g_mode == NC2_MODE_MANUAL) {
+        if (key >= '1' && key <= '9') {
+            meaning->label = nc2_manual_pad_label(key);
+            meaning->on_menu = true;
+            return true;
+        }
+        switch (key) {
+        case '#': meaning->label = "step/feed"; break;
+        case '*': meaning->label = "stops"; break;
+        case 'D': meaning->label = "touch"; break;
+        case '0': meaning->label = "zero"; break;
+        case 'A': meaning->label = "edit"; break;
+        case 'B': meaning->label = "axis X"; meaning->step = true; break;
+        case 'C': meaning->label = "axis Z"; meaning->step = true; break;
         default: return false;
         }
         return true;

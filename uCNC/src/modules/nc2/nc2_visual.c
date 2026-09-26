@@ -201,6 +201,11 @@ const char *nc2_visual_path(void)
     return g_doc.path;
 }
 
+size_t nc2_visual_cursor(void)
+{
+    return g_doc.cursor;
+}
+
 const char *nc2_visual_screen_name(void)
 {
     if (g_list) {
@@ -678,9 +683,15 @@ static void nc2_draw_program(void)
     size_t i;
 
     if (g_mode == NC2_MODE_RUN) {
+        mark = nc2_visual_run_line();
+    }
+    /* The line in play heads a path: the cycle's rows are the pale mark beside
+       it, on the run screen and in the editor alike - the editor is where the
+       program is read, so the block the cursor sits in is the first thing its
+       own screen should say. */
+    {
         g7x_doc_t view = nc2_document_g7x(&g_doc);
 
-        mark = nc2_visual_run_line();
         have_path = g7x_doc_line_path(&view, mark, &path_first, &path_last);
     }
     if (mark >= NC2_CODE_ROWS) {

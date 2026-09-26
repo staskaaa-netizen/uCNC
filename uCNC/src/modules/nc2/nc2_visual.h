@@ -4,6 +4,7 @@
 #include "nc2_state.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 
 /* nc2's screen: the program, and the 3x3 pad pinned in the bottom right corner.
 
@@ -27,6 +28,8 @@ bool nc2_visual_open(const char *path);
 bool nc2_visual_save(void);
 /* The file in play, "" when there is none. */
 const char *nc2_visual_path(void);
+/* The line the editor's cursor is on, for a shell that reads the screen back. */
+size_t nc2_visual_cursor(void);
 /* What the screen is showing, for a shell that names it: `EDIT`, and `FILES`
    while the card's list is up. */
 const char *nc2_visual_screen_name(void);

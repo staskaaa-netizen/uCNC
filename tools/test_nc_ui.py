@@ -424,6 +424,48 @@ if __name__ == "__main__":
         fail("FAIL nc2's TOOLS does not edit the tool table as a file",
              run.stdout[-1500:] or run.stderr[-1500:])
 
+    # nc2's marks, read off the glass: the bright line and the pale block around
+    # it, on both code screens.
+    root = OUT / "block2-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--block2test"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "block2test: PASS" not in run.stdout:
+        fail("FAIL nc2 does not mark the line and its block on the glass",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
+    # nc2's DRO: up only while the machine is busy, green while it runs, red for
+    # a fault, with the state said once.
+    root = OUT / "label2-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--label2test"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "label2test: PASS" not in run.stdout:
+        fail("FAIL nc2's DRO is not the one place the state is said",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
+    # nc2's pacer: one unit at a time, and the mark never ahead of the sender.
+    root = OUT / "pace2-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--pace2test"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "pace2test: PASS" not in run.stdout:
+        fail("FAIL nc2's sender does not wait for the machine",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
+    # the demo the release carries, read the way nc2 reads it.
+    root = OUT / "demo2-root"
+    shutil.rmtree(root, ignore_errors=True)
+    run = subprocess.run([str(exe), "--files", str(root), "--demo2test"],
+                         capture_output=True, text=True)
+    print(run.stdout.strip())
+    if run.returncode or "demo2test: PASS" not in run.stdout:
+        fail("FAIL nc2 does not read the demo it ships",
+             run.stdout[-1500:] or run.stderr[-1500:])
+
     # The operator's own program and tool table, kept with the NC module
     # (uCNC/src/modules/nc/tests/fixtures). Copied into a scratch root because
     # the firmware writes its state next to them, then checked through the

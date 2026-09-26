@@ -11,6 +11,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 
 /* windows.h defines FORCEINLINE with a storage class, which clashes with the
    core's `static FORCEINLINE` declarations. Parse windows.h first, then let the
@@ -2819,6 +2820,516 @@ static int host_tools2test(void)
     return 0;
 }
 
+/* The colour most of one code-pane row's text band carries - nc2's layout this
+   time (`nc2_layout.h`), the same way `host_pane_row_bg()` reads nc's. */
+static uint32_t host_pane2_row_bg(int row)
+{
+    uint32_t seen[8];
+    int counts[8];
+    int distinct = 0;
+    int best = -1;
+    int y = NC2_PANE_Y + 4 + row * NC2_ROW_H + NC2_ROW_H / 2;
+    int x0 = NC2_LEFT_PANE_X + NC2_LINE_NO_PAD +
+             4 * nc2_col_width(LVDS_FONT_NORMAL);
+    int x;
+
+    for (x = x0; x < NC2_LEFT_PANE_X + NC2_LEFT_PANE_W - 6; x++) {
+        uint32_t c = host_frame_at(x, y);
+        int i;
+
+        for (i = 0; i < distinct; i++) {
+            if (seen[i] == c) {
+                counts[i]++;
+                break;
+            }
+        }
+        if (i != distinct) {
+            continue;
+        }
+        if (distinct < (int)(sizeof(seen) / sizeof(seen[0]))) {
+            seen[distinct] = c;
+            counts[distinct] = 1;
+            distinct++;
+        }
+    }
+    for (x = 0; x < distinct; x++) {
+        if (best < 0 || counts[x] > counts[best]) {
+            best = x;
+        }
+    }
+    return best < 0 ? 0u : seen[best];
+}
+
+/* nc2's marks, read off the glass: in EDIT the cursor's row is the bright
+   selection and the block it heads is pale around it; in RUN the line in play is
+   bright and its block pale, and everything outside both is the pane's own
+   ground. A mark the snapshot carries but the pane never paints would pass a
+   check on the document and still not be there, so this reads the frame. */
+static int host_block2test(void)
+{
+    static const char *const program = "/D/nc/files/block2.nc";
+    static const char *const text =
+        "G0 X52 Z2\n"
+        "G71 U2 R1 X1 Z1 F500 P10 Q20\n"
+        "N10 G1 X50 Z2\n"
+        "G1 X40 Z2 C2\n"
+        "N20 G1 X40 Z-20\n"
+        "G70 P10 Q20\n"
+        "G1 X60 Z5\n";
+    nc2_document_t doc;
+    g7x_doc_t view;
+    size_t first = 0u;
+    size_t last = 0u;
+    uint32_t select_rgb;
+    uint32_t block_rgb;
+    uint32_t bg_rgb;
+    int failures = 0;
+    int row;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!host_fs_write_text(program, text)) {
+        puts("block2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    if (!nc2_visual_open(program)) {
+        puts("block2test: FAIL the fixture does not load");
+        return 1;
+    }
+    nc2_document_init(&doc);
+    (void)nc2_file_load(&doc, program);
+    view = nc2_document_g7x(&doc);
+    if (!g7x_doc_line_path(&view, 3u, &first, &last)) {
+        puts("block2test: FAIL the fixture has no block around line 4");
+        return 1;
+    }
+    select_rgb = host_panel_rgb(nc2_col_select());
+    block_rgb = host_panel_rgb(nc2_col_block());
+    bg_rgb = host_panel_rgb(nc2_col_bg());
+    if (block_rgb == bg_rgb || block_rgb == select_rgb) {
+        puts("block2test: FAIL the block colour is not a mark of its own");
+        return 1;
+    }
+
+    /* EDIT: walk the cursor onto a row inside the cycle and read every row. */
+    while (nc2_visual_cursor() < 3u) {
+        nc2_visual_key('C');
+    }
+    nc2_visual_draw();
+    for (row = 0; row <= (int)last; row++) {
+        uint32_t got = host_pane2_row_bg(row);
+        bool want_select = (size_t)row == 3u;
+        bool want_block = !want_select && (size_t)row >= first && (size_t)row <= last;
+
+        if (want_select && got != select_rgb) {
+            printf("block2test: FAIL EDIT row %d is 0x%06lX, not the "
+                   "selection colour\n", row + 1, (unsigned long)got);
+            failures++;
+        } else if (want_block && got != block_rgb) {
+            printf("block2test: FAIL EDIT row %d is 0x%06lX, not the block "
+                   "colour\n", row + 1, (unsigned long)got);
+            failures++;
+        } else if (!want_select && !want_block && got != bg_rgb) {
+            printf("block2test: FAIL EDIT row %d is 0x%06lX, not the pane's "
+                   "ground\n", row + 1, (unsigned long)got);
+            failures++;
+        }
+    }
+
+    /* RUN: the same two colours, with the line in play taken from the sender -
+       the row the mark names - and nothing outside the block carrying the pale
+       one. */
+    nc2_visual_select_mode(NC2_MODE_RUN);
+    nc2_run_reset();
+    while (nc2_run_display_line() < 3u) {
+        nc2_visual_key('C');
+    }
+    nc2_visual_draw();
+    for (row = 0; row <= (int)last; row++) {
+        uint32_t got = host_pane2_row_bg(row);
+        bool want_select = (size_t)row == 3u;
+        bool want_block = !want_select && (size_t)row >= first && (size_t)row <= last;
+
+        if (want_select && got != select_rgb) {
+            printf("block2test: FAIL RUN row %d is 0x%06lX, not the "
+                   "selection colour\n", row + 1, (unsigned long)got);
+            failures++;
+        } else if (want_block && got != block_rgb) {
+            printf("block2test: FAIL RUN row %d is 0x%06lX, not the block "
+                   "colour\n", row + 1, (unsigned long)got);
+            failures++;
+        } else if (!want_select && !want_block && got != bg_rgb) {
+            printf("block2test: FAIL RUN row %d is 0x%06lX, not the pane's "
+                   "ground\n", row + 1, (unsigned long)got);
+            failures++;
+        }
+    }
+
+    if (failures) {
+        printf("block2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("block2test: PASS the bright line and the pale block around it are on "
+         "the glass, on both code screens");
+    return 0;
+}
+
+/* nc2's DRO, read off the glass: it is a band floating over the preview that is
+   there only while the machine has something to say, it wears the panel's green
+   while it runs and its red for a fault, and the machine's state word is on it.
+   The state is said *once* - the header band never carries it (the bench's "i do
+   see idle in two places ... only this one should remain"). */
+static int host_label2test(void)
+{
+    static const char *const program = "/D/nc/files/label2.nc";
+    static const char *const text =
+        "G0 X52 Z2\n"
+        "G1 X1 Y1 F500\n"
+        "M5\n";
+    uint32_t run_rgb = host_panel_rgb(nc2_col_run());
+    uint32_t err_rgb = host_panel_rgb(nc2_col_error());
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!host_fs_write_text(program, text)) {
+        puts("label2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    if (!nc2_visual_open(program)) {
+        puts("label2test: FAIL the fixture does not load");
+        return 1;
+    }
+    nc2_visual_select_mode(NC2_MODE_RUN);
+    host_pump_idle(32u);
+
+    /* Idle: there is no DRO at all, so the drawing keeps the whole preview. */
+    nc2_visual_draw();
+    if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) == run_rgb ||
+        host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) == err_rgb) {
+        puts("label2test: FAIL the DRO is up on an idle machine");
+        failures++;
+    }
+
+    /* Running: the band is green, it is inside the preview pane (the header band
+       keeps its own colour - the state is not said twice), and the word is
+       drawn on it. */
+    nc2_visual_key('3');
+    host_pump(1u);
+    nc2_visual_draw();
+    if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) != run_rgb) {
+        puts("label2test: FAIL a running DRO is not green");
+        failures++;
+    } else if (host_frame_at(2, 2) == run_rgb ||
+               host_frame_at(2, 2) == err_rgb) {
+        puts("label2test: FAIL the header band wears the DRO's colour");
+        failures++;
+    } else {
+        puts("label2test: the DRO is green while the machine is in a run");
+    }
+
+    /* A fault takes the band over: red with the state word still on it, and the
+       green gone - a machine stopped by a problem must not still say "running".
+       The alarm is the machine's own, raised here rather than read from a run
+       that has to be timed. */
+    nc2_run_reset();
+    host_pump_idle(64u);
+    cnc_alarm(EXEC_ALARM_HARD_LIMIT);
+    nc2_visual_draw();
+    if (!cnc_has_alarm()) {
+        puts("label2test: FAIL the alarm did not hold");
+        failures++;
+    } else if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) != err_rgb) {
+        printf("label2test: FAIL a faulted DRO is 0x%06lX, not the fault "
+               "colour\n",
+               (unsigned long)host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3));
+        failures++;
+    } else if (host_frame_at(NC2_DRO_X + 3, NC2_DRO_Y + 3) == run_rgb) {
+        puts("label2test: FAIL the faulted DRO is still green");
+        failures++;
+    } else {
+        int x;
+        bool ink = false;
+
+        /* The state word is drawn on the red: any pixel in the band that is not
+           the fault colour is the word's ink - the DRO has no other content on
+           its last row. */
+        for (x = NC2_DRO_X + 6; x < NC2_DRO_X + NC2_DRO_W - 6; x++) {
+            if (host_frame_at(x, NC2_DRO_Y + 50) != err_rgb ||
+                host_frame_at(x, NC2_DRO_Y + 54) != err_rgb) {
+                ink = true;
+                break;
+            }
+        }
+        if (!ink) {
+            puts("label2test: FAIL the faulted DRO lost its state word");
+            failures++;
+        } else {
+            puts("label2test: the fault takes the DRO over in red");
+        }
+    }
+    cnc_alarm(EXEC_ALARM_NOALARM);
+
+    if (failures) {
+        printf("label2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("label2test: PASS the DRO is up only while the machine is busy, and "
+         "the state is said once");
+    return 0;
+}
+
+/* nc2's pacer: a *unit* is what runs as one thing, and a new unit may only be
+   handed over when the machine has finished the last one. A contour's own lines
+   are the exception - they are one cut - and the mark may never name a line the
+   sender has not handed over. What it proves is ordering; the motion is the
+   machine's. */
+static int host_pace2test(void)
+{
+    static const char *const program = "/D/nc/files/pace2.nc";
+    static const char *const text =
+        "G0 X52 Z2\n"
+        "G71 U1 R0.2 X0.5 Z0.5 F450 P10 Q20\n"
+        "N10 G1 X30 Z0\n"
+        "G1 X30 Z-15 C0 R0\n"
+        "N20 G1 X35 Z-25\n"
+        "G70 P10 Q20\n"
+        "G0 X80 Z0\n";
+    nc2_document_t doc;
+    nc2_runtime_state_t rt;
+    size_t prev_now = 0u;
+    unsigned guard;
+    int failures = 0;
+
+    host_fs_mount(g_files_root[0] ? g_files_root : NULL);
+    host_init_core();
+    if (!host_fs_write_text(program, text)) {
+        puts("pace2test: FAIL cannot write the fixture");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    if (!nc2_visual_open(program)) {
+        puts("pace2test: FAIL the fixture does not load");
+        return 1;
+    }
+    nc2_document_init(&doc);
+    (void)nc2_file_load(&doc, program);
+    nc2_visual_select_mode(NC2_MODE_RUN);
+    host_pump_idle(32u);
+
+    nc2_visual_key('3');                    /* FULL */
+    prev_now = nc2_run_line();
+    for (guard = 0u; guard < 200000u; guard++) {
+        bool expanding_before = nc2_run_expanding();
+        bool idle_at_pacer;
+        size_t now;
+
+        /* The main loop's two halves, so the machine's state can be read where
+           the pacer reads it - between the parse and the tasks - instead of once
+           per pump, where a unit that ended inside the pump would look like one
+           that had not. */
+        (void)cnc_parse_cmd();
+        idle_at_pacer = host_machine_idle() && !grbl_stream_available();
+        cnc_dotasks();
+        nc_visual_idle_tasks();
+        mcu_unit_test_advance_time(1000u);
+        now = nc2_run_line();
+        if (nc2_run_streaming() && now > prev_now) {
+            size_t at = now > 0u ? now - 1u : 0u;
+            size_t mark;
+
+            if (at >= doc.line_count) {
+                at = doc.line_count - 1u;
+            }
+            /* A line may only be handed over while the machine is still running
+               when it belongs to a block the sender is expanding - a contour is
+               one cut. A plain line is a unit of its own and waits. */
+            if (!idle_at_pacer && !expanding_before) {
+                printf("pace2test: FAIL line %u was handed over while the "
+                       "machine was still running\n", (unsigned)(at + 1u));
+                failures++;
+                break;
+            }
+            /* The mark is a line the sender has already handed over. */
+            mark = nc2_run_display_line();
+            if (mark > at) {
+                printf("pace2test: FAIL the pane marks line %u while the sender "
+                       "has handed over up to %u\n",
+                       (unsigned)(mark + 1u), (unsigned)(at + 1u));
+                failures++;
+                break;
+            }
+        }
+        prev_now = now;
+        if (!nc2_run_streaming() && host_machine_idle()) {
+            break;
+        }
+    }
+    if (nc2_run_streaming()) {
+        puts("pace2test: FAIL the run never ended");
+        failures++;
+    }
+    /* The machine ran the program: the last line sends it to `X80 Z0`, which is
+       X40 on the axis - the program's X is a diameter and the axis works in the
+       radius. */
+    host_pump_idle(64u);
+    nc2_state_runtime(&rt);
+    printf("pace2test: the run ended at X%.3f Z%.3f, sender line %u\n",
+           (double)rt.x, (double)rt.z, (unsigned)(nc2_run_line() + 1u));
+    if (fabs((double)rt.x - 40.0) > 0.5 || fabs((double)rt.z) > 0.5) {
+        printf("pace2test: FAIL the machine did not reach the program's end\n");
+        failures++;
+    }
+
+    if (failures) {
+        printf("pace2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("pace2test: PASS one unit at a time, and the mark never runs ahead of "
+         "what was handed over");
+    return 0;
+}
+
+/* The demo the release carries, read the way nc2 reads it: a fresh card is
+   seeded from `examples\` exactly once, the sample loads, scans as the two
+   numbered `G71` ranges with their `G70` finish cuts, and expands; and the
+   entries are files, so what a key writes is the card's own row. */
+static int host_demo2test(void)
+{
+    static const char *const examples = "tools/nc_ui_win/examples";
+    static const char *const program = "/D/nc/files/lathe-demo.nc";
+    char expanded[4096];
+    nc2_document_t doc;
+    size_t blocks = 0u;
+    size_t finishes = 0u;
+    size_t i;
+    int copied;
+    int failures = 0;
+
+    copied = host_seed_card(g_files_root, examples);
+    printf("demo2test: seeded the empty card with %d files\n", copied);
+    if (copied != 2) {
+        puts("demo2test: FAIL the card was not seeded from the examples");
+        return 1;
+    }
+    copied = host_seed_presets(g_files_root, examples);
+    printf("demo2test: seeded %d preset files\n", copied);
+    if (copied < 10) {
+        puts("demo2test: FAIL the entries were not seeded as files");
+        return 1;
+    }
+    host_init_core();
+    /* The card's own entry is what a key writes, not a compiled table. */
+    if (!host_fs_write_text("/D/presets/41.txt", "OD ROUGH\n G1 X50 Z2\n")) {
+        puts("demo2test: FAIL cannot write the card's own entry");
+        return 1;
+    }
+    nc2_visual_init();
+    nc2_visual_tick(4000u);
+    if (!nc2_visual_open(program)) {
+        puts("demo2test: FAIL the demo does not load");
+        return 1;
+    }
+    nc2_document_init(&doc);
+    if (!nc2_file_load(&doc, program) || doc.line_count == 0u) {
+        printf("demo2test: FAIL the demo does not load (%u lines)\n",
+               (unsigned)doc.line_count);
+        return 1;
+    }
+    printf("demo2test: the demo is %u lines\n", (unsigned)doc.line_count);
+    {
+        g7x_doc_t view = nc2_document_g7x(&doc);
+
+        for (i = 0u; i < doc.line_count; i++) {
+            uint32_t p = 0u;
+            uint32_t q = 0u;
+            size_t first = 0u;
+            size_t last = 0u;
+            char upper[8];
+            const char *line = doc.lines[i];
+
+            while (*line == ' ') {
+                line++;
+            }
+            if (*line == 'N') {
+                line++;
+                while (*line >= '0' && *line <= '9') {
+                    line++;
+                }
+                while (*line == ' ') {
+                    line++;
+                }
+            }
+            upper[0] = (char)toupper((unsigned char)line[0]);
+            upper[1] = (char)toupper((unsigned char)line[1]);
+            upper[2] = (char)toupper((unsigned char)line[2]);
+            upper[3] = '\0';
+            if (g7x_doc_line_is_header(line)) {
+                blocks++;
+                if (!g7x_doc_block_containing(&view, i, &first, &last) ||
+                    first != i || last <= i) {
+                    printf("demo2test: FAIL the cycle on line %u has no block\n",
+                           (unsigned)(i + 1u));
+                    failures++;
+                    continue;
+                }
+                if (!g7x_doc_line_range(line, &p, &q)) {
+                    printf("demo2test: FAIL the cycle on line %u names no range\n",
+                           (unsigned)(i + 1u));
+                    failures++;
+                }
+                i = last;                 /* the block owns its rows */
+                continue;
+            }
+            if (strcmp(upper, "G70") == 0) {
+                finishes++;
+            }
+        }
+    }
+    if (blocks != 2u || finishes != 2u) {
+        printf("demo2test: FAIL the demo has %u cycles and %u finish cuts\n",
+               (unsigned)blocks, (unsigned)finishes);
+        failures++;
+    }
+    if (!host_nc2_expand(&doc, 0u, expanded, sizeof(expanded), NULL, NULL) ||
+        !strstr(expanded, "G1 ")) {
+        puts("demo2test: FAIL the demo does not expand");
+        failures++;
+    }
+
+    /* A pad press writes the card's own entry, not a table compiled in. */
+    nc2_visual_key('4');
+    nc2_visual_key('1');
+    if (!nc2_visual_save()) {
+        puts("demo2test: FAIL the program could not be written back");
+        failures++;
+    } else {
+        char written[1024];
+
+        if (!host_fs_read_text(program, written, sizeof(written)) ||
+            !strstr(written, "G1 X50 Z2")) {
+            printf("demo2test: FAIL the card's entry is not in \"%s\"\n",
+                   written);
+            failures++;
+        } else {
+            puts("demo2test: the key wrote the card's own entry");
+        }
+    }
+
+    if (failures) {
+        printf("demo2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("demo2test: PASS the demo seeds a fresh card, scans as two cycles and "
+         "expands, and the entries are files");
+    return 0;
+}
+
 /* nc2's value editor: a line is cut into fields at its letters, the keys walk
    them, and what is typed replaces the value that was there. The dumb editor the
    bench asked for, so the checks are about its two rules - where a field begins
@@ -5530,6 +6041,14 @@ int host_tests_run(int argc, char **argv)
             return host_manual2test();
         if (strcmp(argv[i], "--tools2test") == 0)
             return host_tools2test();
+        if (strcmp(argv[i], "--block2test") == 0)
+            return host_block2test();
+        if (strcmp(argv[i], "--label2test") == 0)
+            return host_label2test();
+        if (strcmp(argv[i], "--pace2test") == 0)
+            return host_pace2test();
+        if (strcmp(argv[i], "--demo2test") == 0)
+            return host_demo2test();
         if (strcmp(argv[i], "--dirtytest") == 0)
             return host_dirtytest();
         if (strcmp(argv[i], "--runtest") == 0)

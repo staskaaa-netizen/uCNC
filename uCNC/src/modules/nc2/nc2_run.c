@@ -421,6 +421,11 @@ bool nc2_run_streaming(void)
     return g_nc2_run_program_active;
 }
 
+bool nc2_run_expanding(void)
+{
+    return g_nc2_run_stream.g7x.active || g_nc2_run_stream.g7x_collecting;
+}
+
 bool nc2_run_send_line(const char *line)
 {
     if (!nc2_run_line_sendable(line)) {

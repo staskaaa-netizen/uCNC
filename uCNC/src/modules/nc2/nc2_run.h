@@ -41,6 +41,9 @@ bool nc2_run_hold(void);
 bool nc2_run_done(void);
 /* True while a program run is armed - a panel block must not cut into it. */
 bool nc2_run_streaming(void);
+/* True while the pacer is expanding a block: its lines go out back to back,
+   because a contour is one cut, without a wait between rows. */
+bool nc2_run_expanding(void);
 /* The sender's position, and the line the pane marks (the unit in play, kept
    until the operator takes the cursor). */
 size_t nc2_run_line(void);

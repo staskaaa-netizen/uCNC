@@ -113,6 +113,14 @@ explicit (the wasted moves were visible on the machine):
   boundary when a full depth of cut would cross it, so the last roughing pass
   leaves exactly what the allowance reserved instead of stopping a whole step
   short and handing that step to the finish cut.
+- **And it has to *follow the profile*, which it does not yet.** The level
+  landing on the allowance only fixes the level; the pass is still a plunge in X
+  and one feed in Z to a single hit point, so it is a staircase parallel to Z and
+  *between* two levels the material left is up to a whole pass depth more than
+  the `X`/`Z` on the block asked for (bench: *"the leftovers is [the] same as
+  asked in x and z inputs ... this one is a regression. it was fixed before"* -
+  the reference is `remap.py`, which offsets the contour and takes each pass
+  from that offset path; the port is open in `TODO.md`).
 
 ### Fanuc headers and numbered P/Q ranges
 

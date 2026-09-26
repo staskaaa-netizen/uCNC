@@ -44,6 +44,39 @@ software-tested, not physically validated on a machine.
   above emits `(G71 rough X15.250)` / `G1 X30.500 F120.000` and
   `(G72 rough Z-9.500)` as its last roughing passes. `test_allowance_approach()`
   pins both, in both Z directions.
+- [ ] **The roughing passes must follow the profile - the leftover has to be the
+  X and Z the block was given, not "less than the pass depth".** The pass level
+  fix above only puts the *level* on the allowance; the pass itself is still a X
+  plunge followed by one Z feed to a single hit point, i.e. a staircase parallel
+  to Z. So between two levels the material left is up to a whole pass depth more
+  than the allowance asks for, and the automatic finish takes it. Measured off
+  the demo card's own expansion (`G971 X50 Z50`, `G71 U3 R1 X1 Z1 ... P50 Q55`
+  over X30..X52): passes at X46/40/34/31 stopping at Z-20.471/-16.941/-14.000/
+  -12.500, so at Z-20 the boundary is still X46 while the profile there is
+  X43.5 and the allowance asks X44.5 - 1.5 mm of diameter the `X1 Z1` never
+  asked for. The bench: *"g7x expandned paths are wrong in this way, they should
+  stop not then [the] leftover is < [the] U - passdepth, but [when the] leftovers
+  is [the] same as asked in x and z inputs ... this one is a regression. it was
+  fixed before."*
+
+  **The reference is in the tree**: `remap.py` (the LinuxCNC-style G71 remap this
+  module was ported from) does not stair-step at all. It **offsets the collected
+  contour** - lines shifted along their normal, arcs by moving the centre and
+  adjusting the radius, with each join trimmed to the neighbours' intersection
+  (`Find_intersect`) - and then sweeps a tool segment in X by the depth `D`,
+  taking the **intersections with that offset contour at each level** as the
+  pass. Every pass therefore follows the shape, and what is left is the
+  allowance the block asked for, all the way along it.
+
+  To port: the C generator has the collected elements already
+  (`region.elements`, radii internally), so this is an offsetting pass over them
+  (line normal shift, arc centre shift, join trim) and then the per-level
+  intersection walk - plus the pass entry/exit rapids and the end-of-cycle
+  clearance point that already exist. It changes the emitted expansions, so the
+  goldens in `tools/test_g7x.py`, the station's `--emit2test`, the demo's own
+  expected lines and this README's "what the generated cycle moves" section all
+  move with it. Do not half-land it: the offset must be right for lines, arcs,
+  chamfers and radii, and the pass tests written against `remap.py`'s numbers.
 - [x] **Where a cycle leaves the tool.** After the wasted-move report (2026-09-21)
   a block ends on the X retract at the last cut's Z, so it does **not** come back
   to the `G0` the program made before the cycle - which is where Fanuc leaves the

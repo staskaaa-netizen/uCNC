@@ -10,6 +10,7 @@
 #include "nc2_presets.h"
 #include "nc2_run.h"
 #include "nc2_state.h"
+#include "nc2_vocab.h"
 
 #include "../../cnc.h"
 #include "../../core/interpolator.h"
@@ -727,14 +728,17 @@ static void nc2_draw_header(void)
             x += 10;
         }
         w = nc2_text_width(names[i], LVDS_FONT_NORMAL);
-        /* The active screen is the bright one, and is underlined: at a glance,
-           on a panel that may be at an angle, "which screen am I on" is one
-           word and one line. */
-        nc2_text(x, y, names[i], active ? nc2_col_text() : nc2_col_dim(),
-                 nc2_col_header(), LVDS_FONT_NORMAL);
+        /* The screen in play wears the block, the way nc's tabs did: its name on
+           the panel's own selection colour, so "which screen am I on" is a shape
+           and not a word to read (bench: "marking manual tools run with line but
+           not with full yellow background as it was before"). */
         if (active) {
-            nc2_hline(x, y + 16, w, nc2_col_accent());
+            nc2_fill(x - 6, 1, w + 12, NC2_HEADER_H - 2, nc2_col_select());
         }
+        nc2_text(x, y, names[i],
+                 active ? nc2_col_field_fg() : nc2_col_dim(),
+                 active ? nc2_col_select() : nc2_col_header(),
+                 LVDS_FONT_NORMAL);
         x += w;
     }
 
@@ -869,6 +873,33 @@ static void nc2_draw_program(void)
         bool path = have_path && i >= path_first && i <= path_last && !selected;
 
         nc2_draw_row(i, NC2_PANE_Y + 4 + (int)(i - first) * NC2_ROW_H, selected, path);
+    }
+    /* The legend of the word being read, on the row above the cursor's - the
+       row the operator's eye is already on, so the meaning of the word they are
+       typing is where they are looking (bench: "on edit - no legend in top
+       row"). On the first row of the pane there is no row above, so it takes the
+       pane's own top line, as nc's did. A run draws none: nothing is being typed
+       there. */
+    if (g_mode != NC2_MODE_RUN && g_doc.field >= 0) {
+        nc2_field_t fields[NC2_MAX_FIELDS];
+        int count = nc2_document_fields(&g_doc, fields, NC2_MAX_FIELDS);
+
+        if (g_doc.field < count) {
+            int at = (int)(g_doc.cursor - first);
+            int hint_y = at > 0 ? NC2_PANE_Y + 4 + (at - 1) * NC2_ROW_H
+                                : NC2_PANE_Y + 4;
+            char text[48];
+            int cols = (NC2_LEFT_PANE_W - NC2_LINE_TEXT_PAD - 4) /
+                       nc2_col_width(LVDS_FONT_NORMAL);
+
+            snprintf(text, sizeof(text), ">  %s",
+                     nc2_vocab_label(g_doc.lines[g_doc.cursor],
+                                     &fields[g_doc.field]));
+            nc2_fill(NC2_LEFT_PANE_X, hint_y - 2, NC2_LEFT_PANE_W - 2,
+                     NC2_ROW_H - 2, nc2_col_bg());
+            nc2_text_clip(NC2_LEFT_PANE_X + NC2_LINE_TEXT_PAD, hint_y, text, cols,
+                          nc2_col_accent(), nc2_col_bg(), LVDS_FONT_NORMAL);
+        }
     }
 }
 

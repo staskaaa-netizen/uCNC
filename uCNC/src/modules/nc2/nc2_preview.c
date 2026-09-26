@@ -41,7 +41,13 @@ typedef enum {
 static int nc2_map_x(const nc2_preview_info_t *p, int stock_top, int stock_h,
                      float x)
 {
-    float f = x / (p->stock_x * 0.5f);
+    /* A program's X is a **diameter** (the lathe's own frame, Fanuc's G7) and
+       the drawing is a radius: the stock's own X is a diameter too, and it fills
+       the stock's half-height. nc's `nc_preview_map_x()` halved the value before
+       fitting it, and the port dropped the halving - so the stock came out right
+       and the profile came out **twice its size** (bench: "stock is drawn as it
+       should, path is in full sizes"). */
+    float f = (x * 0.5f) / (p->stock_x * 0.5f);
 
     return stock_top + (int)(f * (float)stock_h + 0.5f);
 }

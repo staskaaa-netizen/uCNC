@@ -35,6 +35,7 @@
 #include "nc2_run.h"
 #include "nc2_state.h"
 #include "nc2_visual.h"
+#include "nc2_vocab.h"
 #include "g7x.h"
 #include "host_fs.h"
 #include "host_spindle.h"
@@ -2733,6 +2734,72 @@ static int host_walk2test(void)
     return 0;
 }
 
+/* The legend: what the word the cursor is on means.
+
+   The editor cuts a line into fields at its letters and knows nothing more, so
+   the meaning is a table (`nc2_vocab.c`, the one nc kept). It is what the editor
+   shows on the row above the cursor, and a word the panel's own entries write
+   must not read as "NC word". */
+static int host_vocab2test(void)
+{
+    static const struct {
+        const char *line;
+        char letter;
+        const char *want;
+    } cases[] = {
+        { "G71 U3 R1 X1 Z1 F500 P50 Q55", 'U', "Depth/pass" },
+        { "G71 U3 R1 X1 Z1 F500 P50 Q55", 'R', "Retract" },
+        { "G71 U3 R1 X1 Z1 F500 P50 Q55", 'P', "Profile start block" },
+        { "G70 P50 Q55", 'Q', "Profile end block" },
+        { "G1 X30 Z2", 'X', "X position" },
+        { "G1 X30 Z2", 'Z', "Z position" },
+        { "G1 W-25", 'W', "Z increment" },
+        { "N50 G1 X30 Z2", 'N', "Block number" },
+        { "G970 X-5 U60 Z-60 W5", 'U', "Preview max X" },
+        { "G971 X50 Z50 I0 E0", 'X', "Stock OD" },
+        { "T2 R0.8 O3 F120", 'T', "Tool number" },
+        { "M3 S450", 'S', "Spindle speed" },
+        { "G76 X0 Z0 P0 Q0 F0 I0 L0 R0", 'L', "Spring passes" }
+    };
+    int failures = 0;
+    unsigned i;
+
+    for (i = 0u; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        nc2_field_t fields[NC2_MAX_FIELDS];
+        int count = nc2_fields(cases[i].line, fields, NC2_MAX_FIELDS);
+        int at;
+
+        for (at = 0; at < count; at++) {
+            if (fields[at].letter == cases[i].letter) {
+                break;
+            }
+        }
+        if (at == count) {
+            printf("vocab2test: FAIL \"%s\" has no %c\n", cases[i].line,
+                   cases[i].letter);
+            failures++;
+            continue;
+        }
+        {
+            const char *label = nc2_vocab_label(cases[i].line, &fields[at]);
+
+            if (!label || strcmp(label, cases[i].want)) {
+                printf("vocab2test: FAIL %c of \"%s\" is \"%s\", not \"%s\"\n",
+                       cases[i].letter, cases[i].line,
+                       label ? label : "(nothing)", cases[i].want);
+                failures++;
+            }
+        }
+    }
+
+    if (failures) {
+        printf("vocab2test: FAILED (%d)\n", failures);
+        return 1;
+    }
+    puts("vocab2test: PASS every word the panel writes is named for what it is");
+    return 0;
+}
+
 /* nc2's value editor: a line is cut into fields at its letters, the keys walk
    them, and what is typed replaces the value that was there. The dumb editor the
    bench asked for, so the checks are about its two rules - where a field begins
@@ -3331,6 +3398,8 @@ int host_tests_run(int argc, char **argv)
             return host_case2test();
         if (strcmp(argv[i], "--walk2test") == 0)
             return host_walk2test();
+        if (strcmp(argv[i], "--vocab2test") == 0)
+            return host_vocab2test();
         if (strcmp(argv[i], "--block2test") == 0)
             return host_block2test();
         if (strcmp(argv[i], "--label2test") == 0)

@@ -11,7 +11,14 @@ extern "C" {
 #endif
 
 #define LVDS_HSTX_WIDTH LVDS_WIDTH
-#define LVDS_HSTX_HEIGHT LVDS_HEIGHT
+/* The frame the scanout sends is the *glass* plus the spare active lines the
+   panel's close needs (`LVDS_PANEL_ACTIVE_HEIGHT`, the board's override): the
+   view below - and so every screen, and the station - stays the glass's own
+   600x800, and the spare lines carry the frame's blank tail. */
+#ifndef LVDS_PANEL_ACTIVE_HEIGHT
+#define LVDS_PANEL_ACTIVE_HEIGHT LVDS_HEIGHT
+#endif
+#define LVDS_HSTX_HEIGHT LVDS_PANEL_ACTIVE_HEIGHT
 
 /* The glass, and how it is mounted.
 
@@ -38,16 +45,16 @@ extern "C" {
 #endif
 
 #if LVDS_PANEL_TURN == 90
-#define LVDS_VIEW_WIDTH LVDS_HSTX_HEIGHT
+#define LVDS_VIEW_WIDTH LVDS_HEIGHT
 #define LVDS_VIEW_HEIGHT LVDS_HSTX_WIDTH
 #define LVDS_PANEL_X(vx, vy) (vy)
-#define LVDS_PANEL_Y(vx, vy) (LVDS_HSTX_HEIGHT - 1 - (vx))
+#define LVDS_PANEL_Y(vx, vy) (LVDS_HEIGHT - 1 - (vx))
 #define LVDS_PANEL_RECT_X(vx, vy, vw, vh) (vy)
-#define LVDS_PANEL_RECT_Y(vx, vy, vw, vh) (LVDS_HSTX_HEIGHT - ((vx) + (vw)))
+#define LVDS_PANEL_RECT_Y(vx, vy, vw, vh) (LVDS_HEIGHT - ((vx) + (vw)))
 #define LVDS_PANEL_RECT_W(vw, vh) (vh)
 #define LVDS_PANEL_RECT_H(vw, vh) (vw)
 #elif LVDS_PANEL_TURN == 270
-#define LVDS_VIEW_WIDTH LVDS_HSTX_HEIGHT
+#define LVDS_VIEW_WIDTH LVDS_HEIGHT
 #define LVDS_VIEW_HEIGHT LVDS_HSTX_WIDTH
 #define LVDS_PANEL_X(vx, vy) (LVDS_HSTX_WIDTH - 1 - (vy))
 #define LVDS_PANEL_Y(vx, vy) (vx)
@@ -57,7 +64,7 @@ extern "C" {
 #define LVDS_PANEL_RECT_H(vw, vh) (vw)
 #else
 #define LVDS_VIEW_WIDTH LVDS_HSTX_WIDTH
-#define LVDS_VIEW_HEIGHT LVDS_HSTX_HEIGHT
+#define LVDS_VIEW_HEIGHT LVDS_HEIGHT
 #define LVDS_PANEL_X(vx, vy) (vx)
 #define LVDS_PANEL_Y(vx, vy) (vy)
 #define LVDS_PANEL_RECT_X(vx, vy, vw, vh) (vx)
@@ -98,6 +105,12 @@ void lvds_hstx_present(void);
 
 lvds_color_t lvds_hstx_rgb565(uint16_t rgb565);
 lvds_color_t lvds_hstx_rgb(uint8_t r, uint8_t g, uint8_t b);
+/* Take the palette again: the sixteen slots are cleared and the next colour
+   asked for takes the first of them. A picture drawn before anything else -
+   the boot splash, `ncc_boot.c` - brings colours of its own, and this is how it
+   gives them back, so the screen that follows is drawn with its own sixteen
+   and not with what was left over. */
+void lvds_hstx_palette_reset(void);
 
 #ifdef __cplusplus
 }

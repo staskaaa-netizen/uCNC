@@ -119,6 +119,18 @@ extern "C"
 // Sharp LQ121S1LG44 native single-channel LVDS mode.
 #define LVDS_WIDTH 800
 #define LVDS_HEIGHT 600
+/* The glass is 800x600, but the frame carries four more **active** lines than
+   the glass shows. The bench's marker probe (2026-10-04) put five known
+   colours on the frame's last five lines and one came out **twice**: the close
+   of the active area repeats a line, whatever content is there - our content,
+   our blanking (an extra-blanking-line probe changed nothing) and the clock all
+   ruled out. The bench then walked the active height down: **602** shows an
+   extra black line, **603** and **604** are clean, **600** puts the repeat back
+   on the picture - so the close needs at least three tail lines, and four keeps
+   one line of margin. (Root cause still unknown: the panel/link repeats or eats
+   a line at the close of the active area.) The view, the layout and the station
+   stay the glass's own 600x800. */
+#define LVDS_PANEL_ACTIVE_HEIGHT 604
 #define LVDS_SYS_CLOCK_KHZ 280000
 #define LVDS_HSTX_PLL_KHZ 280000
 #define LVDS_HSTX_CLOCK_DIV 2

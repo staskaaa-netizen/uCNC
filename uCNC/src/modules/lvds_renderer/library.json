@@ -1,0 +1,27 @@
+{
+    "name": "lvds_renderer",
+    "version": "0.0.0",
+    "description": "RP2350 HSTX/LVDS scanout, palette and draw backend for the Sharp LQ121S1LG44 800x600 panel. The uCNC module and the reusable library are this one directory - exactly one copy of the sources, consumed by the machine build, by the desktop station and, from here, by anything else. Read LIMITS.md before using it anywhere new.",
+    "keywords": "lvds, hstx, rp2350, display, panel, ucnc",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/staskaaa-netizen/uCNC.git"
+    },
+    "frameworks": "*",
+    "platforms": "raspberrypi",
+    "headers": [
+        "lvds_hstx.h",
+        "lvds_draw_api.h",
+        "lvds_palette.h",
+        "lvds_psram.h",
+        "lvds_renderer_boot.h",
+        "lvds_fonts.h"
+    ],
+    "build": {
+        "srcDir": ".",
+        "srcFilter": [
+            "+<*.c>"
+        ]
+    }
+}

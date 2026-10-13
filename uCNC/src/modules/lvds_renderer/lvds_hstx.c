@@ -256,6 +256,14 @@ static void palette_reset(void)
     lvds_rebuild_lut();
 }
 
+/* The palette taken again by a caller above the renderer - see `lvds_hstx.h`.
+   The boot splash brings its own colours and hands them back through this, so
+   the screen that follows is drawn with its own sixteen. */
+void lvds_hstx_palette_reset(void)
+{
+    palette_reset();
+}
+
 static lvds_color_t palette_lookup(uint16_t rgb565)
 {
     uint32_t best_dist = 0xffffffffu;
@@ -370,7 +378,19 @@ static uint32_t lvds_hstx_line_addr_for_v(uint32_t v, bool *active_video, uint16
              * before the active region: the buffer carries DE, so a panel that
              * displays blanking lines shows this buffer's content above the
              * frame. Kept as it has always been; change it only with a panel
-             * check.
+             * check - and 2026-10-04's two bench probes narrowed exactly this
+             * line to the "close of the frame" fault (`README.md`, "Panel
+             * Alignment"): its buffer is *stale*, `g_active_line[0]` holding
+             * the last row computed into slot 0 (row 596 of a 600-row frame),
+             * so four more *active* lines move that content onto a blank extra
+             * line while four more *blanking* lines do not.
+             *
+             * The panel check was made: handing this line the inactive buffer -
+             * true blanking, nothing of the picture anywhere in the vertical
+             * blanking - changed nothing on the glass, so this line's content
+             * was never what the panel showed. It stays as it was: the fault is
+             * on the active area's own last lines, and the probe for that is
+             * the marker band in `ncc`'s frame edges.
              */
             return (uint32_t)(uintptr_t)g_active_line[0];
         }

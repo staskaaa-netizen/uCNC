@@ -31,7 +31,10 @@ static const lvds_palette_color_def_t g_color_def[LC_COLOR_COUNT] = {
     [red] = {"red", "#E60000"},
     [green] = {"green", "#24c863"},
     [white] = {"white", "#DDDDDD"},
-    [yellow_pale] = {"yellow_pale", "#fff701"},
+    /* `yellow_pale` was a second copy of `yellow` and no element used it. The
+       palette is full, so the free slot carries a real blue: the panel had none
+       and the frame probes wanted one (bench, 2026-10-04). */
+    [blue] = {"blue", "#3050C0"},
     [tool_orange] = {"tool_orange", "#EAFA41"},
     [red_bright] = {"red_bright", "#ff0000"},
     [green_bright] = {"green_bright", "#3eff24"},
@@ -92,7 +95,14 @@ static const lvds_palette_element_def_t g_element_def[LC_ELEM_COUNT] = {
     [LC_ELEM_LIVE_COLLISION] = {"live.collision", red},
 };
 
-static lvds_color_t g_color[LC_COLOR_COUNT];
+/* The colours as the panel reads them (5-6-5), and **not** palette slots: a slot
+   is taken when a colour is first *used*, never when this table is read. A
+   screen that brings colours of its own - the boot picture - has to find the
+   palette empty when it starts, or its colours land on whatever was parsed
+   before it. That is exactly how the picture came out in the panel's greys on
+   the glass while the host, which had no palette then, showed it in colour
+   (bench, 2026-09-27: "still no blue on image"). */
+static uint16_t g_color_rgb565[LC_COLOR_COUNT];
 static bool g_palette_ready;
 
 static int lvds_palette_hex_nibble(char c)
@@ -119,14 +129,14 @@ static uint8_t lvds_palette_hex_byte(const char *s, uint8_t fallback)
     return (uint8_t)((hi << 4) | lo);
 }
 
-static lvds_color_t lvds_palette_parse_hex(const char *hex)
+static uint16_t lvds_palette_parse_hex(const char *hex)
 {
     uint8_t r;
     uint8_t g;
     uint8_t b;
 
     if (!hex) {
-        return lvds_hstx_rgb(255, 255, 255);
+        return 0xFFFFu;
     }
     if (hex[0] == '#') {
         hex++;
@@ -134,7 +144,8 @@ static lvds_color_t lvds_palette_parse_hex(const char *hex)
     r = lvds_palette_hex_byte(hex + 0, 255);
     g = lvds_palette_hex_byte(hex + 2, 255);
     b = lvds_palette_hex_byte(hex + 4, 255);
-    return lvds_hstx_rgb(r, g, b);
+    return (uint16_t)(((uint16_t)(r >> 3) << 11) | ((uint16_t)(g >> 2) << 5) |
+                      (uint16_t)(b >> 3));
 }
 
 void lvds_palette_reset(void)
@@ -149,7 +160,7 @@ void lvds_palette_init(void)
     }
 
     for (int i = 0; i < LC_COLOR_COUNT; i++) {
-        g_color[i] = lvds_palette_parse_hex(g_color_def[i].hex);
+        g_color_rgb565[i] = lvds_palette_parse_hex(g_color_def[i].hex);
     }
     g_palette_ready = true;
 }
@@ -160,9 +171,11 @@ lvds_color_t lvds_palette_color(lvds_palette_color_id_t id)
         lvds_palette_init();
     }
     if (id < 0 || id >= LC_COLOR_COUNT) {
-        return g_color[white_warm];
+        id = white_warm;
     }
-    return g_color[id];
+    /* The slot is taken here, on the first frame that uses this colour - see
+       `g_color_rgb565`. */
+    return lvds_hstx_rgb565(g_color_rgb565[id]);
 }
 
 lvds_color_t lvds_palette_element(lvds_palette_element_id_t id)

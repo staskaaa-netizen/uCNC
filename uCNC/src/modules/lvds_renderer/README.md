@@ -8,6 +8,31 @@ It does not own LeanCam program state, files, menus, G-code generation, tool
 catalogs, or machine safety decisions. Higher layers may draw through the
 renderer API, but they must not reach into HSTX internals.
 
+## One Copy: A Module, and a Library
+
+This directory is the renderer's only copy, and it is consumed three ways - none
+of them a fork of the sources:
+
+- **the uCNC module**: `custom_ucnc_modules` names `lvds_renderer`, the RP2350
+  environments compile it with `+<src/modules/lvds_renderer/>`, and
+  `LOAD_MODULE(...)` wires it in. The module is published from this directory to
+  the `uCNC-modules` repository's `pre-alpha` branch, which is the archive the
+  config builder downloads modules from;
+- **the desktop station's drawing core**: `tools/nc_ui_win` compiles
+  `lvds_draw_api.c`, `lvds_palette.c` and the two fonts *unmodified* and gives
+  them a host backend (`lvds_host.c`) implementing the same primitives over a
+  GDI frame, so the bench and the machine draw one picture from one source;
+- **a library**: `library.json` is the PlatformIO manifest for a project that is
+  not uCNC - point `lib_extra_dirs` at this directory or take it as a submodule.
+  The palette, the draw API and the fonts need nothing but `lvds_hstx.h`; the
+  HSTX, PSRAM and boot files need the Pico SDK and four uCNC entry points
+  (`mcu_millis`, `cnc_delay_ms`, `proto_info`, `cnc_is_file_io_critical`), which
+  a non-uCNC consumer has to define for itself today.
+
+What a consumer needs before using any of it - the panel, the load-bearing
+spare active lines at the frame's close, the sixteen-slot palette, the realtime
+memory rules and what still needs the bench - is in `LIMITS.md`.
+
 ## Current Hardware Path
 
 - Sharp LQ121S1LG44 800x600 single-channel LVDS panel.
@@ -110,11 +135,76 @@ Open problem: the **close of the frame does not come out clean on the panel**.
 With a marker on the last framebuffer row the glass showed it about two to three
 rows above the bottom edge, with fragments below it, and a two-row marker read
 as two separate lines. Only the last rows are affected; the rest of the frame is
-right. Nothing was changed in the scanout path to chase it - both the front
-porch and the back porch were tried and neither altered what the panel showed,
-so they are back at their original values. Until it is understood, the UI keeps
-the bottom few rows of the panel as background (see `nc/TODO.md`) instead of
-drawing a border into them.
+right. Both porches were tried and neither altered what the panel showed, so
+they are back at their original values. Until it is understood, the UI keeps the
+bottom few rows of the panel as background (see `nc/TODO.md`) instead of drawing
+a border into them.
+
+**Two probes (bench, 2026-10-04), and what they narrowed it to.** The bench put
+the question as *"is it our bad timing or wrong closure of frame ... so we will
+see is it our software or bogus receiver"*, and ran two experiments:
+
+1. **Four extra *blanking* lines** - the ring's own guard descriptors, reached
+   four lines sooner, so the frame's *total* grew but its active area did not:
+   **nothing changed on the glass**.
+2. **Four extra *active* lines** (`#define LVDS_HEIGHT 604`): the picture's last
+   lines came out **right**.
+
+So the fault is not the frame's *total* and not the link's timing; it sits on
+the **close of the active area**, and something of the picture is being shown
+where the frame closes. Both probes are scaffolding and are out of the tree
+again (the glass is back at 800x600).
+
+**Where the closure actually is.** `lvds_hstx_line_addr_for_v()` gives every
+line of the vertical blanking - and every descriptor past `LVDS_HSTX_V_TOTAL`,
+the ring's guard - the *inactive* line: true blanking, nothing to show. There is
+exactly **one line that is not blanking**: the line immediately before the
+active area,
+
+```c
+if (v == (LVDS_HSTX_V_INACTIVE - 1)) {
+    return (uint32_t)(uintptr_t)g_active_line[0];   /* an active-encoded line */
+}
+```
+
+and its buffer is **stale**, not blank: `g_active_line[0]` holds the last line
+computed into slot 0, which on a 600-active frame is **row 596** - the picture's
+fourth-from-last line. That single line is the leak, and it explains both probes
+exactly: four more *active* lines move slot 0's last content onto a *blank* extra
+line (so the picture comes out right), while four more *blanking* lines leave
+that stale picture line exactly where it was (so nothing changes).
+
+**Option 1's panel check came back negative**, so that closure line was never
+what the panel showed: making it true blanking changed nothing on the glass, and
+the line is back as it was (its comment records the check).
+
+**The marker probe found it (2026-10-04).** Five known colours - white, red,
+green, blue, black - were painted on the frame's last five lines, one colour per
+line, with a break every 32 rows so a repeat is visible. The bench read back:
+*"and red is twice."* Our own known content, one line of it **shown twice**: the
+close of the active area **repeats a line**, whatever content is there. Not our
+content, not our blanking (the extra-blanking probe changed nothing), not the
+clock - the panel/link repeats a line at the end of the active area.
+
+**The fix: four spare active lines at the frame's close.** The frame carries
+`LVDS_PANEL_ACTIVE_HEIGHT 604` against the glass's 600, the view - and so every
+screen, and the station - stays the glass's own 600x800 mapped onto the *first*
+600 active lines, and the last four active lines are the frame's blank tail. The
+repeated line lands on that tail instead of on the picture. Confirmed on the
+bench: with the spare lines in, the marker probe's five colours read clean and
+single - and the probe has come out of the tree again. **The spare tail is
+load-bearing**: shortening the frame back to 600 active lines puts the repeat
+back on the picture.
+
+**How much tail is enough - measured 2026-10-04.** The bench walked the active
+height down: at **602** lines an extra *black line* appears (the tail is one
+short and the close's own line shows), at **603** and **604** the glass is clean,
+and at **600** the repeat lands on the picture itself. So the close needs the
+active area to end **at least three lines** past the picture: the frame keeps
+`604` for one line of margin over that threshold. Any future change to the
+frame's length has to keep that tail; a *root cause* is still not known - what is
+known is that the panel/link repeats or eats a line at the close of the active
+area, independently of the content, and that three spare lines absorb it.
 
 ## Memory Ownership
 
@@ -163,6 +253,9 @@ The release boundary is intentionally small:
 
 - initialize scanout
 - set palette entries
+- take the palette again (`lvds_hstx_palette_reset()`; the boot picture brings
+  colours of its own and hands them back before the work screen draws - one
+  caller, one call, at start-up)
 - draw bounded primitives into the current draw target
 - present the draw target into scanout
 - query basic readiness/status
@@ -172,6 +265,26 @@ descriptor layout, core1 state, or old diagnostic counters.
 
 Draw guards belong in the low-level API: invalid coordinates must be rejected
 before they can touch framebuffer memory.
+
+**Images belong here too, and are not yet here.** The boot splash carries its
+own picture machinery in the panel that shows it (`ncc_boot.c`: a run-length
+decode, a colour-to-palette mapping per colour, and taking the palette and
+handing it back). The panel has asked for pictures on the keys of its 3x3 pad as
+well (`ncc/TODO.md`, "Pictures on the pad's keys"), which is the same thing
+again - an image, its own colours, drawn at a place - so the answer is one
+element in this module's boundary rather than a third copy of that code:
+
+- the renderer owns the image: its runs, its size, its colours, and the palette
+  slots those colours take while it is up (`lvds_hstx_palette_reset()` is the
+  hand-back, and it has exactly one caller today - the splash);
+- a caller with an image in hand says `lvds_image_draw(&image, x, y)` and
+  nothing else; where the image came from is the caller's business;
+- the palette bookkeeping has to live with the image, because the sixteen slots
+  are shared with the panel's own colours - that is what the splash's own bug
+  was about (colours taken when a table was *parsed* rather than when a colour
+  was first *used*).
+
+The first user is the splash itself; converting it is the pilot for the pad.
 
 ## Historical Warnings
 

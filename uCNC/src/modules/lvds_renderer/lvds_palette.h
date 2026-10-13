@@ -24,7 +24,7 @@ typedef enum {
     red,
     green,
     white,
-    yellow_pale,
+    blue,
     tool_orange,
     red_bright,
     green_bright,

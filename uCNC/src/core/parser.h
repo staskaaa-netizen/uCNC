@@ -325,6 +325,10 @@ extern "C"
 	void parser_get_modes(uint8_t *modalgroups, uint16_t *feed, uint16_t *spindle);
 	void parser_get_coordsys(uint8_t system_num, float *axis);
 	bool parser_get_wco(float *axis);
+/* The coordinate system the parser is working in, as an absolute number
+   (54 = G54). A screen that has to say which one the work is in asks this
+   rather than keeping its own copy of the modal group. */
+uint8_t parser_get_coord_system(void);
 	void parser_sync_probe(void);
 	void parser_get_probe(int32_t *position);
 	void parser_update_probe_pos(void);

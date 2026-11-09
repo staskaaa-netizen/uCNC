@@ -14,7 +14,10 @@ OUT.mkdir(parents=True, exist_ok=True)
 os.chdir(ROOT)
 gcc = os.environ.get("CC", "gcc")
 module = "uCNC/src/modules/g7x"
-common = [f"{module}/g7x.c", f"{module}/g7x_blocks.c", f"{module}/g7x_contour.c", f"{module}/g7x_source.c"]
+# The module G7x consumes for cutter radius compensation: its geometry, compiled
+# beside G7x here and in the machine builds.
+comp = "uCNC/src/modules/lathe_comp/lathe_comp.c"
+common = [f"{module}/g7x.c", f"{module}/g7x_blocks.c", f"{module}/g7x_contour.c", f"{module}/g7x_source.c", comp]
 
 def run(name, sources, flags):
     exe = OUT / (name + ".exe")

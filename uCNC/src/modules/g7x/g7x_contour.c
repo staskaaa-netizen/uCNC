@@ -145,6 +145,55 @@ bool g7x_line_number(const char *line, uint32_t *out)
     return false;
 }
 
+/* The `Tn` word of a row: the same walk `g7x_line_number()` makes for `N`, for
+   the letter this dialect changes tools with. */
+bool g7x_line_tool(const char *line, int *tool)
+{
+    const char *p = line;
+    unsigned depth = 0u;
+
+    if (!line || !tool)
+        return false;
+
+    while (*p) {
+        if (*p == '(') {
+            depth++;
+            p++;
+            continue;
+        }
+        if (*p == ')') {
+            if (depth)
+                depth--;
+            p++;
+            continue;
+        }
+        if (depth) {
+            p++;
+            continue;
+        }
+        if (*p == ';')
+            break;
+        if ((*p == 'T' || *p == 't') &&
+            (p == line || !isalpha((unsigned char)p[-1])) &&
+            (p[1] == '-' || p[1] == '+' ||
+             (p[1] >= '0' && p[1] <= '9'))) {
+            char *end = NULL;
+            long value = strtol(p + 1, &end, 10);
+            char after = end ? *end : '\0';
+
+            if (end != p + 1 &&
+                (after == '\0' || after == ' ' || after == '\t' ||
+                 after == '(' || after == ';') &&
+                value >= 0 && value <= 9999) {
+                *tool = (int)value;
+                return true;
+            }
+        }
+        p++;
+    }
+    return false;
+}
+
 const char *g7x_skip_line_number(const char *line)
 {
     const char *p = line;

@@ -35,6 +35,26 @@ typedef struct {
 /* G71/G72 header line, ignoring a leading N word. */
 bool g7x_doc_line_is_header(const char *line);
 
+/* The words a program is *on* at a line: the tool it has called and the cutter
+   compensation in force, as a state machine over the rows.
+
+   The state is the last `Tn` and the last `G40`/`G41`/`G42` at or above `line`,
+   and nothing else advances it. G7x owns it because both words are this
+   dialect's: a screen that grew its own reading of them would answer a different
+   question from the generator, and a screen that asked the *sender* instead
+   would answer for a block the machine has not reached (the sender runs ahead
+   by design, to expand a cycle). The scan reads rows, never a file or a
+   document of its own (`g7x_doc_t`), and the module keeps no state between
+   calls - a caller that asks every frame caches the answer for the line it
+   asked about. */
+typedef struct {
+    /* -1 when the program has named no tool yet. */
+    int tool;
+    g7x_comp_side_t comp;
+} g7x_state_t;
+
+g7x_state_t g7x_state_at(const g7x_doc_t *doc, size_t line);
+
 /* P/Q range of a header line. False when either word is absent, non-integral,
    below 1 or when Q < P. */
 bool g7x_doc_line_range(const char *line, uint32_t *p, uint32_t *q);

@@ -121,6 +121,7 @@ one-line change.
 | SD card, mounting, short filenames | `docs/sd-card-history.md` |
 | G71/G72/G76, P/Q, dialect | `uCNC/src/modules/g7x/README.md`, `g7x/TODO.md`, `g7x/TESTING.md` |
 | NC screens, files, editor, RUN | `uCNC/src/modules/nc2/README.md`, `nc2/TESTING.md` (the retired `nc` is `nc/TODO.md`) |
+| The `ncc` panel (entries in RAM, two shapes, preview `#`) | `uCNC/src/modules/ncc/README.md`, `ncc/TESTING.md` |
 | Spindle sync, encoders, G33/G76 | `uCNC/src/modules/g33/README.md`, `uCNC/src/modules/rp2350_pio_encoder/README.md` |
 | Cutter compensation, lathe mode | `docs/lathe-cutter-comp.md` |
 | Desktop tools | `docs/desktop-sender.md`, `tools/*/README.md` |
@@ -133,7 +134,9 @@ python tools\test_g7x.py all        # generator, emitter, parser, standalone
 python tools\test_nc_sender.py      # expansion + Grbl protocol, fake controller
 python tools\test_nc_ui.py          # the station: build, frames, every check
 python tools\test_nc2.py            # the panel module on its own (nc2)
+python tools\test_ncc.py            # the ncc panel: both shapes build
 pio run -e RP2350-LEANCAM-LVDS      # machine firmware
+pio run -e RP2350-LEANCAM-LVDS-NCC  # the ncc panel's machine firmware
 pio run -e RP2350-G7X-MODULE        # NC-free G7x build target
 ```
 

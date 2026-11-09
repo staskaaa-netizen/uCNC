@@ -11,6 +11,7 @@
 #endif
 #include "g7x.h"
 #include "g7x_contour.h"
+#include "../lathe_comp/lathe_comp.h"
 #include "g7x_source.h"
 
 #include <math.h>
@@ -18,6 +19,58 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Why the last line was refused, in words a panel can show. The parser sets it
+   when a line it executes is refused, and the generator sets it when a profile
+   cannot be roughed - one channel for both, because the screen shows one
+   sentence and "unsupported" alone is not a diagnosis: the text names the check
+   and the value the operator has to look at. Cleared at the start of the next
+   line's execution, so it can never describe an older line. */
+static char g7x_parser_refusal[64];
+/* The copy handed to the caller that took it: it has to outlive the clear
+   inside the take. */
+static char g7x_parser_taken_refusal[64];
+
+static void g7x_parser_set_refusal(const char *why)
+{
+    snprintf(g7x_parser_refusal, sizeof(g7x_parser_refusal), "%s",
+             why ? why : "");
+}
+
+const char *g7x_take_refusal_text(void)
+{
+    static const char empty[] = "";
+
+    if (!g7x_parser_refusal[0])
+        return empty;
+    /* Read once: the caller that shows it owns it now, so a later error cannot
+       be explained with an older line's reason. */
+    snprintf(g7x_parser_taken_refusal, sizeof(g7x_parser_taken_refusal), "%s",
+             g7x_parser_refusal);
+    g7x_parser_refusal[0] = '\0';
+    return g7x_parser_taken_refusal;
+}
+
+const char *g7x_refusal_text(void)
+{
+    static const char empty[] = "";
+
+    return g7x_parser_refusal[0] ? g7x_parser_refusal : empty;
+}
+
+/* A refusal from the *generator* side, in the same words the parser uses: a
+   stream that stops because a profile cannot be roughed is the same kind of
+   event to the panel, and it says which check failed and where. */
+static void g7x_stream_refuse(const char *fmt, ...)
+{
+    char text[sizeof(g7x_parser_refusal)];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(text, sizeof(text), fmt, ap);
+    va_end(ap);
+    g7x_parser_set_refusal(text);
+}
 
 #if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
 #define G7X_G70_EXTENDED_CODE EXTENDED_MCODE(700)
@@ -48,14 +101,6 @@ static g7x_contour_region_t g7x_parser_kept_region;
 static uint32_t g7x_parser_kept_p;
 static uint32_t g7x_parser_kept_q;
 static bool g7x_parser_kept_valid;
-/* Why the line being parsed was refused, for the caller that shows errors on a
-   screen rather than a terminal. Set on the way out of a refusal, cleared at
-   the start of the next line's execution so it can never describe an older
-   line. */
-static char g7x_parser_refusal[48];
-/* The copy handed to the caller that took it: it has to outlive the clear
-   inside the take. */
-static char g7x_parser_taken_refusal[48];
 /* Fanuc two-line header: the second G71/G72 block completes the open header
    and its U/W words are finish allowances, not the depth of cut. */
 static bool g7x_parser_continuation;
@@ -72,26 +117,6 @@ static bool g7x_parser_pending_doc_set;
 static g7x_corner_kind_t g7x_parser_pending_corner_kind;
 static float g7x_parser_pending_corner_amount;
 
-static void g7x_parser_set_refusal(const char *why)
-{
-    snprintf(g7x_parser_refusal, sizeof(g7x_parser_refusal), "%s",
-             why ? why : "");
-}
-
-const char *g7x_take_refusal_text(void)
-{
-    static const char empty[] = "";
-
-    if (!g7x_parser_refusal[0])
-        return empty;
-    /* Read once: the caller that shows it owns it now, so a later error cannot
-       be explained with an older line's reason. */
-    snprintf(g7x_parser_taken_refusal, sizeof(g7x_parser_taken_refusal), "%s",
-             g7x_parser_refusal);
-    g7x_parser_refusal[0] = '\0';
-    return g7x_parser_taken_refusal;
-}
-
 bool g7x_parse(void *args);
 bool g7x_exec_modifier(void *args);
 bool g7x_reset(void *args);
@@ -104,11 +129,6 @@ CREATE_EVENT_LISTENER(gcode_exec_modifier, g7x_exec_modifier);
 CREATE_EVENT_LISTENER(parser_reset, g7x_reset);
 CREATE_EVENT_LISTENER(cnc_parse_cmd_error, g7x_parse_error);
 CREATE_EVENT_LISTENER(gcode_execute_pending, g7x_execute_pending);
-#else
-const char *g7x_take_refusal_text(void)
-{
-    return "";
-}
 #endif
 
 #if defined(ENABLE_PARSER_MODULES) && !defined(G7X_HOST_TEST)
@@ -622,6 +642,104 @@ static bool g7x_arc_is_monotonic(const g7x_contour_element_t *start,
                                 const g7x_contour_element_t *end);
 static g7x_result_t g7x_stream_prepare(g7x_stream_t *stream, bool x_is_radius);
 
+void g7x_stream_set_comp(g7x_stream_t *stream, g7x_comp_side_t side,
+                         float radius)
+{
+    if (!stream) {
+        return;
+    }
+    stream->comp_side = side;
+    stream->comp_radius = (radius > 0.0f) ? radius : 0.0f;
+    if (stream->comp_radius <= 0.0f) {
+        stream->comp_side = G7X_COMP_OFF;
+    }
+}
+
+/* The contour shifted by the tool's nose radius, asked of `lathe_comp` - which
+   owns that geometry, because compensation is a *path* transformation and this
+   module consumes the answer rather than implementing it (the rule in
+   `docs/lathe-cutter-comp.md`). The conversion is in this direction because the
+   region's X is a diameter on the parser path and a radius on the stream path;
+   the shift is always applied in radius space and written back, which is the
+   doc's point 1. */
+static g7x_result_t g7x_region_compensate(g7x_contour_region_t *region,
+                                          float radius,
+                                          g7x_comp_side_t side,
+                                          bool x_is_radius)
+{
+    lathe_comp_contour_t in;
+    lathe_comp_contour_t out;
+    lathe_comp_result_t result;
+    float scale = x_is_radius ? 1.0f : 0.5f;
+    float back = x_is_radius ? 1.0f : 2.0f;
+    unsigned i;
+
+    if (!region || region->count < 2u || radius <= 0.0f) {
+        return G7X_OK;
+    }
+    memset(&in, 0, sizeof(in));
+    /* The first row is the profile's own start point; the rows after it are the
+       moves the contour is made of. */
+    in.x = region->elements[0].d * scale;
+    in.z = region->elements[0].z;
+    in.count = (int)region->count - 1;
+    if (in.count > LATHE_COMP_MAX_ELEMENTS) {
+        g7x_stream_refuse("offset: %d moves, limit %d", in.count,
+                          (int)LATHE_COMP_MAX_ELEMENTS);
+        return G7X_CORNER_TOO_LARGE;
+    }
+    for (i = 1u; i < region->count; i++) {
+        const g7x_contour_element_t *el = &region->elements[i];
+        lathe_comp_element_t *to = &in.elements[i - 1u];
+
+        memset(to, 0, sizeof(*to));
+        to->x = el->d * scale;
+        to->z = el->z;
+        if (el->kind == G7X_SEGMENT_ARC) {
+            to->arc = true;
+            to->cw = el->cw;
+            if (el->has_center) {
+                to->has_centre = true;
+                to->i = el->i * scale;
+                to->k = el->k;
+            } else {
+                to->r = (el->r >= 0.0f) ? (el->r * scale) : (el->r * scale);
+            }
+        }
+    }
+    result = lathe_comp_offset(&in, radius * scale, (side == G7X_COMP_LEFT)
+                                                       ? LATHE_COMP_LEFT
+                                                       : LATHE_COMP_RIGHT,
+                               &out);
+    if (result != LATHE_COMP_OK) {
+        g7x_stream_refuse("offset R%.2f: %s", (double)radius,
+                          lathe_comp_result_text(result));
+        return result == LATHE_COMP_ARC_TOO_SMALL ? G7X_CORNER_TOO_LARGE
+                                                  : G7X_UNSUPPORTED;
+    }
+    region->elements[0].d = out.x * back;
+    region->elements[0].z = out.z;
+    for (i = 1u; i < region->count; i++) {
+        g7x_contour_element_t *el = &region->elements[i];
+        const lathe_comp_element_t *from = &out.elements[i - 1u];
+
+        el->d = from->x * back;
+        el->z = from->z;
+        if (el->kind == G7X_SEGMENT_ARC) {
+            if (from->has_centre) {
+                el->has_center = 1;
+                el->i = from->i * back;
+                el->k = from->k;
+            }
+            if (from->r > 0.0f) {
+                el->r = from->r * back;
+                el->has_center = 0;
+            }
+        }
+    }
+    return G7X_OK;
+}
+
 g7x_result_t g7x_stream_begin_finish(g7x_stream_t *stream,
                                      const g7x_contour_region_t *region,
                                      float retract,
@@ -671,6 +789,19 @@ static g7x_result_t g7x_stream_prepare(g7x_stream_t *stream, bool x_is_radius)
         if (corner != G7X_OK)
             return corner;
     }
+    /* The tool's nose radius, last: the corners the editor wrote are already
+       part of the profile, so they are shifted with it, and everything measured
+       from the profile afterwards - the allowances, the clearance, the pass
+       levels - is measured from the path the tool's *centre* will follow. */
+    if (stream->comp_side != G7X_COMP_OFF && stream->comp_radius > 0.0f) {
+        g7x_result_t comp = g7x_region_compensate(&stream->region,
+                                                  stream->comp_radius,
+                                                  stream->comp_side,
+                                                  x_is_radius);
+
+        if (comp != G7X_OK)
+            return comp;
+    }
 
     stream->start_x = stream->region.elements[0].d;
     stream->start_z = stream->region.elements[0].z;
@@ -682,8 +813,13 @@ static g7x_result_t g7x_stream_prepare(g7x_stream_t *stream, bool x_is_radius)
         float dz = el->z - prev->z;
         float dx = el->d - prev->d;
         if (!finish_only && el->kind == G7X_SEGMENT_ARC &&
-            !g7x_arc_is_monotonic(prev, el))
+            !g7x_arc_is_monotonic(prev, el)) {
+            g7x_stream_refuse("arc to X%.2f Z%.2f (row %lu) is not monotonic",
+                              (double)(x_is_radius ? el->d * 2.0f : el->d),
+                              (double)el->z,
+                              (unsigned long)(el->source_line + 1u));
             return G7X_UNSUPPORTED;
+        }
         if (el->d < stream->min_x) stream->min_x = el->d;
         if (el->d > stream->max_x) stream->max_x = el->d;
         if (el->z < stream->min_z) stream->min_z = el->z;
@@ -692,14 +828,22 @@ static g7x_result_t g7x_stream_prepare(g7x_stream_t *stream, bool x_is_radius)
             continue;
         if (fabsf(dz) > 0.0001f) {
             int s = dz > 0.0f ? 1 : -1;
-            if (z_dir && z_dir != s)
+            if (z_dir && z_dir != s) {
+                g7x_stream_refuse("Z reverses at Z%.2f (row %lu)",
+                                  (double)el->z,
+                                  (unsigned long)(el->source_line + 1u));
                 return G7X_UNSUPPORTED;
+            }
             z_dir = s;
         }
         if (fabsf(dx) > 0.0001f) {
             int s = dx > 0.0f ? 1 : -1;
-            if (x_dir && x_dir != s)
+            if (x_dir && x_dir != s) {
+                g7x_stream_refuse("X reverses at X%.2f (row %lu)",
+                                  (double)(x_is_radius ? el->d * 2.0f : el->d),
+                                  (unsigned long)(el->source_line + 1u));
                 return G7X_UNSUPPORTED;
+            }
             x_dir = s;
         }
     }
@@ -719,8 +863,12 @@ static g7x_result_t g7x_stream_prepare(g7x_stream_t *stream, bool x_is_radius)
     }
 
     if ((stream->region.cycle == G7X_CYCLE_G71 && !z_dir) ||
-        (stream->region.cycle == G7X_CYCLE_G72 && !x_dir))
+        (stream->region.cycle == G7X_CYCLE_G72 && !x_dir)) {
+        g7x_stream_refuse(stream->region.cycle == G7X_CYCLE_G71
+                              ? "G71 range has no Z travel"
+                              : "G72 range has no X travel");
         return G7X_UNSUPPORTED;
+    }
 
     stream->dir = stream->start_z > ((stream->min_z + stream->max_z) * 0.5f) ? -1 : 1;
     if (stream->region.cycle == G7X_CYCLE_G72) {
@@ -1035,6 +1183,17 @@ static void g7x_block_set(g7x_motion_block_t *block,
     block->x = x;
     block->z = z;
     block->f = f;
+    /* A block the generator made is not a row of the program: it is the cycle
+       moving - an approach, a retract, a change of pass. `(size_t)-1` is how
+       every consumer is told so (`g7x_stream_next` copies it into
+       `last_source_line`, and the senders only take a source line from a block
+       that has one). It has to be written *after* the clear: written before,
+       the clear leaves 0, which says the motion came from the program's first
+       line. That is what the pane believed - it marked line 1 through every
+       cycle and, when the controller refused one of those generated moves, left
+       the operator there, on a line `1 SINGLE` cannot run (bench, 2026-09-27:
+       "on errors - again 1 line is selected and this one will not run"). */
+    block->source_line = (size_t)-1;
 }
 
 static void g7x_event_comment(g7x_event_t *event, const char *fmt, ...)
@@ -1059,7 +1218,6 @@ static void g7x_event_motion(g7x_event_t *event,
 {
     memset(event, 0, sizeof(*event));
     event->type = G7X_EVENT_MOTION;
-    event->motion.source_line = (size_t)-1;
     g7x_block_set(&event->motion, motion, has_x, x, has_z, z, has_f, f);
 }
 
@@ -1338,6 +1496,13 @@ static void g7x_event_format_text(const g7x_event_t *event, char *out, size_t ou
     if (block->has_r && len > 0 && len < (int)out_sz)
         len += snprintf(out + len, out_sz - (size_t)len, " R%.3f", block->r);
     if (block->has_i && len > 0 && len < (int)out_sz)
+        /* `i` is the centre offset in the region's radius space, and it is
+           emitted as it stands. Doubling it into X units was tried on
+           2026-10-17 and is wrong: the controller answered `error:33` on the
+           corner arc and the preview (which reads the same I) drew the wrong
+           shape. What is still open is the *machine's* X convention - a real
+           lathe fillet is an ellipse in X-word space - see README,
+           "R/C corners". */
         len += snprintf(out + len, out_sz - (size_t)len, " I%.3f", block->i);
     if (block->has_k && len > 0 && len < (int)out_sz)
         len += snprintf(out + len, out_sz - (size_t)len, " K%.3f", block->k);

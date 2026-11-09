@@ -390,6 +390,11 @@ bool parser_get_wco(float *axis)
 	return false;
 }
 
+uint8_t parser_get_coord_system(void)
+{
+	return (uint8_t)(parser_parameters.coord_system_index + 54u);
+}
+
 void parser_sync_probe(void)
 {
 	io_get_steps_pos(rt_probe_step_pos);

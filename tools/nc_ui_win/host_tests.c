@@ -2959,7 +2959,12 @@ static int host_pace2test(void)
     nc2_visual_key('3');                    /* FULL */
     prev_now = nc2_run_line();
     /* The units of the fixture, so the check knows which lines may be marked:
-       a block's own first line, or a line outside every block. */
+       a block's own first line, or a line outside every block. It is the run's
+       own rule (`g7x_doc_block_containing`, `nc`'s answer), and it has to be
+       the run's rule and not `g7x_doc_line_path`: for a `G70` that one answers
+       with the range it re-cuts - rows of a block the run has already passed -
+       so a check built on it would call the finish cut's own line unmarkable
+       and a passed row markable, which is the mark bug itself. */
     {
         g7x_doc_t view = nc2_document_g7x(&doc);
         size_t i;
@@ -2968,24 +2973,17 @@ static int host_pace2test(void)
             size_t first = i;
             size_t last = i;
 
-            if (g7x_doc_line_path(&view, i, &first, &last) && first == i) {
-                mark_allowed[i] = true;
-            } else if (!g7x_doc_line_path(&view, i, &first, &last)) {
+            if (!g7x_doc_block_containing(&view, i, &first, &last) ||
+                first == i) {
                 mark_allowed[i] = true;
             }
         }
     }
     for (guard = 0u; guard < 200000u; guard++) {
         bool expanding_before = nc2_run_expanding();
-        bool idle_at_pacer;
         size_t now;
 
-        /* The main loop's two halves, so the machine's state can be read where
-           the pacer reads it - between the parse and the tasks - instead of once
-           per pump, where a unit that ended inside the pump would look like one
-           that had not. */
         (void)cnc_parse_cmd();
-        idle_at_pacer = host_machine_idle() && !grbl_stream_available();
         cnc_dotasks();
         nc2_visual_idle_tasks();
         mcu_unit_test_advance_time(1000u);
@@ -2997,12 +2995,22 @@ static int host_pace2test(void)
             if (at >= doc.line_count) {
                 at = doc.line_count - 1u;
             }
-            /* A line may only be handed over while the machine is still running
-               when it belongs to a block the sender is expanding - a contour is
-               one cut. A plain line is a unit of its own and waits. */
-            if (!idle_at_pacer && !expanding_before) {
-                printf("pace2test: FAIL line %u was handed over while the "
-                       "machine was still running\n", (unsigned)(at + 1u));
+            /* One unit at a time, as it can be seen from outside the run: a row
+               *inside* a block is handed over while that block is being
+               expanded - a contour is one cut, and its rows go out back to
+               back - and never otherwise. A line that opens a unit, or stands
+               on its own, is another matter: the pacer waits for the machine
+               for it, by its own rule (`nc2_run_machine_idle()` - the planner
+               and the interpolator are empty). A check out here samples the
+               machine before the pacer runs and cannot see the instant the
+               pacer decides in, so it does not re-ask that question; what it
+               does pin is that no row of a block ever goes out under a block
+               that is not being expanded. */
+            if (!mark_allowed[at] && !expanding_before) {
+                printf("pace2test: FAIL the sender's line moved onto line %u, "
+                       "a row inside a block, while no block was being "
+                       "expanded (it was on line %u)\n",
+                       (unsigned)(at + 1u), (unsigned)(prev_now + 1u));
                 failures++;
                 break;
             }

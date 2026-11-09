@@ -342,6 +342,204 @@ static int test_profile_feed_and_approach(void)
     return 0;
 }
 
+/* A block the generator made carries no source line of its own; a profile row
+   carries its own. Every sender reads the difference: it is how the pane knows
+   that a cycle's own rapids belong to the cycle and not to the program's first
+   line (bench, 2026-09-27 - the mark held line 1 while a cycle ran, and a fault
+   on one of those moves left the operator on a stock line `1 SINGLE` cannot
+   run). The rows' own lines are what the sender feeds as `pending_source_line`,
+   so that is what this sets. */
+/* The cutter radius compensation a cycle consumes: with the tool's nose radius
+   asked for (`g7x_stream_set_comp()`), the profile the cycle cuts is the
+   *offset* one - every line moved by the radius - and without it the program is
+   cut as written. The geometry is `lathe_comp`'s; this checks that the cycle
+   actually consumes it. */
+static int test_cutter_comp_offset(void)
+{
+    g7x_stream_t stream;
+    sink_t sink;
+
+    if (g7x_stream_begin(&stream, "G71 U2 R1 X0.5 Z0.5 F120") != G7X_OK)
+        return 1;
+    /* One millimetre of nose radius, the tool on the left of the path: the OD
+       the tool's centre follows is 1 mm out of the programmed X50, which is
+       2 mm in the diameter the generator writes out. The cycle takes the shift
+       when the contour is prepared - at the `G80` below - which is why this is
+       asked for before the profile's rows are fed. */
+    g7x_stream_set_comp(&stream, G7X_COMP_LEFT, 1.0f);
+    if (add_line(&stream, "G0 X52 Z4") ||            /* the `P` block */
+        add_line(&stream, "G1 X50 Z0") ||
+        add_line(&stream, "G1 X50 Z-10 F180") ||
+        add_line(&stream, "G80"))
+        return 1;
+    if (collect_g7x(&stream, &sink))
+        return 1;
+    if (!has_exact(&sink, "G1 X52.000 Z-10.000 F180.000")) {
+        int dump;
+
+        for (dump = 0; dump < sink.count; dump++) {
+            printf("  comp line %d: %s\n", dump, sink.lines[dump]);
+        }
+        puts("FAIL the compensated cycle did not move the OD out by the nose "
+             "radius");
+        return 1;
+    }
+    if (has_exact(&sink, "G1 X50.000 Z-10.000 F180.000")) {
+        puts("FAIL the compensated cycle still cut the programmed X");
+        return 1;
+    }
+    /* The same profile without compensation is the program, unchanged. */
+    if (g7x_stream_begin(&stream, "G71 U2 R1 X0.5 Z0.5 F120") != G7X_OK)
+        return 1;
+    if (add_line(&stream, "G0 X52 Z4") ||
+        add_line(&stream, "G1 X50 Z0") ||
+        add_line(&stream, "G1 X50 Z-10 F180") ||
+        add_line(&stream, "G80"))
+        return 1;
+    if (collect_g7x(&stream, &sink))
+        return 1;
+    if (!has_exact(&sink, "G1 X50.000 Z-10.000 F180.000")) {
+        puts("FAIL an uncompensated cycle moved the profile");
+        return 1;
+    }
+    return 0;
+}
+
+/* The allowance a *compensated* cycle carries: the roughing passes have to
+   leave the allowance **outside** the surface the finish cut will make. With
+   the nose radius asked for and an allowance in the header, every roughing
+   pass must stay at or outside the path the finish cut follows - a pass inside
+   it cuts the surface the finish cut is *for*.
+
+   Recreates the bench's red alert of 2026-10-04: *"for x20 in diameter mode its
+   wants an x13 for r3. but now it is only x12. so 1 mm below needed depth. for
+   g70 it is ok for g71 it is bad"*. X20 in a diameter program is radius 10; a
+   3 mm nose puts the tool's centre path at radius 13, and a roughing pass at
+   radius 12 is a millimetre inside the finished surface. */
+static int test_cutter_comp_allowance(void)
+{
+    g7x_stream_t stream;
+    sink_t sink;
+    float finish_x = 1.0e9f;
+    int i;
+    int failures = 0;
+
+    if (g7x_stream_begin(&stream, "G71 U2 R1 X1 Z1 F120") != G7X_OK)
+        return 1;
+    g7x_stream_set_comp(&stream, G7X_COMP_LEFT, 3.0f);
+    if (add_line(&stream, "G0 X22 Z4") ||            /* the `P` block */
+        add_line(&stream, "G1 X20 Z0") ||
+        add_line(&stream, "G1 X20 Z-10 F180") ||
+        add_line(&stream, "G80"))
+        return 1;
+    if (collect_g7x(&stream, &sink))
+        return 1;
+
+    /* The finish contour the cycle emits ends the cycle: its own X values are
+       the tool-centre path (diameters on the wire, so a radius is half). The
+       smallest of them is the surface the allowance is measured from. */
+    for (i = 0; i < sink.count; i++) {
+        float x;
+
+        if (sscanf(sink.lines[i], "G1 X%f", &x) == 1 && x * 0.5f < finish_x) {
+            finish_x = x * 0.5f;
+        }
+    }
+    if (finish_x > 1.0e8f) {
+        puts("FAIL the compensated cycle emitted no finish contour");
+        return 1;
+    }
+    /* Every roughing level the cycle announced must be at or outside that, and
+       the *last* one must leave exactly the allowance the program wrote - in
+       the program's own frame. `X1` in a **diameter** program is one millimetre
+       across, half a millimetre in the radius both the region and the roughing
+       levels live in; the uncompensated cycle this file has always checked
+       (`test_allowance_approach`) leaves its last pass at exactly that. So a
+       compensated cycle's last roughing level is the tool-centre path plus
+       0.5 - and 14.0 here is the doubled allowance, the millimetre the bench
+       saw. */
+    for (i = 0; i < sink.count; i++) {
+        float level;
+
+        if (sscanf(sink.lines[i], "(G71 rough X%f", &level) == 1) {
+            if (level < finish_x - 0.001f) {
+                printf("FAIL a roughing pass at X%.3f is inside the finish "
+                       "path's own X%.3f (radius) - the allowance has to be "
+                       "*outside* it\n", (double)level, (double)finish_x);
+                failures++;
+            }
+            if (level > finish_x + 0.5f + 0.01f) {
+                printf("FAIL a roughing pass at X%.3f leaves more than the "
+                       "allowance the program wrote: X1 in a diameter program "
+                       "is half a millimetre in radius, so the last pass "
+                       "belongs at X%.3f\n", (double)level,
+                       (double)(finish_x + 0.5f));
+                failures++;
+            }
+        }
+    }
+    if (!failures) {
+        printf("PASS the compensated cycle's roughing stays outside its own "
+               "finish path (radius %.3f)\n", (double)finish_x);
+    }
+    return failures ? 1 : 0;
+}
+
+static int test_generated_block_source_line(void)
+{
+    g7x_stream_t stream;
+    char out[96];
+    g7x_step_result_t step;
+    int generated = 0;              /* motions that are no row of the program */
+    int rows = 0;                   /* motions that are the row they cut */
+    int guard = 0;
+
+    if (g7x_stream_begin(&stream, "G71 U2 R1 X0.5 Z0.5 F120") != G7X_OK)
+        return 1;
+    stream.pending_source_line = 0u;
+    if (add_line(&stream, "G0 X52 Z4"))          /* the `P` block: a rapid */
+        return 1;
+    stream.pending_source_line = 1u;
+    if (add_line(&stream, "G1 X50 Z0"))
+        return 1;
+    stream.pending_source_line = 2u;
+    if (add_line(&stream, "G1 X40 Z-20") ||
+        add_line(&stream, "G80"))
+        return 1;
+    while ((step = g7x_stream_next(&stream, out, sizeof(out))) == G7X_STEP_LINE &&
+           guard++ < 512) {
+        /* Only the motions: a comment the generator writes carries no source
+           line either, and would cover for the motions if it were counted. */
+        if (out[0] != 'G' || (out[1] != '0' && out[1] != '1')) {
+            continue;
+        }
+        if (stream.last_source_line == (size_t)-1) {
+            generated++;
+        } else if (stream.last_source_line <= 2u) {
+            rows++;
+        } else {
+            printf("FAIL a step claims source line %lu: %s\n",
+                   (unsigned long)(stream.last_source_line + 1u), out);
+            return 1;
+        }
+    }
+    if (step != G7X_STEP_DONE) {
+        printf("FAIL the G71 stream ended with %d\n", (int)step);
+        return 1;
+    }
+    if (!generated) {
+        puts("FAIL every motion answered for a row: the generator's own - the "
+             "clearance, the retracts, the changes of pass - claim the "
+             "program's first line");
+        return 1;
+    }
+    if (!rows) {
+        puts("FAIL no motion kept the profile row's own line");
+        return 1;
+    }
+    return 0;
+}
+
 static int test_g71_corner_radius(void)
 {
     g7x_stream_t stream;
@@ -837,6 +1035,133 @@ static int test_document_blocks(void)
     return fails;
 }
 
+/* The words a program is *on* at a line - the tool and the compensation - are
+   this module's state machine, and it answers for a document it is handed, with
+   no screen and no tool table anywhere: `g7x_state_at()`. */
+static const char *const g_state_program[] = {
+    "G971 X50 Z50 I0 E0",
+    "T2",
+    "M3 S1000",
+    "G0 X52 Z2",
+    "G41",
+    "G71 U3 R1 X1 Z1 F500 P50 Q55",
+    "N50 G1 X20 Z0",
+    "G1 X20 Z-10",
+    "N55 G1 X50 Z-10",
+    "G80",
+    "G42",
+    "T1",
+    "G71 U3 R1 X1 Z1 F500 P100 Q200",
+    "N100 G1 X20 Z0",
+    "N200 G1 X50 Z-10",
+    "G80",
+    "G40",
+    "T2 M6",
+    "G1 X30.000 Z-3.000 F200.000",
+    "M2"
+};
+
+static int test_state_words(void)
+{
+    g7x_doc_t doc = doc_for(g_state_program,
+                            sizeof(g_state_program) /
+                                sizeof(g_state_program[0]));
+    static const struct {
+        size_t line;
+        int tool;
+        g7x_comp_side_t comp;
+    } want[] = {
+        { 0u, -1, G7X_COMP_OFF },        /* nothing named yet */
+        { 1u, 2, G7X_COMP_OFF },         /* T2 */
+        { 4u, 2, G7X_COMP_LEFT },        /* G41 */
+        { 9u, 2, G7X_COMP_LEFT },        /* the first cycle's G80 */
+        { 10u, 2, G7X_COMP_RIGHT },      /* G42 */
+        { 11u, 1, G7X_COMP_RIGHT },      /* T1, under G42 */
+        { 16u, 1, G7X_COMP_OFF },        /* G40 */
+        { 17u, 2, G7X_COMP_OFF },        /* T2 on a line that carries M6 too */
+        { 19u, 2, G7X_COMP_OFF }         /* M2 */
+    };
+    int fails = 0;
+    unsigned i;
+
+    for (i = 0u; i < sizeof(want) / sizeof(want[0]); i++) {
+        g7x_state_t state = g7x_state_at(&doc, want[i].line);
+
+        if (state.tool != want[i].tool || state.comp != want[i].comp) {
+            printf("FAIL line %lu reads T%d %s, not T%d %s\n",
+                   (unsigned long)(want[i].line + 1u), state.tool,
+                   state.comp == G7X_COMP_LEFT ? "G41" :
+                   (state.comp == G7X_COMP_RIGHT ? "G42" : "G40"),
+                   want[i].tool,
+                   want[i].comp == G7X_COMP_LEFT ? "G41" :
+                   (want[i].comp == G7X_COMP_RIGHT ? "G42" : "G40"));
+            fails++;
+        }
+    }
+    /* The word rules themselves: a `T` that continues another word, one that is
+       not a whole number and one inside a comment are not tools. */
+    {
+        int tool = 7;
+
+        if (g7x_line_tool("G1 X30 Z2", &tool) ||
+            g7x_line_tool("XT2", &tool) ||
+            g7x_line_tool("T2.5", &tool) ||
+            g7x_line_tool("(T5 rough)", &tool) ||
+            tool != 7) {
+            printf("FAIL a row that names no tool answered one\n");
+            fails++;
+        }
+        if (!g7x_line_tool("T1", &tool) || tool != 1 ||
+            !g7x_line_tool("T2 M6", &tool) || tool != 2 ||
+            !g7x_line_tool("N50 t3", &tool) || tool != 3) {
+            printf("FAIL a row that names a tool was not read\n");
+            fails++;
+        }
+    }
+    /* A line past the end is the whole program, not a fault. */
+    {
+        g7x_state_t state = g7x_state_at(&doc, 999u);
+
+        if (state.tool != 2 || state.comp != G7X_COMP_OFF) {
+            printf("FAIL a line past the end does not read the last words\n");
+            fails++;
+        }
+    }
+    /* A word written **inside** a cycle's contour is not a word of the program:
+       the generator reads those rows as the profile and no shift is applied from
+       one, so the state must not count it either - otherwise a screen draws a
+       shift the cut never makes. */
+    {
+        static const char *const inner[] = {
+            "G971 X50 Z50 I0 E0",
+            "T2",
+            "G0 X52 Z2",
+            "G42",
+            "G71 U3 R1 X1 Z1 F500 P50 Q55",
+            "N50 G1 X20 Z0",
+            "G41",                          /* among the contour rows */
+            "G1 X20 Z-10",
+            "N55 G1 X50 Z-10",
+            "G80",
+            "G1 X60 Z5"                     /* after the block */
+        };
+        g7x_doc_t inner_doc = doc_for(inner, sizeof(inner) / sizeof(inner[0]));
+        g7x_state_t state = g7x_state_at(&inner_doc, 9u);
+
+        if (state.comp != G7X_COMP_RIGHT || state.tool != 2) {
+            printf("FAIL a word among the contour rows shifted the program "
+                   "(T%d %s at the G80)\n", state.tool,
+                   state.comp == G7X_COMP_LEFT ? "G41" :
+                   (state.comp == G7X_COMP_RIGHT ? "G42" : "G40"));
+            fails++;
+        }
+    }
+    if (!fails) {
+        printf("state words: PASS\n");
+    }
+    return fails;
+}
+
 int main(void)
 {
     int fails = 0;
@@ -846,6 +1171,9 @@ int main(void)
     fails += test_g72_basic();
     fails += test_profile_feed_and_approach();
     fails += test_g70_finish_only();
+    fails += test_generated_block_source_line();
+    fails += test_cutter_comp_offset();
+    fails += test_cutter_comp_allowance();
     fails += test_g71_corner_radius();
     fails += test_bad_contour_rejected();
     fails += test_g76_basic();
@@ -858,6 +1186,7 @@ int main(void)
     fails += test_numbered_source();
     fails += test_two_line_header();
     fails += test_document_blocks();
+    fails += test_state_words();
 
     if (fails) {
         printf("FAILURES %d\n", fails);

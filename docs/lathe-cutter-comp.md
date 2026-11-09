@@ -75,8 +75,8 @@ profile or refuses, exactly like NC consumes G7x and never re-implements it
 | Stage | Content | Verified by |
 | --- | --- | --- |
 | S1 | Parse G41/G42 honestly: refuse when the build cannot compensate (feature off, no radius, unsupported move), keep cycles refusing, and report the reason through the NC message channel | host parser suite, plus a bench check that a program with G41 stops instead of cutting |
-| S2 | Straight-line compensation, radius space, corner intersections, G7/G8 conversion, lead-in/lead-out | host suite asserting planner targets for known contours |
-| S3 | Arcs, including inner corners and the "radius too small for the corner" report | host suite plus a test part |
+| S2 | Straight-line compensation, radius space, corner intersections, G7/G8 conversion, lead-in/lead-out | **the geometry is done and checked** in `uCNC/src/modules/lathe_comp/` (`python tools/test_lathe_comp.py`: lines, the sharp corner's intersection, radius space). Left: the caller - G7x consuming it (`g7x_stream_set_comp()` and the offset at `g7x_stream_prepare()`), the builds compiling the directory, and where the nose radius comes from |
+| S3 | Arcs, including inner corners and the "radius too small for the corner" report | **the geometry is done and checked** the same way: the arc keeps its centre and *loses* the radius when the tool runs inside it (`R - r`, the bench's own rule), gains it otherwise, and `R <= r` is refused. Left: the same caller |
 | S4 | Gouging/self-intersection detection and final G40 exit semantics | bench test part with OD and ID cuts |
 | S5 | Cycles: offset a contour once and feed it to G71/G72; keep G76 uncompensated | host suite + bench |
 
@@ -85,7 +85,12 @@ profile or refuses, exactly like NC consumes G7x and never re-implements it
 - Where the nose radius and orientation come from: the NC tool table (`.t`,
   `nc_tools`) or machine settings. The tool table is the better home because a
   program already references tools by `Tn`; a one-tool machine can fall back to
-  a setting.
+  a setting. **Decided** (ncc, 2026-10-04): the table, read by the tool number
+  the program speaks and resolved **at the contour the cycle builds**, not at
+  the `G41`/`G42` word - a program may call its tool after the word, and reading
+  the word on its own fell back to the table's first row (*"still takes first
+  tool radius for g71"*). A number the table does not carry has no nose radius:
+  the run refuses rather than picking a row. **Which** tool and which side a line is under is G7x's own state machine over the program's rows (`g7x_state_at()`, `g7x_line_tool()`), asked at the line the machine is executing; the table is the panel's, so the two meet only in the panel's emitter.
 - Whether to lift `ENABLE_LATHE` in `cnc_config.h` for the LVDS profile now, so
   the lathe paths are compiled in even before compensation lands.
 - G41/G42 side convention to document: state the machine's convention (tool on

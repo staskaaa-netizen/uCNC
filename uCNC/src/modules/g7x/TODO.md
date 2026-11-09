@@ -103,7 +103,16 @@ software-tested, not physically validated on a machine.
   the console says which it was), tested in `g7x_parser_test.c`. Threading was
   already uncompensated and stays so.
 - [ ] **Stage 2:** accept a compensated contour for G71/G72 (threading stays
-  uncompensated). See `docs/lathe-cutter-comp.md`.
+  uncompensated). See `docs/lathe-cutter-comp.md`. The *geometry* is done and
+  checked - `uCNC/src/modules/lathe_comp/` shifts a contour by the nose radius
+  (lines along their normals with the corner intersections, an arc keeping its
+  centre and losing or gaining the radius, and `R <= r` refused), verified by
+  `python tools/test_lathe_comp.py`. What is left is this module *consuming* it:
+  a `g7x_stream_set_comp()` and the offset applied where the contour region is
+  prepared, so a cycle cuts the compensated profile; plus the two build lists
+  that have to compile the new directory, and the open question of where the
+  nose radius comes from (the tool table's `R`, or a setting for a one-tool
+  machine).
 - [x] Simple explicit approach with BOTH X and Z finish allowances plus R in
   the existing positive-allowance/outside-X subset. Separate X then Z clearance
   moves precede roughing/finishing; final retract uses the same clear point.

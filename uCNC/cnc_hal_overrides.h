@@ -149,9 +149,15 @@ extern "C"
 #endif
 
 /* Single RP2350 NC target: encoder/G33 + SD + LVDS renderer. The panel is nc2
-   (nc is retired); this override is where the machine's module set is written,
-   so it is the line the switch really turns on. */
-#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); LOAD_MODULE(nc2); LOAD_MODULE(g7x); })
+   (nc is retired) or ncc, and the env picks it: `ENABLE_NCC_MODULE` is the
+   clean rebuild, anything else keeps nc2. This override is where the machine's
+   module set is written, so it is the line the switch really turns on. */
+#ifdef ENABLE_NCC_MODULE
+#define UCNC_PANEL_LOAD() LOAD_MODULE(ncc)
+#else
+#define UCNC_PANEL_LOAD() LOAD_MODULE(nc2)
+#endif
+#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); UCNC_PANEL_LOAD(); LOAD_MODULE(g7x); })
 #endif
 
 #ifdef __cplusplus

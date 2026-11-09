@@ -442,12 +442,16 @@ python tools\test_nc_ui.py
   with the state word still drawn on it when the machine faults. It also pins the
   bench's "i do see idle in two places ... only this one should remain": the
   header band never wears the strip's colour, so the state is said once.
-- `--pace2test` checks the pacer: a line may only be handed over while the
-  machine is still running when it belongs to a block the sender is expanding (a
-  contour is one cut), the mark never names a line the sender has not handed
-  over, and the program ends with the machine where the program says. It reads
-  the machine where the pacer reads it - between the parse and the tasks - so a
-  unit that ends inside a pump cannot look like one that had not.
+- `--pace2test` checks the pacer: a row *inside* a block is handed over only
+  while that block is being expanded (a contour is one cut - its rows go out
+  back to back), the mark only ever moves forward onto a line that opens a unit
+  (a block's own first line, or a line outside every block), the mark never
+  names a line the sender has not handed over, and the program ends with the
+  machine where the program says. The list of lines a mark may land on is built
+  from the run's own rule (`g7x_doc_block_containing`), so the check cannot
+  disagree with the run about what a unit is. It does not try to re-ask whether
+  the pacer waited for the machine: it samples the machine before the pacer
+  runs, and the pacer decides inside the pump.
 - `--demo2test` checks the demo the release carries (`examples\`): a fresh card
   is seeded from it exactly once, the sample loads, scans as the two numbered
   `G71` ranges with their `G70` finish cuts and expands, and a pad press writes

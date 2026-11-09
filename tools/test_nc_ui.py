@@ -100,7 +100,10 @@ def module_sources():
               SRC / "modules" / "cam_keyboard" / "cam_keyboard.c",
               SRC / "modules" / "g7_g8" / "parser_g7_g8.c"]
     files += [lvds / "lvds_draw_api.c", lvds / "lvds_palette.c",
-              lvds / "lvds_font_cond_6x8.c", lvds / "lvds_font_ibm_8x14.c"]
+              lvds / "lvds_font_cond_6x8.c", lvds / "lvds_font_ibm_8x14.c",
+              # G7x consumes this for cutter radius compensation, so it is part
+              # of the station's build the way it is part of the machine's.
+              SRC / "modules" / "lathe_comp" / "lathe_comp.c"]
     return files
 
 

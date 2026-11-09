@@ -24,6 +24,14 @@ typedef enum {
 typedef struct {
     const nc2_document_t *doc;
     size_t source_line;
+    /* The line the block in play belongs to: a cycle's header while its
+       expansion walks, or the line itself for a line the panel hands over as it
+       stands. It is where a run's fault is marked. `source_line` cannot answer
+       that - the stream walks past the rows of a cycle before the generator can
+       answer for the whole of it, and the motions the generator makes (the
+       approach, the retracts, the changes of pass) are not rows of the program
+       at all. */
+    size_t block_line;
     bool active;
     bool log;
     bool g7x_collecting;

@@ -193,6 +193,7 @@ void nc2_emit_stream_begin(nc2_emit_stream_t *stream,
     memset(stream, 0, sizeof(*stream));
     stream->doc = doc;
     stream->source_line = start_line;
+    stream->block_line = start_line;
     stream->active = doc && start_line < doc->line_count;
     stream->log = true;
     stream->error = G7X_OK;
@@ -248,8 +249,15 @@ static nc2_emit_result_t nc2_emit_g7x_next(nc2_emit_stream_t *stream,
     g7x_step_result_t step = g7x_stream_next(&stream->g7x, out, out_sz);
 
     if (step == G7X_STEP_LINE) {
-        if (source_line && stream->g7x.last_source_line != (size_t)-1) {
-            *source_line = stream->g7x.last_source_line;
+        if (source_line) {
+            /* A row of the profile answers for itself; a motion the generator
+               made belongs to the block - the cycle - that is being expanded.
+               The stream's own `source_line` has walked past the block's rows
+               by then, and answering for the *next* unit is what let the pacer
+               hand that unit over while this one was still going out. */
+            *source_line = stream->g7x.last_source_line != (size_t)-1
+                               ? stream->g7x.last_source_line
+                               : stream->block_line;
         }
         if (stream->log) {
             grbl_stream_printf("[MSG:NC2 G7X OUT %.96s]\r\n", out);
@@ -512,6 +520,13 @@ nc2_emit_result_t nc2_emit_stream_next(nc2_emit_stream_t *stream,
     }
     if (source_line) {
         *source_line = stream->source_line;
+    }
+    /* A call that opens a block takes the block's line with it; a call that
+       continues one already in play leaves it where it is: the block a fault
+       belongs to is the one that was opened, not the row the expansion has
+       walked to. */
+    if (!stream->g7x.active && !stream->g7x_collecting) {
+        stream->block_line = stream->source_line;
     }
     if (stream->g7x.active) {
         result = nc2_emit_g7x_next(stream, out, out_sz, source_line);

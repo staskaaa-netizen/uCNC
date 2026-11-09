@@ -15,10 +15,12 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 NC = ROOT / "uCNC" / "src" / "modules" / "nc"
 G7X = ROOT / "uCNC" / "src" / "modules" / "g7x"
+LATHE_COMP = ROOT / "uCNC" / "src" / "modules" / "lathe_comp"
 UCNC = ROOT / "uCNC"
 
 MODULES = [NC / "nc.c", NC / "nc_emit.c", NC / "nc_g7x.c",
-           G7X / "g7x.c", G7X / "g7x_blocks.c", G7X / "g7x_contour.c", G7X / "g7x_source.c"]
+           G7X / "g7x.c", G7X / "g7x_blocks.c", G7X / "g7x_contour.c",
+           G7X / "g7x_source.c", LATHE_COMP / "lathe_comp.c"]
 SENDER = [TOOL / "nc_sender.c", TOOL / "grbl_stream.c",
           TOOL / "grbl_port_win32.c", TOOL / "nc_send_job.c"]
 FLAGS = ["-std=gnu11", "-O1", "-Wall", "-Wextra", "-Wno-unused-parameter",

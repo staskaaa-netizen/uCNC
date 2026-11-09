@@ -111,6 +111,17 @@ typedef enum {
     G7X_STEP_ERROR
 } g7x_step_result_t;
 
+/* Cutter radius compensation of the contour a cycle is built from. The stream
+   does not *implement* it: `lathe_comp` owns the geometry and this module
+   consumes its answer, which is the rule `docs/lathe-cutter-comp.md` states.
+   The radius is the nose radius of the tool `Tn` names, in the units and the
+   radius space the profile is in. */
+typedef enum {
+    G7X_COMP_OFF = 0,
+    G7X_COMP_LEFT,              /* G41 */
+    G7X_COMP_RIGHT              /* G42 */
+} g7x_comp_side_t;
+
 typedef struct {
     bool active;
     bool started;
@@ -128,6 +139,8 @@ typedef struct {
     float max_z;
     float feed;
     float doc;
+    g7x_comp_side_t comp_side;
+    float comp_radius;
     size_t pending_source_line;
     size_t last_source_line;
     /* Where the generator last left the tool, so a rapid that would not move it
@@ -289,6 +302,10 @@ void g7x_parser_cancel(void);
    the caller that shows it, so it can never be attached to a later error; an
    empty string means this error has nothing of the module's to add. */
 const char *g7x_take_refusal_text(void);
+/* The same words without taking them: for a caller that has to say the reason
+   in more than one place (the console, and the strip) before the next line
+   clears it. */
+const char *g7x_refusal_text(void);
 
 void g7x_thread_reset(g7x_thread_stream_t *stream);
 g7x_result_t g7x_thread_begin_parsed(g7x_thread_stream_t *stream,

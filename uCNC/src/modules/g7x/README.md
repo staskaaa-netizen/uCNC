@@ -122,6 +122,26 @@ explicit (the wasted moves were visible on the machine):
   the reference is `remap.py`, which offsets the contour and takes each pass
   from that offset path; the port is open in `TODO.md`).
 
+### A generated motion carries no source line
+
+A block the generator *makes* - the clearance rapid, a pass retract, the change
+of pass - is not a row of the program, and it says so: `g7x_stream_next()` copies
+its `source_line` into the stream's `last_source_line`, and `(size_t)-1` means
+"no row of the program". Every sender reads the difference; it is how a pane
+knows that a cycle's own rapids belong to the cycle rather than to a line of the
+file.
+
+That value was being written *before* the block was cleared rather than after,
+so the clear left 0 and every generated motion claimed to come from the
+program's **first line**. Nothing in the generator noticed - the text it emits
+is right - but a pane that marks the line a run is on marked line 1 through
+every cycle, and a fault answered against such a move left the operator there,
+on whatever line 1 happened to be (in the bench's program, the stock definition
+that a `1 SINGLE` cannot run). The fix is one statement after the clear in
+`g7x_block_set()`, and `tools/test_g7x.py generator` fails without it: its
+`test_generated_block_source_line` walks a `G71` and insists the motions the
+generator made answer for *no* row while the profile's cuts answer for theirs.
+
 ### Fanuc headers and numbered P/Q ranges
 
 Fanuc writes the roughing cycle as two blocks: the first carries the depth of
@@ -197,6 +217,18 @@ the profile's start point, and G7x never guesses the tool's position, so it must
 name both X and Z). Haas' single-line form, which puts the finish allowances in
 `U`/`W` and the depth in `D`, is not supported: this parser stores `D` and `Q`
 in the same word slot, so `D` cannot be used next to a `Q` range.
+
+### A refusal says why, and where
+
+A cycle the generator will not run refuses with a **sentence**, not a code:
+`g7x_take_refusal_text()` (read once) and `g7x_refusal_text()` (a peek, for a
+caller that shows the same words twice) hand the panel and the console the check
+that failed and the value to look at - `X reverses at X35.00 (row 11)`, `G71
+range has no Z travel`, `offset R0.80: corner the offset cannot reach`. The row
+is the program's own line number. The sender prints the same sentence in
+`NCC STREAM STOPPED`, and `ncc` shows `Line N: <sentence>` on the strip, so the
+console and the glass cannot disagree. `unsupported` alone is not a diagnosis:
+it is what is left when the module has nothing more to say.
 
 ### Native G76 contract
 
@@ -304,6 +336,19 @@ An `R` (round) or `C` (chamfer) that the moves beside it cannot hold is a
 **refusal** (`G7X_CORNER_TOO_LARGE`, reported as "contour rejected: corner does
 not fit"), never a smaller corner cut in its place. The operator wrote a number;
 the machine cuts that number or says why it will not.
+
+**The arc's units are an open question on the machine (bench, 2026-10-17).**
+The corner maths works in a radius and the block carries `I` in that radius
+space (`R5` at X35 emits `G2 X45 Z-20 I5 K0`). Emitting `I` in X units instead
+(`I10`) was tried and is wrong twice over: the controller answered `error:33`
+(it checks that the arc closes on its own centre to 0.002 mm, in X words) and
+the preview, which reads the same `I`, drew the wrong shape. What has to be
+settled is the machine's X convention before anything else is changed: a true
+lathe fillet is an **ellipse** in X-word space, so either the X axis is a radius
+to the controller and the sender has to write the halved X with the radius `I`,
+or the arc has to be emitted in a form that controller can close. Measure it
+once with a commanded X move and a caliper, then pin it in `G71 radius corner
+output` (`tests/g7x_host_test.c`) and in `nc`'s emitter test.
 
 The limit is geometric, and it is the one `g7x_corner_fit()` reports: the tangent
 point has to land **on** the two moves, so the tangent distance may be as much as
@@ -561,6 +606,26 @@ document itself, and the questions a screen has to ask ("what does this row
 belong to", "which rows does that `G70` replay") are the same questions the
 generator answers while it runs. One owner, so a marked block and a generated
 block cannot disagree.
+
+The same file owns the **state machine over a program's rows**: `g7x_state_at()`
+answers "which tool and which cutter compensation is this program on at this
+line" - the last `Tn` and the last `G40`/`G41`/`G42` at or above it, with
+`g7x_line_tool()` reading the tool word the way `g7x_line_number()` reads `N`
+(anywhere in the row, comments skipped, the letter accepted as the row's first
+token because `T2` is a row of its own here). Both words are this dialect's, so
+the reading lives here and nowhere else: a screen that grew its own would answer
+a different question from the generator, and one that asked its *own* sender
+would answer for a block the machine has not reached yet. G7x reads rows and
+keeps no state between calls; a caller that asks every frame caches the answer
+for the line it asked about. `TESTING.md`'s `state words` check pins it with no
+screen and no tool table linked.
+
+One exclusion is a rule of the blocks, not of the words: a `G40`/`G41`/`G42`
+written **among a cycle's contour rows** is not a word of the program. Those rows
+are the profile the generator reads (`g7x_doc_line_is_any_contour()`), no shift
+is applied from one, and a state that counted it would draw a shift the cut never
+makes - the bench saw the log's `X20` while the pane took the material off as if
+`G41` (2026-10-04). A tool written among them is still the tool.
 
 It lived in NC's `nc_g7x.c` until 2026-09-25, doing exactly that with an
 `nc_document_t` instead of a provider - the same question asked twice, and the two

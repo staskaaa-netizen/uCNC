@@ -333,3 +333,42 @@ bool g7x_doc_line_is_any_contour(const g7x_doc_t *doc, size_t index)
     }
     return false;
 }
+
+g7x_state_t g7x_state_at(const g7x_doc_t *doc, size_t line)
+{
+    g7x_state_t state;
+    size_t i;
+
+    state.tool = -1;
+    state.comp = G7X_COMP_OFF;
+    /* Every row at or above the line in play, in order: the last word of each
+       kind is the one in force. The rows come from the caller, which is the
+       rule this module keeps - `g7x` reads no file and holds no document. */
+    for (i = 0u; doc && i <= line && i < doc->count; i++) {
+        const char *text = g7x_doc_at(doc, i);
+        const char *body = g7x_skip_line_number(text);
+        bool in_contour = g7x_doc_line_is_any_contour(doc, i);
+        int tool;
+
+        if (g7x_line_tool(text, &tool)) {
+            state.tool = tool;
+        }
+        /* A compensation word written **among a block's contour rows** is not a
+           word of the program: those rows are the profile the generator reads,
+           and no shift is applied from one - so a state that counted it would
+           draw a shift the cut never makes (the log's `X20` while the pane took
+           the material off as if `G41`). The rows are blocks this module owns
+           (`g7x_doc_line_is_any_contour()`), so the exclusion belongs here and
+           not in a screen. A tool written among them is still the tool. */
+        if (!in_contour) {
+            if (g7x_command_is(body, "G40")) {
+                state.comp = G7X_COMP_OFF;
+            } else if (g7x_command_is(body, "G41")) {
+                state.comp = G7X_COMP_LEFT;
+            } else if (g7x_command_is(body, "G42")) {
+                state.comp = G7X_COMP_RIGHT;
+            }
+        }
+    }
+    return state;
+}

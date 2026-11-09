@@ -26,7 +26,6 @@ static bool g_nc2_run_done;
 static size_t g_nc2_run_line;
 static uint8_t g_nc2_run_error;
 static size_t g_nc2_run_error_line;
-static size_t g_nc2_run_last_sent_line;
 
 static const nc2_document_t *g_nc2_run_doc;
 static bool g_nc2_run_program_active;
@@ -240,7 +239,13 @@ static bool nc2_run_failed(void *args)
 {
     if (g_nc2_run_program_active || g_nc2_run_active || g_nc2_run_step_in_flight) {
         g_nc2_run_error = *(uint8_t *)args;
-        g_nc2_run_error_line = g_nc2_run_last_sent_line;
+        /* The block, not the last line handed over: a cycle is expanded over
+           many lines and the controller answers for the move, so the line to
+           fix is the block the move came out of (`nc`'s own rule - a cycle
+           stays marked as the block it is). The line the sender last handed
+           over cannot answer it: the motions the generator makes between the
+           block's rows are not rows of the program. */
+        g_nc2_run_error_line = g_nc2_run_stream.block_line;
         grbl_stream_printf("[MSG:NC2 stopped on error %u]\r\n",
                            (unsigned)*(uint8_t *)args);
         nc2_run_program_finish(-1);
@@ -312,16 +317,21 @@ bool nc2_run_start(const nc2_document_t *doc, size_t line)
     return true;
 }
 
-/* The unit that owns `line`: a G7x block (its whole path), or the line alone. */
+/* The unit that owns `line`: the block it sits in, or the line alone. `nc`'s
+   own answer (`g7x_doc_block_containing`, not `g7x_doc_line_path`), because the
+   two disagree about a `G70`: `line_path` answers with the range the finish cut
+   re-cuts, which is *above* it, and that is a block the run has already passed.
+   A `1 SINGLE` on the finish cut would then have sent those rows instead of the
+   cut, and the pane marked one of them instead of the line the operator stepped
+   on. */
 static void nc2_run_unit(const nc2_document_t *doc, size_t line,
                          size_t *first, size_t *last)
 {
     g7x_doc_t view = nc2_document_g7x(doc);
 
-    if (!g7x_doc_line_path(&view, line, first, last)) {
-        *first = line;
-        *last = line;
-    }
+    *first = line;
+    *last = line;
+    (void)g7x_doc_block_containing(&view, line, first, last);
 }
 
 bool nc2_run_send_unit(const nc2_document_t *doc, size_t line)
@@ -565,9 +575,9 @@ void nc2_run_pace(void)
 
         nc2_run_unit(g_nc2_run_doc, emitted_line, &first, &last);
         /* A unit the run has already passed does not take the mark back: a `G70`
-           re-cuts the profile above it (the range's own rows), and the pane has
-           to stay on the block the run is on (bench: "it still wants to jump to
-           1 line"). */
+           re-feeds the profile above it row by row, and those rows belong to
+           the block the run has finished. The mark stays on the finish cut's
+           own line (bench: "it still wants to jump to 1 line"). */
         if (!g_nc2_run_running_valid || first >= g_nc2_run_unit_first) {
             g_nc2_run_unit_first = first;
             g_nc2_run_unit_last = last;
@@ -587,6 +597,11 @@ void nc2_run_pace(void)
         return;
     }
     g_nc2_run_step_in_flight = true;
-    g_nc2_run_last_sent_line = emitted_line;
-    g_nc2_run_line = emitted_line + 1u;
+    /* The sender's line only ever goes forward. A block's own motions answer
+       for the block (see `block_line`), so the raw answer walks back to it
+       after a row of the block has gone out - and the pane reads this line as
+       "handed over up to", which is a line the run has passed. */
+    if (emitted_line + 1u > g_nc2_run_line) {
+        g_nc2_run_line = emitted_line + 1u;
+    }
 }

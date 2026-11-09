@@ -17,7 +17,13 @@ one-line P/Q numbered ranges (start block, unnumbered profile rows, `N(Q)`
 terminator, retention and error cleanup), the two-line headers for G71 and G72,
 the `P` block as an approach, profile `F`/`S`/`T` rows, `G70 P Q` replay and the
 cutter-compensation and `G73` refusals - `G70` works in this build, so it is the
-module's own feature and not something the panel adds.
+module's own feature and not something the panel adds. Its `state words` check
+pins the module's **state machine over a program's rows** as a thing of its own:
+`g7x_state_at()` (the last `Tn` and the last `G40`/`G41`/`G42` at or above a
+line) and `g7x_line_tool()` (the `Tn` a row names, read the way `N` is), for a
+document handed in as lines - no screen, no tool table, no NC source anywhere -
+including the block rule that a compensation word written *among a cycle's
+contour rows* is not a word of the program at all (the cut never shifts for one).
 G33 is intercepted to inspect targets/pitch; this does not validate spindle
 synchronization. `all` also tests the NC adapter and NC stream integration.
 

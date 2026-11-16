@@ -70,10 +70,10 @@ on the glass. The temporary counters used for that check were removed.
 ### The raw input diagnostic
 
 The bottom diagnostic row carries the complete four-register 74HC165 chain as
-one binary value, `0b...`. It is sampled every 10 ms through an input-only read
-that leaves the 74AHCT595 storage latch untouched. The sample shares the
-shift-register lock with the step path; it is a bench reading, not a second input
-owner and not a motion-path fallback.
+one binary value, `0b...`. It is sampled every 10 ms through the same
+full-duplex PIO transfer that owns the 74AHCT595 chain. The two-pulse output
+latch preserves the current motion outputs while a sample is taken; it is a
+bench reading, not a second input owner and not a motion-path fallback.
 
 `ncc_boot_image.c` is that picture, generated - the way the renderer's fonts are
 generated files beside their source:

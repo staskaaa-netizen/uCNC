@@ -213,16 +213,16 @@ extern int32_t enc_custom_read_enc0(void); // custom encoder read callback will 
 #endif
 #endif
 #if ENCODERS > 1
+#ifndef ENC1_TYPE
+#define ENC1_TYPE ENC_TYPE_PULSE
+#endif
+#if ENC1_TYPE == ENC_TYPE_PULSE
 #if (!ASSERT_PIN(ENC1_PULSE))
 #error "The ENC1 pulse pin is not defined"
 #endif
 #if (!ASSERT_PIN(ENC1_DIR))
 #error "The ENC1 dir pin is not defined"
 #endif
-#ifndef ENC1_TYPE
-#define ENC1_TYPE ENC_TYPE_PULSE
-#endif
-#if ENC1_TYPE == ENC_TYPE_PULSE
 #define ENC1_IO_MASK (1 << (ENC1_PULSE - DIN_PINS_OFFSET))
 #elif ENC1_TYPE == ENC_TYPE_I2C
 #ifndef ENC1_FREQ
@@ -246,16 +246,16 @@ extern int32_t enc_custom_read_enc1(void); // custom encoder read callback will 
 #endif
 #endif
 #if ENCODERS > 2
+#ifndef ENC2_TYPE
+#define ENC2_TYPE ENC_TYPE_PULSE
+#endif
+#if ENC2_TYPE == ENC_TYPE_PULSE
 #if (!ASSERT_PIN(ENC2_PULSE))
 #error "The ENC2 pulse pin is not defined"
 #endif
 #if (!ASSERT_PIN(ENC2_DIR))
 #error "The ENC2 dir pin is not defined"
 #endif
-#ifndef ENC2_TYPE
-#define ENC2_TYPE ENC_TYPE_PULSE
-#endif
-#if ENC2_TYPE == ENC_TYPE_PULSE
 #define ENC2_IO_MASK (1 << (ENC2_PULSE - DIN_PINS_OFFSET))
 #elif ENC2_TYPE == ENC_TYPE_I2C
 #ifndef ENC2_FREQ
@@ -763,6 +763,11 @@ uint32_t encoder_get_delta(uint8_t i)
 
 uint16_t encoder_get_rpm(uint8_t i)
 {
+	if (i >= ENCODERS)
+	{
+		return 0;
+	}
+
 #ifdef ENC0_READ
 	if (i == ENC0)
 	{
@@ -1805,6 +1810,12 @@ static void encoder_update(uint8_t i)
 	int32_t encoder_read = 0;
 	int32_t diff = 0;
 	bool incremental = false;
+
+	if (i >= ENCODERS)
+	{
+		return;
+	}
+
 	switch (i)
 	{
 #ifdef ENC0_READ // enc0 has custom read
@@ -2015,6 +2026,14 @@ int32_t encoder_get_position(uint8_t i)
 void encoder_print_values(void)
 {
 	proto_printf("[EC:%ld RPM:%u]" MSG_FEEDBACK_END, (long)encoder_get_position(ENC0), encoder_get_rpm(ENC0));
+#if ENCODERS > 1
+	proto_printf("[EC1:%ld RPM1:%u]" MSG_FEEDBACK_END,
+				 (long)encoder_get_position(ENC1), encoder_get_rpm(ENC1));
+#endif
+#if ENCODERS > 2
+	proto_printf("[EC2:%ld RPM2:%u]" MSG_FEEDBACK_END,
+				 (long)encoder_get_position(ENC2), encoder_get_rpm(ENC2));
+#endif
 }
 
 void encoder_reset_position(uint8_t i, int32_t position)

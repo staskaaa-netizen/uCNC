@@ -41,8 +41,24 @@ uint8_t rp2350_pwm[16];
 #define IC74HC595_PIO_FREQ 20000000UL
 #endif
 
+#ifndef IC74HC595_PIO_SM
+#define IC74HC595_PIO_SM 0
+#endif
+
+#ifndef IC74HC595_PIO_INDEX
+#define IC74HC595_PIO_INDEX 0
+#endif
+
+#if (IC74HC595_PIO_CLK != (IC74HC595_PIO_DATA + 1)) || (IC74HC595_PIO_LATCH != (IC74HC595_PIO_DATA + 2))
+#error "IC74HC595_PIO DATA/CLK/LATCH must be three consecutive GPIOs"
+#endif
+
+#if (IC74HC165_COUNT > 0) && !defined(IC74HC595_PIO_DATA_IN)
+#error "IC74HC595_PIO_DATA_IN must be defined for the 74HC165 return"
+#endif
+
 #if IC74HC595_COUNT != 4
-#error "IC74HC595_COUNT must be 4 to use ESP32 I2S mode for IO shifting"
+#error "IC74HC595_COUNT must be 4 to use RP2350 PIO mode for IO shifting"
 #endif
 
 #ifdef IC74HC595_HAS_PWMS
@@ -58,17 +74,48 @@ static uint sm_ic74hc595;
 
 void ic74hc595_pio_init()
 {
+#if (IC74HC595_PIO_INDEX == 1)
+	pio_ic74hc595 = pio1;
+#elif (IC74HC595_PIO_INDEX == 2)
+	pio_ic74hc595 = pio2;
+#else
 	pio_ic74hc595 = pio0;
-	sm_ic74hc595 = 0;
+#endif
+	sm_ic74hc595 = IC74HC595_PIO_SM;
 	uint offset = pio_add_program(pio_ic74hc595, &ic74hc595_program);
-	ic74hc595_program_init(pio_ic74hc595, sm_ic74hc595, offset, IC74HC595_PIO_DATA, IC74HC595_PIO_CLK, IC74HC595_PIO_LATCH, IC74HC595_PIO_FREQ);
+	ic74hc595_program_init(pio_ic74hc595, sm_ic74hc595, offset,
+						   IC74HC595_PIO_DATA, IC74HC595_PIO_CLK,
+						   IC74HC595_PIO_LATCH,
+#if (IC74HC165_COUNT > 0)
+						   IC74HC595_PIO_DATA_IN,
+#else
+						   0,
+#endif
+						   IC74HC595_PIO_FREQ);
 }
 
-// disable this function
-// IO will be updated at a fixed rate
 MCU_CALLBACK void shift_register_io_pins(void)
 {
-	ic74hc595_program_write(pio_ic74hc595, sm_ic74hc595, *((volatile uint32_t *)&ic74hc595_io_pins[0]));
+	uint32_t out = *((volatile uint32_t *)&ic74hc595_io_pins[0]);
+
+#if (IC74HC165_COUNT > 0)
+	/* Capture the 165 inputs before the shared serial clock starts. */
+	mcu_clear_output(IC74HC165_LOAD);
+	mcu_delay_cycles(10);
+	mcu_set_output(IC74HC165_LOAD);
+#endif
+
+	ic74hc595_program_write(pio_ic74hc595, sm_ic74hc595, out);
+
+#if (IC74HC165_COUNT > 0)
+	/* Both PIO shifts are left-justified network order, which is also the
+	   little-endian byte order consumed by ic74hc165_io_pins[]. */
+	uint32_t in = ic74hc595_program_read(pio_ic74hc595, sm_ic74hc595);
+	*((volatile uint32_t *)&ic74hc165_io_pins[0]) = in;
+#else
+	/* The output-only program still pushes its 165 register; drain it. */
+	ic74hc595_program_read(pio_ic74hc595, sm_ic74hc595);
+#endif
 }
 
 #endif

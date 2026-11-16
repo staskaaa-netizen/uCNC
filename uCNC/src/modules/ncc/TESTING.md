@@ -46,10 +46,17 @@ STEP/DIR/shared-enable path through the shift registers, and produced 4.68 V on
 AO0 for `M3 S450` with `$30=1000`. The general-output and input-chain electrical
 paths work, but their physical-to-logical mapping is still a Batch 1 follow-up.
 
-The raw input diagnostic is a bench item: pull one PLC input to the active level
-and verify that exactly its bit changes in the 32-bit `0b...` value. The four
-bytes are shown in `ic74hc165_io_pins[]` order. This also needs the WeAct R16 on
-GPIO23 removed, because that resistor loaded the shared input return.
+The `E0:`, `E1:` and `E2:` fields are bench items: turn each encoder one detent
+and verify that its displayed count changes, then stays still with the shaft
+stationary. ENC0 can also be compared with the standard serial `EC` field.
+
+`AI0:` through `AI3:` show input volts for J24, converted from the 10-bit ADC
+reading at 13.6 mV per count. Apply a known input voltage and compare the
+displayed value with the 100k/33k divider calculation; this is a screen-only
+diagnostic and must not add fields to the serial status.
+Batch 1 measured approximately `361` at 5.0 V input and `250` at 3.3 V input,
+confirming the divider path and polarity. Full two-point gain/offset
+calibration remains a bench item.
 
 ## The module's checks
 

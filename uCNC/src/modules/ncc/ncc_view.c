@@ -48,6 +48,10 @@ static size_t g_pane_first;
 static uint16_t g_ncc_fps;
 static uint16_t g_ncc_fps_frames;
 static uint32_t g_ncc_fps_start_ms;
+static uint16_t g_ncc_analog_mv[4];
+
+/* Batch 1 bench scale: 361 counts at 5.0 V and 250 at 3.3 V. */
+#define NCC_ADC_MV_PER_COUNT 13.6f
 
 static void ncc_fps_tick(void)
 {
@@ -68,7 +72,7 @@ static void ncc_fps_tick(void)
 
 static void ncc_draw_diagnostics(void)
 {
-    char buf[40];
+    char buf[96];
 
     /* The bottom, in the notes' own left corner: the header's right corner is
        where `uCNC` and the machine's message live, and the meter is a
@@ -77,18 +81,21 @@ static void ncc_draw_diagnostics(void)
     snprintf(buf, sizeof(buf), "%u FPS", (unsigned)g_ncc_fps);
     ncc_text_clip(NCC_TEXT_X, NCC_BODY_BOTTOM - 11, buf, NCC_FPS_COLS,
                   ncc_col_dim(), ncc_col_bg(), LVDS_FONT_SMALL);
-    {
-        uint32_t inputs = ncc_visual_raw_inputs();
-        int bit;
-
-        buf[0] = '0';
-        buf[1] = 'b';
-        for (bit = 0; bit < 32; bit++) {
-            buf[2 + bit] = (inputs & (1ul << (31 - bit))) ? '1' : '0';
-        }
-        buf[34] = '\0';
-    }
-    ncc_text_clip(NCC_TEXT_X + 68, NCC_BODY_BOTTOM - 11, buf, 34,
+    snprintf(buf, sizeof(buf),
+             "E0:%ld E1:%ld E2:%ld "
+             "AI0:%u.%02uV AI1:%u.%02uV AI2:%u.%02uV AI3:%u.%02uV",
+             (long)ncc_visual_encoder_position(0),
+             (long)ncc_visual_encoder_position(1),
+             (long)ncc_visual_encoder_position(2),
+             (unsigned)(g_ncc_analog_mv[0] / 1000u),
+             (unsigned)((g_ncc_analog_mv[0] % 1000u) / 10u),
+             (unsigned)(g_ncc_analog_mv[1] / 1000u),
+             (unsigned)((g_ncc_analog_mv[1] % 1000u) / 10u),
+             (unsigned)(g_ncc_analog_mv[2] / 1000u),
+             (unsigned)((g_ncc_analog_mv[2] % 1000u) / 10u),
+             (unsigned)(g_ncc_analog_mv[3] / 1000u),
+             (unsigned)((g_ncc_analog_mv[3] % 1000u) / 10u));
+    ncc_text_clip(NCC_TEXT_X + 68, NCC_BODY_BOTTOM - 11, buf, 76,
                   ncc_col_text(), ncc_col_bg(), LVDS_FONT_SMALL);
 }
 
@@ -930,7 +937,8 @@ typedef struct {
     char status[64];
     char address[NCC_ADDR_MAX + 1];
     uint16_t fps;
-    uint32_t raw_inputs;
+    int32_t encoder_positions[3];
+    uint16_t analog_mv[4];
 } ncc_chrome_key_t;
 
 static ncc_rows_key_t g_rows_key;
@@ -977,7 +985,20 @@ static void ncc_frame_keys_of(ncc_rows_key_t *rows, ncc_chrome_key_t *chrome)
     snprintf(chrome->status, sizeof(chrome->status), "%s", ncc_visual_status());
     snprintf(chrome->address, sizeof(chrome->address), "%s", ncc_visual_address());
     chrome->fps = g_ncc_fps;
-    chrome->raw_inputs = ncc_visual_raw_inputs();
+    for (uint8_t i = 0; i < 3u; i++) {
+        chrome->encoder_positions[i] = ncc_visual_encoder_position(i);
+    }
+    for (uint8_t i = 0; i < 4u; i++) {
+        int16_t raw = io_get_pinvalue((uint8_t)(ANALOG0 + i));
+        float millivolts;
+
+        if (raw < 0) {
+            raw = 0;
+        }
+        millivolts = (float)raw * NCC_ADC_MV_PER_COUNT;
+        chrome->analog_mv[i] = (uint16_t)(millivolts + 0.5f);
+        g_ncc_analog_mv[i] = chrome->analog_mv[i];
+    }
 }
 
 void ncc_visual_draw(void)

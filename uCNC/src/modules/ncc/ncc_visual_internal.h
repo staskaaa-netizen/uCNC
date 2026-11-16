@@ -18,7 +18,7 @@ bool ncc_visual_list(void);
 bool ncc_visual_name_selected(void);
 const char *ncc_visual_refused(void);
 const char *ncc_visual_label(char key);
-uint32_t ncc_visual_raw_inputs(void);
+int32_t ncc_visual_encoder_position(uint8_t i);
 
 /* The active pad's own answers, shared by the controller's key meaning and the
    view's key faces. */

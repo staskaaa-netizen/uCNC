@@ -89,23 +89,51 @@ extern "C"
 #define LEANCAM_DEBUG_BRIDGE 1
 #define CAM_KB_DEBUG 1
 
-#define ENCODERS 1
 #define ENC0_TYPE ENC_TYPE_CUSTOM
 
 #ifdef LEANCAM_WEACT_RP2350B
+#define ENCODERS 3
+#define RP2350_PIO_ENCODER_GPIO_BASE 16
 /* The board pairs encoder A=GPIO33 and B=GPIO32. The PIO backend consumes an
    ascending adjacent pair, so start on B and invert the counted direction. */
 #define ENC0_PULSE_GPIO 32
 #define ENC0_RP2350_ENCODER_INVERT 1
 #define ENC0_INDEX_GPIO 31
+
+#define ENC1_TYPE ENC_TYPE_CUSTOM
+#define ENC1_PULSE_GPIO 29
+#define ENC1_RP2350_ENCODER_INVERT 1
+#define ENC1_INDEX_GPIO 255
+#define ENC1_PIO_INDEX 2
+#define ENC1_PIO_SM 0
+#define ENC1_MAX_STEP_RATE 0
+#define ENC1_PIO_PROGRAM_OFFSET 0
+#define ENC1_IS_INCREMENTAL
+#define ENC1_NO_WRAP_CORRECTION
+#define ENC1_CPR 4000
+#define ENC1_INDEX 255
+
+#define ENC2_TYPE ENC_TYPE_CUSTOM
+#define ENC2_PULSE_GPIO 26
+#define ENC2_RP2350_ENCODER_INVERT 1
+#define ENC2_INDEX_GPIO 25
+#define ENC2_PIO_INDEX 2
+#define ENC2_PIO_SM 1
+#define ENC2_MAX_STEP_RATE 0
+#define ENC2_PIO_PROGRAM_OFFSET 0
+#define ENC2_IS_INCREMENTAL
+#define ENC2_NO_WRAP_CORRECTION
+#define ENC2_CPR 4000
+#define ENC2_INDEX 255
 #else
+#define ENCODERS 1
 #define ENC0_PULSE_GPIO 20   // A
 // B must be GPIO21
 #define ENC0_INDEX_GPIO 26
 #endif
 #define ENC0_INDEX 255
 
-#define ENC0_PIO_INDEX 0
+#define ENC0_PIO_INDEX 1
 #define ENC0_PIO_SM    0
 #define ENC0_MAX_STEP_RATE 0
 #define ENC0_PIO_PROGRAM_OFFSET 0

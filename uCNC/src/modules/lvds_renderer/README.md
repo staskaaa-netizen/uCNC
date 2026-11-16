@@ -73,7 +73,11 @@ out upside down is `LVDS_PANEL_TURN` set to the wrong quarter - one number.
 
 - env: `RP2350-LEANCAM-LVDS`
 - UF2: `.pio/build/RP2350-LEANCAM-LVDS/firmware.uf2`
-- board map: `src/hal/boards/rp2350/boardmap_waveshare_pizero_minimal.h`
+- board map: `src/hal/boards/rp2350/boardmap_leancam_ncc_rp2350b.h`
+
+The machine targets use the WEACT RP2350B Core Board definition and PSRAM
+chip-select GPIO0. `LVDS_PSRAM_CS_PIN` is configurable for older boards; the
+NCC carrier sets it to `0`.
 
 The target name mentions LeanCam because that is the current product build
 using this renderer. The LVDS renderer itself remains a hardware/display

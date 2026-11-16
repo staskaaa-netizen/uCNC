@@ -29,6 +29,7 @@ extern "C"
 #include "../module.h"
 
 void shift_register_io_pins(void);
+bool shift_register_read_inputs(uint32_t *value);
 
 #ifndef io_extended_pins_update
 #define io_extended_pins_update() shift_register_io_pins()

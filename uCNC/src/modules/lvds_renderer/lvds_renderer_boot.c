@@ -56,8 +56,9 @@ bool lvds_renderer_boot_init(void)
 #if LVDS_RENDERER_WATCHDOG_MS > 0
     watchdog_update();
 #endif
-    proto_info("LVDS:psram init=%d available=%d", psram_ok ? 1 : 0,
-               lvds_psram_available() ? 1 : 0);
+    proto_info("LVDS:psram init=%d available=%d size=%lu clk=%lu", psram_ok ? 1 : 0,
+               lvds_psram_available() ? 1 : 0, (uint32_t)lvds_psram_size(),
+               lvds_psram_clock_hz());
 #else
     proto_info("LVDS:psram disabled");
 #endif

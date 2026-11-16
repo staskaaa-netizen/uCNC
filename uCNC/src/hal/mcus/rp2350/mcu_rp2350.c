@@ -709,30 +709,36 @@ static spi_config_t rp2350_spi_config;
 void mcu_spi_init(void)
 {
 	spi_init(SPI_HW, SPI_FREQ);
-	// Enable SPI 0 at 1 MHz and connect to GPIOs
 	gpio_set_function(SPI_CLK_BIT, GPIO_FUNC_SPI);
 	gpio_set_function(SPI_SDO_BIT, GPIO_FUNC_SPI);
 	gpio_set_function(SPI_SDI_BIT, GPIO_FUNC_SPI);
 #ifdef SPI_CS_BIT
-	gpio_init(SPI_CS_BIT);
+	gpio_set_function(SPI_CS_BIT, GPIO_FUNC_SIO);
+	gpio_set_dir(SPI_CS_BIT, GPIO_OUT);
+	gpio_put(SPI_CS_BIT, 1);
 #endif
 }
 
 void mcu_spi_config(spi_config_t config, uint32_t frequency)
 {
 	rp2350_spi_config = config;
-	spi_deinit(SPI_HW);
-	spi_set_baudrate(SPI_HW, frequency);
+	spi_init(SPI_HW, frequency);
 	spi_set_format(SPI_HW, 8, ((config.mode >> 1) & 0x01), (config.mode & 0x01), SPI_MSB_FIRST);
-	mcu_spi_init();
+	gpio_set_function(SPI_CLK_BIT, GPIO_FUNC_SPI);
+	gpio_set_function(SPI_SDO_BIT, GPIO_FUNC_SPI);
+	gpio_set_function(SPI_SDI_BIT, GPIO_FUNC_SPI);
+#ifdef SPI_CS_BIT
+	gpio_set_function(SPI_CS_BIT, GPIO_FUNC_SIO);
+	gpio_set_dir(SPI_CS_BIT, GPIO_OUT);
+	gpio_put(SPI_CS_BIT, 1);
+#endif
 }
 
 uint8_t mcu_spi_xmit(uint8_t data)
 {
-	spi_get_hw(SPI_HW)->dr = data;
-	while ((spi_get_hw(SPI_HW)->sr & SPI_SSPSR_BSY_BITS))
-		;
-	return (spi_get_hw(SPI_HW)->dr & 0xFF);
+	uint8_t received = 0xff;
+	spi_write_read_blocking(SPI_HW, &data, &received, 1);
+	return received;
 }
 
 void mcu_spi_start(spi_config_t config, uint32_t frequency)

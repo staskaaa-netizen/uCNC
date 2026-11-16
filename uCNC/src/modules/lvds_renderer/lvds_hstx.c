@@ -658,6 +658,11 @@ bool lvds_hstx_init(void)
         compute_active_line(i, i);
     }
     configure_lvds_clocks();
+#if LEANCAM_USE_PSRAM_BACKBUFFER
+    if (g_backbuffer_active && !lvds_psram_reinit_timing()) {
+        return false;
+    }
+#endif
     g_core1_ready = false;
     multicore_reset_core1();
     lvds_hstx_launch_core1();

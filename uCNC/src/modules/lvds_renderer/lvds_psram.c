@@ -2,8 +2,7 @@
 
 #include <string.h>
 
-#include "../../cnc.h"
-
+#include "hardware/address_mapped.h"
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "hardware/structs/qmi.h"
@@ -11,43 +10,105 @@
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
 
+#ifndef LVDS_PSRAM_MAX_SCK_HZ
+#define LVDS_PSRAM_MAX_SCK_HZ 109000000u
+#endif
+
+#ifndef LVDS_PSRAM_ID
+#define LVDS_PSRAM_ID 0x5Du
+#endif
+
 static bool g_psram_available;
+static uint32_t g_psram_size;
 static uint32_t g_psram_clock_hz;
 
-#ifndef LVDS_PSRAM_INIT_ATTEMPTS
-#define LVDS_PSRAM_INIT_ATTEMPTS 3
-#endif
-
-#ifndef LVDS_PSRAM_POST_INIT_DELAY_MS
-#define LVDS_PSRAM_POST_INIT_DELAY_MS 0
-#endif
-
-#ifndef LVDS_PSRAM_RETRY_DELAY_MS
-#define LVDS_PSRAM_RETRY_DELAY_MS 0
-#endif
-
-#if LVDS_PSRAM_POST_INIT_DELAY_MS > 0 || LVDS_PSRAM_RETRY_DELAY_MS > 0
-static void lvds_psram_delay_ms(uint32_t ms)
+static uint32_t __no_inline_not_in_flash_func(psram_detect)(void)
 {
-    cnc_delay_ms(ms);
-}
-#endif
+    uint32_t psram_size = 0;
 
-static void __no_inline_not_in_flash_func(psram_qmi_init)(uint cs_pin)
+    qmi_hw->direct_csr =
+        (30u << QMI_DIRECT_CSR_CLKDIV_LSB) | QMI_DIRECT_CSR_EN_BITS;
+    while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0) {
+        tight_loop_contents();
+    }
+
+    qmi_hw->direct_csr |= QMI_DIRECT_CSR_ASSERT_CS1N_BITS;
+    qmi_hw->direct_tx =
+        QMI_DIRECT_TX_OE_BITS |
+        (QMI_DIRECT_TX_IWIDTH_VALUE_Q << QMI_DIRECT_TX_IWIDTH_LSB) |
+        0xF5u;
+    while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0) {
+        tight_loop_contents();
+    }
+    (void)qmi_hw->direct_rx;
+    qmi_hw->direct_csr &= ~QMI_DIRECT_CSR_ASSERT_CS1N_BITS;
+
+    qmi_hw->direct_csr |= QMI_DIRECT_CSR_ASSERT_CS1N_BITS;
+    uint8_t kgd = 0;
+    uint8_t eid = 0;
+    for (uint32_t i = 0; i < 7u; ++i) {
+        qmi_hw->direct_tx = (i == 0u) ? 0x9Fu : 0xFFu;
+        while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_TXEMPTY_BITS) == 0) {
+            tight_loop_contents();
+        }
+        while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0) {
+            tight_loop_contents();
+        }
+        if (i == 5u) {
+            kgd = (uint8_t)qmi_hw->direct_rx;
+        } else if (i == 6u) {
+            eid = (uint8_t)qmi_hw->direct_rx;
+        } else {
+            (void)qmi_hw->direct_rx;
+        }
+    }
+    qmi_hw->direct_csr &=
+        ~(QMI_DIRECT_CSR_ASSERT_CS1N_BITS | QMI_DIRECT_CSR_EN_BITS);
+
+    if (kgd == LVDS_PSRAM_ID) {
+        psram_size = 1024u * 1024u;
+        const uint8_t size_id = eid >> 5u;
+        if (size_id == 4u) {
+            psram_size *= 16u;
+        } else if ((eid == 0x26u) || (size_id == 2u) || (size_id == 3u)) {
+            psram_size *= 8u;
+        } else if (size_id == 0u) {
+            psram_size *= 2u;
+        } else if (size_id == 1u) {
+            psram_size *= 4u;
+        }
+    }
+
+    return psram_size;
+}
+
+static uint32_t __no_inline_not_in_flash_func(psram_qmi_init)(uint cs_pin)
 {
     gpio_set_function(cs_pin, GPIO_FUNC_XIP_CS1);
 
-    qmi_hw->direct_csr = (10 << QMI_DIRECT_CSR_CLKDIV_LSB) |
-                         QMI_DIRECT_CSR_EN_BITS |
-                         QMI_DIRECT_CSR_AUTO_CS1N_BITS;
-    while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) tight_loop_contents();
+    const uint32_t intr_stash = save_and_disable_interrupts();
+    const uint32_t size = psram_detect();
+    if (size == 0u) {
+        restore_interrupts(intr_stash);
+        return 0u;
+    }
+
+    qmi_hw->direct_csr =
+        (10u << QMI_DIRECT_CSR_CLKDIV_LSB) |
+        QMI_DIRECT_CSR_EN_BITS |
+        QMI_DIRECT_CSR_AUTO_CS1N_BITS;
+    while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0) {
+        tight_loop_contents();
+    }
 
     qmi_hw->direct_tx = QMI_DIRECT_TX_NOPUSH_BITS | 0x35u;
-    while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) tight_loop_contents();
+    while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0) {
+        tight_loop_contents();
+    }
 
     const uint32_t clock_hz = clock_get_hz(clk_sys);
-    const uint32_t max_psram_freq = 50000000u;
-    uint32_t divisor = (clock_hz + max_psram_freq - 1u) / max_psram_freq;
+    uint32_t divisor =
+        (clock_hz + LVDS_PSRAM_MAX_SCK_HZ - 1u) / LVDS_PSRAM_MAX_SCK_HZ;
     if (divisor == 1u && clock_hz > 100000000u) {
         divisor = 2u;
     }
@@ -56,14 +117,17 @@ static void __no_inline_not_in_flash_func(psram_qmi_init)(uint cs_pin)
     }
 
     uint32_t rxdelay = divisor;
-    if (clock_hz / divisor > 100000000u) {
-        rxdelay += 1u;
+    if ((clock_hz / divisor) > 100000000u) {
+        ++rxdelay;
     }
 
-    const uint32_t clock_period_fs = (uint32_t)(1000000000000000ull / clock_hz);
-    const uint32_t max_select = (125u * 1000000u) / clock_period_fs;
+    const uint32_t clock_period_fs =
+        (uint32_t)(1000000000000000ull / clock_hz);
+    const uint32_t max_select =
+        (125u * 1000000u) / clock_period_fs;
     const uint32_t min_deselect =
-        (18u * 1000000u + (clock_period_fs - 1u)) / clock_period_fs - (divisor + 1u) / 2u;
+        (18u * 1000000u + (clock_period_fs - 1u)) / clock_period_fs -
+        (divisor + 1u) / 2u;
 
     qmi_hw->m[1].timing =
         (1u << QMI_M1_TIMING_COOLDOWN_LSB) |
@@ -94,7 +158,10 @@ static void __no_inline_not_in_flash_func(psram_qmi_init)(uint cs_pin)
 
     qmi_hw->direct_csr = 0;
     hw_set_bits(&xip_ctrl_hw->ctrl, XIP_CTRL_WRITABLE_M1_BITS);
+    restore_interrupts(intr_stash);
+
     g_psram_clock_hz = clock_hz / divisor;
+    return size;
 }
 
 static bool psram_test(void)
@@ -103,12 +170,11 @@ static bool psram_test(void)
     const uint32_t old0 = p[0];
     const uint32_t old1 = p[1];
     const uint32_t a = 0x13572468u;
-    const uint32_t b = 0xdeadbeefu;
-    bool ok;
+    const uint32_t b = 0xDEADBEEFu;
 
     p[0] = a;
     p[1] = b;
-    ok = (p[0] == a && p[1] == b);
+    const bool ok = (p[0] == a && p[1] == b);
     p[0] = old0;
     p[1] = old1;
     return ok;
@@ -117,28 +183,47 @@ static bool psram_test(void)
 bool lvds_psram_init(void)
 {
     g_psram_available = false;
+    g_psram_size = 0;
     g_psram_clock_hz = 0;
 
-    for (int attempt = 0; attempt < LVDS_PSRAM_INIT_ATTEMPTS; ++attempt) {
-        psram_qmi_init(LVDS_PSRAM_CS_PIN);
-#if LVDS_PSRAM_POST_INIT_DELAY_MS > 0
-        lvds_psram_delay_ms((uint32_t)LVDS_PSRAM_POST_INIT_DELAY_MS);
-#endif
-        if (psram_test()) {
-            g_psram_available = true;
-            return true;
-        }
-#if LVDS_PSRAM_RETRY_DELAY_MS > 0
-        lvds_psram_delay_ms((uint32_t)LVDS_PSRAM_RETRY_DELAY_MS);
-#endif
+    g_psram_size = psram_qmi_init(LVDS_PSRAM_CS_PIN);
+    if (g_psram_size == 0u || !psram_test()) {
+        g_psram_size = 0;
+        g_psram_clock_hz = 0;
+        return false;
     }
 
-    return false;
+    g_psram_available = true;
+    return true;
+}
+
+bool lvds_psram_reinit_timing(void)
+{
+    if (!g_psram_available) {
+        return false;
+    }
+
+    const uint32_t size = psram_qmi_init(LVDS_PSRAM_CS_PIN);
+    if (size == 0u || !psram_test()) {
+        g_psram_available = false;
+        g_psram_size = 0;
+        g_psram_clock_hz = 0;
+        return false;
+    }
+
+    g_psram_size = size;
+    g_psram_available = true;
+    return true;
 }
 
 bool lvds_psram_available(void)
 {
     return g_psram_available;
+}
+
+uint32_t lvds_psram_size(void)
+{
+    return g_psram_size;
 }
 
 uint32_t lvds_psram_clock_hz(void)

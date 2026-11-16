@@ -38,6 +38,12 @@
 
 #include "diskio.h"
 
+#ifdef ENABLE_LEANCAM_SD_DEBUG
+#define LC_DISK_INFO(...) proto_info(__VA_ARGS__)
+#else
+#define LC_DISK_INFO(...) ((void)0)
+#endif
+
 #ifndef MMCSD_MAX_NCR
 #define MMCSD_MAX_NCR 255
 #endif
@@ -442,6 +448,7 @@ DSTATUS disk_initialize(BYTE pdrv)
 {
 	uint8_t cleanup __attribute__((__cleanup__(mmcsd_release))) = 1;
 	spi_config_t conf = {0};
+	LC_DISK_INFO("SD:disk init begin");
 	softspi_config(SD_SPI_PORT, conf, 100000UL);
 	mcu_clear_output(SD_SPI_CS);
 	cnc_delay_ms(10);
@@ -473,7 +480,9 @@ DSTATUS disk_initialize(BYTE pdrv)
 		mcu_clear_output(SD_SPI_CS);
 		cnc_delay_ms(10);
 		softspi_xmit(SD_SPI_PORT, 0xFF);
-		if (mmcsd_command(0, 0x00, 0x95) == 0x01)
+		uint8_t cmd0 = mmcsd_command(0, 0x00, 0x95);
+		LC_DISK_INFO("SD:CMD0 response=%u", cmd0);
+		if (cmd0 == 0x01)
 		{
 			mmcsd_card.detected = 1;
 			break;
@@ -484,6 +493,7 @@ DSTATUS disk_initialize(BYTE pdrv)
 
 	if (!mmcsd_card.detected)
 	{
+		LC_DISK_INFO("SD:disk init failed no CMD0 idle response");
 		return STA_NOINIT;
 	}
 
@@ -493,9 +503,13 @@ DSTATUS disk_initialize(BYTE pdrv)
 	high_arg = 0;
 
 	// tests if card is SD/MMC v2+ (if CMD8 is legal-interface conditions)
-	if (mmcsd_command(8, 0x1AA, 0x87) == R1(R1_IDLE))
+	uint8_t cmd8 = mmcsd_command(8, 0x1AA, 0x87);
+	LC_DISK_INFO("SD:CMD8 response=%u", cmd8);
+	if (cmd8 == R1(R1_IDLE))
 	{
 		mmcsd_response(resp, 4, 0);
+		LC_DISK_INFO("SD:CMD8 echo=%x,%x,%x,%x",
+		             resp[0], resp[1], resp[2], resp[3]);
 		// card is not v2 or not usable
 		if (!(resp[2] & 0x01) || resp[3] != 0xAA)
 		{
@@ -535,8 +549,7 @@ DSTATUS disk_initialize(BYTE pdrv)
 		mmcsd_card.card_type = SDv1;
 	}
 
-	DEBUGSTR("SD card type is");
-	DEBUGINT(mmcsd_card.card_type);
+	LC_DISK_INFO("SD:card type=%u", (unsigned)mmcsd_card.card_type);
 
 	// checks if it's high density card (if returns error retries with arg = 0)
 	disk_ioctl(pdrv, MMC_GET_OCR, resp);
@@ -576,8 +589,9 @@ DSTATUS disk_initialize(BYTE pdrv)
 	mmcsd_card.size = mmcsd_card.sectors << 9;
 	mmcsd_card.initialized = 1;
 
-	DEBUGSTR("SD card size");
-	DEBUGINT(mmcsd_card.size);
+	LC_DISK_INFO("SD:disk initialized size=%lu sectors=%lu",
+	             (unsigned long)mmcsd_card.size,
+	             (unsigned long)mmcsd_card.sectors);
 	mmcsd_spi_speed(true);
 	return 0;
 }

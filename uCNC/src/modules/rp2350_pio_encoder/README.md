@@ -47,6 +47,10 @@ Example for encoder 0:
 })
 ```
 
+If the hardware names A/B in the opposite order to the ascending GPIO pair,
+start `ENC0_PULSE_GPIO` on B and set `ENC0_RP2350_ENCODER_INVERT 1`. The NCC
+RP2350B carrier does this because A is GPIO33 and B is GPIO32.
+
 `ENC0_CPR` should match the effective quadrature counts per spindle revolution.
 For a 1000 PPR encoder in x4 quadrature mode, use `4000`.
 

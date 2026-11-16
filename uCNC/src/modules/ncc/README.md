@@ -53,6 +53,28 @@ it starts (`lvds_hstx_rgb()`) and **hands it back** when it lets go
 renderer for this), so the work screen is drawn with the panel's own sixteen and
 nothing about the panel's colours changes.
 
+### Where the panel update runs
+
+The module is registered on `cnc_io_dotasks`, not `cnc_dotasks`. The controller's
+normal module-task path returns early while an E-stop, reset or other alarm is
+latched; putting the panel there left the scanout running but never painted its
+first frame, so the glass stayed black. `cnc_io_dotasks` still runs in the reset
+wait loop, allowing the splash and fault screen to be visible while motion is
+locked out.
+
+Bench, 2026-11-16: with the machine latched in E-stop reset, the old registration
+reported zero NCC updates and an all-zero SRAM framebuffer. Moving the listener to
+`cnc_io_dotasks` painted 63,093 framebuffer bytes and the boot picture appeared
+on the glass. The temporary counters used for that check were removed.
+
+### The raw input diagnostic
+
+The bottom diagnostic row carries the complete four-register 74HC165 chain as
+one binary value, `0b...`. It is sampled every 10 ms through an input-only read
+that leaves the 74AHCT595 storage latch untouched. The sample shares the
+shift-register lock with the step path; it is a bench reading, not a second input
+owner and not a motion-path fallback.
+
 `ncc_boot_image.c` is that picture, generated - the way the renderer's fonts are
 generated files beside their source:
 

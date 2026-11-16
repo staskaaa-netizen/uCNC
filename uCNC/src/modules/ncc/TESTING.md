@@ -34,6 +34,23 @@ which is what handed the controller `G0 X` instead of `G0 X55.000`.
 | module-budget check | the handwritten `ncc` module stays below the 10,000-line module trigger after the `nc_sender` extraction |
 | `python tools\test_nc_sender_module.py` | the extracted sender builds and runs without the panel, document model, filesystem, framebuffer or controller |
 
+## Bench verification
+
+2026-11-16: with the controller held in the E-stop reset wait, the NCC boot
+picture was visible on the panel. This verifies that panel updates run while
+motion is locked out; the host suites cannot exercise that controller task
+ordering.
+
+The same Batch 1 board also mounted the SD card as `/D`, ran the three-axis
+STEP/DIR/shared-enable path through the shift registers, and produced 4.68 V on
+AO0 for `M3 S450` with `$30=1000`. The general-output and input-chain electrical
+paths work, but their physical-to-logical mapping is still a Batch 1 follow-up.
+
+The raw input diagnostic is a bench item: pull one PLC input to the active level
+and verify that exactly its bit changes in the 32-bit `0b...` value. The four
+bytes are shown in `ic74hc165_io_pins[]` order. This also needs the WeAct R16 on
+GPIO23 removed, because that resistor loaded the shared input return.
+
 ## The module's checks
 
 `tools/ncc_ui_win/` is nc2's station forked for this module; the 39 checks are

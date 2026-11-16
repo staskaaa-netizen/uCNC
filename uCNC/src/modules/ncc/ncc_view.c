@@ -66,9 +66,9 @@ static void ncc_fps_tick(void)
     }
 }
 
-static void ncc_draw_fps(void)
+static void ncc_draw_diagnostics(void)
 {
-    char buf[16];
+    char buf[40];
 
     /* The bottom, in the notes' own left corner: the header's right corner is
        where `uCNC` and the machine's message live, and the meter is a
@@ -77,6 +77,19 @@ static void ncc_draw_fps(void)
     snprintf(buf, sizeof(buf), "%u FPS", (unsigned)g_ncc_fps);
     ncc_text_clip(NCC_TEXT_X, NCC_BODY_BOTTOM - 11, buf, NCC_FPS_COLS,
                   ncc_col_dim(), ncc_col_bg(), LVDS_FONT_SMALL);
+    {
+        uint32_t inputs = ncc_visual_raw_inputs();
+        int bit;
+
+        buf[0] = '0';
+        buf[1] = 'b';
+        for (bit = 0; bit < 32; bit++) {
+            buf[2 + bit] = (inputs & (1ul << (31 - bit))) ? '1' : '0';
+        }
+        buf[34] = '\0';
+    }
+    ncc_text_clip(NCC_TEXT_X + 68, NCC_BODY_BOTTOM - 11, buf, 34,
+                  ncc_col_text(), ncc_col_bg(), LVDS_FONT_SMALL);
 }
 
 uint16_t ncc_visual_fps(void)
@@ -168,7 +181,7 @@ static void ncc_draw_header(void)
        corner for the bottom, so the machine's name has it (bench, 2026-09-28). */
     ncc_text(LVDS_VIEW_WIDTH - 8 - ncc_text_width("uCNC", LVDS_FONT_SMALL),
              y + 1, "uCNC", ncc_col_dim(), ncc_col_header(), LVDS_FONT_SMALL);
-    ncc_draw_fps();
+    ncc_draw_diagnostics();
 }
 
 /* One row of the program: its number, then the text. The row the cursor (or the
@@ -917,6 +930,7 @@ typedef struct {
     char status[64];
     char address[NCC_ADDR_MAX + 1];
     uint16_t fps;
+    uint32_t raw_inputs;
 } ncc_chrome_key_t;
 
 static ncc_rows_key_t g_rows_key;
@@ -963,6 +977,7 @@ static void ncc_frame_keys_of(ncc_rows_key_t *rows, ncc_chrome_key_t *chrome)
     snprintf(chrome->status, sizeof(chrome->status), "%s", ncc_visual_status());
     snprintf(chrome->address, sizeof(chrome->address), "%s", ncc_visual_address());
     chrome->fps = g_ncc_fps;
+    chrome->raw_inputs = ncc_visual_raw_inputs();
 }
 
 void ncc_visual_draw(void)

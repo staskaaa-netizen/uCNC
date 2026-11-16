@@ -19,7 +19,9 @@ extern "C"
 #define SD_CARD_NO_SYSTEM_MENU
 
 #define LEANCAM_BUILD_FEATURE_BANNER
+#ifndef LEANCAM_USE_PSRAM_BACKBUFFER
 #define LEANCAM_USE_PSRAM_BACKBUFFER 1
+#endif
 #define LEANCAM_NC_VIEW_CACHE_PROGRAM 1
 
 #define RP2350_DISABLE_ARDUINO_CORE1_LOOP
@@ -40,8 +42,12 @@ extern "C"
 #define SPINDLE_PWM_DIR DOUT0
 
 
+#ifndef IC74HC595_COUNT
 #define IC74HC595_COUNT 0
+#endif
+#ifndef IC74HC165_COUNT
 #define IC74HC165_COUNT 0
+#endif
 
 #define ENABLE_MAIN_LOOP_MODULES
 #define ENABLE_IO_MODULES
@@ -53,9 +59,13 @@ extern "C"
 #endif
 
 #ifdef ENABLE_SD_CARD_V2
-/* Onboard SD wiring is not a valid single RP2350 hardware SPI pin group; use software SPI. */
+#ifdef LEANCAM_WEACT_RP2350B
+#define SD_CARD_DETECT_PIN DIN30
+#define SD_CARD_INTERFACE 1
+#else
 #define SD_CARD_DETECT_PIN 255
 #define SD_CARD_INTERFACE 0
+#endif
 #define SD_CARD_SPI_DMA false
 /* Bench trial: upstream disk initialization without our boot/retry workaround.
    Rollback reference: checkpoint/sd-working-20260916. */
@@ -82,10 +92,18 @@ extern "C"
 #define ENCODERS 1
 #define ENC0_TYPE ENC_TYPE_CUSTOM
 
+#ifdef LEANCAM_WEACT_RP2350B
+/* The board pairs encoder A=GPIO33 and B=GPIO32. The PIO backend consumes an
+   ascending adjacent pair, so start on B and invert the counted direction. */
+#define ENC0_PULSE_GPIO 32
+#define ENC0_RP2350_ENCODER_INVERT 1
+#define ENC0_INDEX_GPIO 31
+#else
 #define ENC0_PULSE_GPIO 20   // A
 // B must be GPIO21
-#define ENC0_INDEX 255
 #define ENC0_INDEX_GPIO 26
+#endif
+#define ENC0_INDEX 255
 
 #define ENC0_PIO_INDEX 0
 #define ENC0_PIO_SM    0
@@ -157,7 +175,7 @@ extern "C"
 #else
 #define UCNC_PANEL_LOAD() LOAD_MODULE(nc2)
 #endif
-#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); UCNC_PANEL_LOAD(); LOAD_MODULE(g7x); })
+#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(shift_register); LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); UCNC_PANEL_LOAD(); LOAD_MODULE(g7x); })
 #endif
 
 #ifdef __cplusplus

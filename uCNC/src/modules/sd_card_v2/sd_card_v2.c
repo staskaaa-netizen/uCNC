@@ -507,14 +507,18 @@ bool sd_card_dotasks(void *args)
 			proto_feedback(SD_STR_SD_PREFIX SD_STR_SD_UNMOUNTED);
 		}
 		sd_card_mounted = SD_UNDETECTED;
+#ifndef SD_CARD_NO_SYSTEM_MENU
 		g_system_menu.flags |= SYSTEM_MENU_MODE_REDRAW;
+#endif
 	}
 	else if (!mcu_get_input(SD_CARD_DETECT_PIN) && !sd_card_mounted)
 	{
 		sd_card_mounted = SD_DETECTED;
 		cnc_delay_ms(2000);
 		sd_card_mount();
+#ifndef SD_CARD_NO_SYSTEM_MENU
 		g_system_menu.flags |= SYSTEM_MENU_MODE_REDRAW;
+#endif
 	}
 #endif
 #ifdef ENABLE_SETTINGS_ON_SD_SDCARD
@@ -536,7 +540,10 @@ bool sd_card_dotasks(void *args)
 	return EVENT_CONTINUE;
 }
 
-CREATE_EVENT_LISTENER_WITHLOCK(cnc_dotasks, sd_card_dotasks, SD_CARD_BUS_LOCK);
+/* Card presence and mounting are I/O housekeeping and must still run while the
+   controller is in its reset/alarm wait loop. `cnc_dotasks` stops before module
+   tasks in that state; `cnc_io_dotasks` remains active. */
+CREATE_EVENT_LISTENER_WITHLOCK(cnc_io_dotasks, sd_card_dotasks, SD_CARD_BUS_LOCK);
 
 #ifdef ENABLE_SETTINGS_ON_SD_SDCARD
 bool sd_card_reset_settings(void *args)
@@ -674,6 +681,8 @@ CREATE_EVENT_LISTENER_WITHLOCK(grbl_cmd, sd_card_cmd_parser, SD_CARD_BUS_LOCK);
 DECL_MODULE(sd_card_v2)
 {
 	LC_SD_INFO("SD:module enter interface=%d dma=%d detect=%d", SD_CARD_INTERFACE, SD_CARD_SPI_DMA ? 1 : 0, SD_CARD_DETECT_PIN);
+	LC_SD_INFO("SD:pins clk=%d mosi=%d miso=%d cs=%d",
+	           SPI_CLK_BIT, SPI_SDO_BIT, SPI_SDI_BIT, SPI_CS_BIT);
 	// force pin configuration
 #ifndef SD_CARD_CUSTOM_HW_DRIVER
 	io_config_output(SD_SPI_CS);
@@ -700,7 +709,7 @@ DECL_MODULE(sd_card_v2)
 #endif
 
 #ifdef ENABLE_MAIN_LOOP_MODULES
-	ADD_EVENT_LISTENER(cnc_dotasks, sd_card_dotasks);
+	ADD_EVENT_LISTENER(cnc_io_dotasks, sd_card_dotasks);
 #ifdef ENABLE_SETTINGS_ON_SD_SDCARD
 	ADD_EVENT_LISTENER(cnc_reset, sd_card_reset_settings);
 #endif

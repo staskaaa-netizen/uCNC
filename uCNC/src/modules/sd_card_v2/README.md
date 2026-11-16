@@ -70,3 +70,15 @@ Run the file 10 times
 ```
 $run 10 myfile.gcode
 ```
+
+## Card detect without the legacy menu
+
+`SD_CARD_NO_SYSTEM_MENU` also removes this module's redraw writes to
+`g_system_menu` when card detect changes. A board with a real card-detect pin
+uses the NC panel's own SD state; it must not link the legacy system menu just
+to satisfy an absent redraw target.
+
+Card detect and mounting are registered on `cnc_io_dotasks`, not
+`cnc_dotasks`. The latter stops before module tasks while an E-stop or reset is
+latched; the card must still mount so the panel can browse and run files from
+that visible fault state.

@@ -66,6 +66,10 @@
 #define ENC0_MAX_STEP_RATE 0
 #endif
 
+#ifndef ENC0_RP2350_ENCODER_INVERT
+#define ENC0_RP2350_ENCODER_INVERT 0
+#endif
+
 static bool rp_pio_encoder_ready;
 static PIO rp_pio_encoder_pio;
 #if ENC0_RP2350_ENCODER_MODE == RP2350_ENCODER_MODE_PULSE
@@ -175,7 +179,11 @@ static int32_t read_encoder_rp_pio(void)
 	rp_pio_encoder_pulse_last = now;
 	return rp_pio_encoder_pulse_position;
 #else
-	return quadrature_encoder_get_count_inline(rp_pio_encoder_pio, ENC0_PIO_SM);
+	int32_t count = quadrature_encoder_get_count_inline(rp_pio_encoder_pio, ENC0_PIO_SM);
+#if ENC0_RP2350_ENCODER_INVERT
+	count = (int32_t)(0u - (uint32_t)count);
+#endif
+	return count;
 #endif
 }
 

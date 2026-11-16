@@ -30,6 +30,7 @@ MODULES = $(SRC)/modules/g7_g8/parser_g7_g8.c \
           $(SRC)/modules/cam_keyboard/cam_keyboard.c \
           $(SRC)/modules/g7x/g7x.c $(SRC)/modules/g7x/g7x_blocks.c $(SRC)/modules/g7x/g7x_contour.c \
           $(SRC)/modules/g7x/g7x_source.c \
+          $(SRC)/modules/lathe_comp/lathe_comp.c \
           $(filter-out $(SRC)/modules/ncc/ncc_module.c,$(wildcard $(SRC)/modules/ncc/*.c)) \
           $(wildcard $(SRC)/modules/nc_sender/*.c) \
           $(SRC)/modules/lvds_renderer/lvds_draw_api.c \

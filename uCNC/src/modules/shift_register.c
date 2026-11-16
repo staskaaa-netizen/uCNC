@@ -60,6 +60,8 @@
 #endif
 
 #define shift_register_delay() mcu_delay_cycles(SHIFT_REGISTER_DELAY_CYCLES)
+static DECL_MUTEX(shifter_running);
+
 #if (IC74HC595_COUNT != 0) || (IC74HC165_COUNT != 0)
 #if (IC74HC595_COUNT != 0)
 volatile uint8_t __attribute__((used)) ic74hc595_io_pins[IC74HC595_COUNT];
@@ -67,10 +69,8 @@ volatile uint8_t __attribute__((used)) ic74hc595_io_pins[IC74HC595_COUNT];
 #if (IC74HC165_COUNT != 0)
 volatile uint8_t __attribute__((used)) ic74hc165_io_pins[IC74HC165_COUNT];
 #endif
+
 #ifndef SHIFT_REGISTER_CUSTOM_CALLBACK
-
-static DECL_MUTEX(shifter_running);
-
 MCU_CALLBACK void __attribute__((weak)) shift_register_io_pins(void)
 {
 	BIN_SEMPH_INIT(shifter_running, BIN_SEMPH_UNLOCKED);
@@ -159,4 +159,80 @@ MCU_CALLBACK void __attribute__((weak)) shift_register_io_pins(void)
 {
 }
 #endif
+#endif
+
+/* Read the complete input chain without touching the output shift registers'
+   storage latch. The shared clock moves the 595 shift stages, but their outputs
+   only change on LATCH, so motion outputs stay put while an input sample runs. */
+bool shift_register_read_inputs(uint32_t *value)
+{
+#if (IC74HC165_COUNT > 0)
+	uint8_t pins[IC74HC165_COUNT];
+	uint32_t raw = 0;
+
+	if (!value)
+	{
+		return false;
+	}
+	BIN_SEMPH_INIT(shifter_running, BIN_SEMPH_UNLOCKED);
+	if (!BIN_SEMPH_TRYLOCK(shifter_running))
+	{
+		return false;
+	}
+
+	mcu_clear_output(IC74HC165_LOAD);
+#if (SHIFT_REGISTER_DELAY_CYCLES)
+	shift_register_delay();
+#endif
+	mcu_set_output(IC74HC165_LOAD);
+
+	for (uint8_t i = IC74HC165_COUNT; i != 0;)
+	{
+		uint8_t pinbyte = 0;
+
+		i--;
+		for (uint8_t j = 0x80; j != 0; j >>= 1)
+		{
+			mcu_clear_output(SHIFT_REGISTER_CLK);
+			if (mcu_get_input(SHIFT_REGISTER_SDI))
+			{
+				pinbyte |= j;
+			}
+			mcu_set_output(SHIFT_REGISTER_CLK);
+		}
+		pins[i] = pinbyte;
+	}
+
+	memcpy((void *)ic74hc165_io_pins, (const void *)pins, IC74HC165_COUNT);
+	for (uint8_t i = 0; i < IC74HC165_COUNT; i++)
+	{
+		raw = (raw << 8) | pins[i];
+	}
+	*value = raw;
+	BIN_SEMPH_UNLOCK(shifter_running);
+	return true;
+#else
+	(void)value;
+	return false;
+#endif
+}
+
+#if (IC74HC595_COUNT != 0) || (IC74HC165_COUNT != 0)
+DECL_MODULE(shift_register)
+{
+#if (IC74HC595_COUNT > 0)
+	io_config_output(SHIFT_REGISTER_SDO);
+	io_clear_output(SHIFT_REGISTER_SDO);
+	io_config_output(SHIFT_REGISTER_CLK);
+	io_set_output(SHIFT_REGISTER_CLK);
+	io_config_output(IC74HC595_LATCH);
+	io_set_output(IC74HC595_LATCH);
+#endif
+#if (IC74HC165_COUNT > 0)
+	io_config_input(SHIFT_REGISTER_SDI);
+	io_config_output(IC74HC165_LOAD);
+	io_set_output(IC74HC165_LOAD);
+#endif
+	io_extended_pins_update();
+}
 #endif

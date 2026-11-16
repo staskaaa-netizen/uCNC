@@ -28,7 +28,7 @@ extern "C"
 #define UNDEF_PIN 0
 // assert pin (io or extended)
 #define _EVAL_DIO_(X) DIO##X
-#define EVAL_DIO(X) DIO##X
+#define EVAL_DIO(X) _EVAL_DIO_(X)
 
 #define ASSERT_PIN(X) (EVAL_DIO(X) != 0)
 // assert pin io

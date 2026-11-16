@@ -8,6 +8,20 @@ module still owns the public encoder state and status fields, so seeing the
 standard `EC` and `RPM` status output is expected. The RP2350 PIO code is the
 backend behind `enc_custom_read()`.
 
+The NCC RP2350B build enables three channels without moving ENC0:
+
+| Encoder | PIO / SM | A/B pins | Index |
+| --- | --- | --- | --- |
+| ENC0 | PIO1 / SM0 | GPIO33 / GPIO32 | GPIO31 |
+| ENC1 | PIO2 / SM0 | GPIO30 / GPIO29 | GPIO28 |
+| ENC2 | PIO2 / SM1 | GPIO27 / GPIO26 | GPIO25 |
+
+PIO0 belongs exclusively to the 595/165 extender. ENC0 has its own PIO1 program
+and static decoder state; ENC1 and ENC2 share PIO2's instruction memory but have
+separate state machines, counters and read functions. RP2350 PIO can address only
+GPIO0-31 or GPIO16-47, so both encoder PIO blocks select GPIO base 16 before
+their programs are applied.
+
 ## Basic Configuration
 
 Example for encoder 0:
@@ -129,6 +143,11 @@ The fix was:
 - seed G33 feed from the normal encoder RPM / raw hardware counter, not from
   virtual-index timing
 - defer `itp_start(false)` until `itp_is_empty()` is false
+
+A later three-encoder bring-up also exposed the RP2350 GPIO-base requirement:
+without base 16, GPIO32/33 were outside PIO's default window and aliased onto
+GPIO0/1. That produced meaningless ENC0 counts and could disturb the
+PSRAM-backed frame buffer.
 
 Healthy G33 logs should now show feed near spindle RPM for `K1`:
 

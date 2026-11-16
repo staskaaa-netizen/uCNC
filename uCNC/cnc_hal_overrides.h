@@ -89,23 +89,51 @@ extern "C"
 #define LEANCAM_DEBUG_BRIDGE 1
 #define CAM_KB_DEBUG 1
 
-#define ENCODERS 1
 #define ENC0_TYPE ENC_TYPE_CUSTOM
 
 #ifdef LEANCAM_WEACT_RP2350B
+#define ENCODERS 3
+#define RP2350_PIO_ENCODER_GPIO_BASE 16
 /* The board pairs encoder A=GPIO33 and B=GPIO32. The PIO backend consumes an
    ascending adjacent pair, so start on B and invert the counted direction. */
 #define ENC0_PULSE_GPIO 32
 #define ENC0_RP2350_ENCODER_INVERT 1
 #define ENC0_INDEX_GPIO 31
+
+#define ENC1_TYPE ENC_TYPE_CUSTOM
+#define ENC1_PULSE_GPIO 29
+#define ENC1_RP2350_ENCODER_INVERT 1
+#define ENC1_INDEX_GPIO 255
+#define ENC1_PIO_INDEX 2
+#define ENC1_PIO_SM 0
+#define ENC1_MAX_STEP_RATE 0
+#define ENC1_PIO_PROGRAM_OFFSET 0
+#define ENC1_IS_INCREMENTAL
+#define ENC1_NO_WRAP_CORRECTION
+#define ENC1_CPR 4000
+#define ENC1_INDEX 255
+
+#define ENC2_TYPE ENC_TYPE_CUSTOM
+#define ENC2_PULSE_GPIO 26
+#define ENC2_RP2350_ENCODER_INVERT 1
+#define ENC2_INDEX_GPIO 25
+#define ENC2_PIO_INDEX 2
+#define ENC2_PIO_SM 1
+#define ENC2_MAX_STEP_RATE 0
+#define ENC2_PIO_PROGRAM_OFFSET 0
+#define ENC2_IS_INCREMENTAL
+#define ENC2_NO_WRAP_CORRECTION
+#define ENC2_CPR 4000
+#define ENC2_INDEX 255
 #else
+#define ENCODERS 1
 #define ENC0_PULSE_GPIO 20   // A
 // B must be GPIO21
 #define ENC0_INDEX_GPIO 26
 #endif
 #define ENC0_INDEX 255
 
-#define ENC0_PIO_INDEX 0
+#define ENC0_PIO_INDEX 1
 #define ENC0_PIO_SM    0
 #define ENC0_MAX_STEP_RATE 0
 #define ENC0_PIO_PROGRAM_OFFSET 0
@@ -129,6 +157,14 @@ extern "C"
 #define ENC0_VIRTUAL_INDEX_CPR (ENC0_CPR / 10)
 #define ENC0_VIRTUAL_INDEX_OFFSET 0
 #define ENC0_VIRTUAL_INDEX_HYSTERESIS 1
+
+#define ENABLE_ENCODER_FOLLOWER
+#define ENC1_FOLLOWER_AXIS AXIS_X
+#define ENC1_FOLLOWER_STEPS_PER_COUNT 1.0f
+#define ENC2_FOLLOWER_AXIS AXIS_Z
+#define ENC2_FOLLOWER_STEPS_PER_COUNT 1.0f
+#define ENCODER_FOLLOWER_FEED_MM_MIN 500.0f
+#define ENCODER_FOLLOWER_PERIOD_US 5000u
 #endif
 
 #ifndef LVDS_HSTX_CONFIG_H
@@ -175,7 +211,7 @@ extern "C"
 #else
 #define UCNC_PANEL_LOAD() LOAD_MODULE(nc2)
 #endif
-#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(shift_register); LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); UCNC_PANEL_LOAD(); LOAD_MODULE(g7x); })
+#define LOAD_MODULES_OVERRIDE() ({LOAD_MODULE(shift_register); LOAD_MODULE(rp2350_pio_encoder); LOAD_MODULE(encoder_follower); LOAD_MODULE(g33); LOAD_MODULE(sd_card_v2); UCNC_PANEL_LOAD(); LOAD_MODULE(g7x); })
 #endif
 
 #ifdef __cplusplus

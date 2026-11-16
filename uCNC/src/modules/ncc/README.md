@@ -67,13 +67,21 @@ reported zero NCC updates and an all-zero SRAM framebuffer. Moving the listener 
 `cnc_io_dotasks` painted 63,093 framebuffer bytes and the boot picture appeared
 on the glass. The temporary counters used for that check were removed.
 
-### The raw input diagnostic
+### The encoder diagnostic
 
-The bottom diagnostic row carries the complete four-register 74HC165 chain as
-one binary value, `0b...`. It is sampled every 10 ms through an input-only read
-that leaves the 74AHCT595 storage latch untouched. The sample shares the
-shift-register lock with the step path; it is a bench reading, not a second input
-owner and not a motion-path fallback.
+The bottom diagnostic row carries `E0:<count> E1:<count> E2:<count>`, the live
+positions of the three PIO encoders. The controller keeps one static snapshot
+and invalidates the chrome band only when a count changes, so stopped encoders
+do not force a continuous redraw. The NCC screen does not sample the 74HC165
+chain merely to draw a debug value; those inputs stay owned by the machine's IO
+path.
+
+The same row carries `AI0:` through `AI3:` as input volts. The 10-bit readings
+are converted with the Batch 1 divider/scale factor of 13.6 mV per count and
+sampled when the frame keys are built, so they follow the frame meter's existing
+cadence and are not added to the serial status stream. The machine's serial
+status keeps only the standard `EC` field; encoder and ADC diagnostics belong on
+the panel.
 
 `ncc_boot_image.c` is that picture, generated - the way the renderer's fonts are
 generated files beside their source:

@@ -37,8 +37,7 @@ static bool g_name_selected;        /* the pane's file-name row holds the cursor
 static ncc_mode_t g_mode = NCC_MODE_PROGRAM;
 static uint32_t g_last_key_ms;      /* when the screen was last touched */
 static g7x_doc_t g_run_source;
-static uint32_t g_raw_inputs;
-static uint32_t g_raw_inputs_ms;
+static int32_t g_encoder_positions[3];
 
 static bool ncc_visual_tool_radius(void *user, int tool, float *radius)
 {
@@ -212,8 +211,7 @@ void ncc_visual_init(void)
         }
     }
     ncc_state_init();
-    g_raw_inputs = 0u;
-    g_raw_inputs_ms = 0u;
+    memset(g_encoder_positions, 0, sizeof(g_encoder_positions));
     switch (ncc_state_mode()) {
     case NCC_MODE_MANUAL:
     case NCC_MODE_RUN:
@@ -426,33 +424,29 @@ ncc_mode_t ncc_visual_mode(void)
     return g_mode;
 }
 
-uint32_t ncc_visual_raw_inputs(void)
+int32_t ncc_visual_encoder_position(uint8_t i)
 {
-    return g_raw_inputs;
+    return (i < 3u) ? g_encoder_positions[i] : 0;
 }
 
-/* The 32-bit PLC input chain is a bench diagnostic. The reader shares the
-   shift-register lock with the step path, so a sample can never overlap an
-   output update. */
-#define NCC_RAW_INPUT_PERIOD_MS 10u
-
-static bool ncc_visual_raw_inputs_tick(uint32_t now_ms)
+static bool ncc_visual_encoder_tick(void)
 {
-    uint32_t value;
+    bool changed = false;
 
-    if (ncc_boot_active()) {
-        return false;
+    for (uint8_t i = 0; i < 3u; i++) {
+        int32_t value = 0;
+
+#if ENCODERS > 0
+        if (i < ENCODERS) {
+            value = encoder_get_position(i);
+        }
+#endif
+        if (value != g_encoder_positions[i]) {
+            g_encoder_positions[i] = value;
+            changed = true;
+        }
     }
-    if (g_raw_inputs_ms &&
-        (uint32_t)(now_ms - g_raw_inputs_ms) < NCC_RAW_INPUT_PERIOD_MS) {
-        return false;
-    }
-    g_raw_inputs_ms = now_ms;
-    if (!shift_register_read_inputs(&value) || value == g_raw_inputs) {
-        return false;
-    }
-    g_raw_inputs = value;
-    return true;
+    return changed;
 }
 
 /* The mode key: the screens built so far, in the machine's own order. */
@@ -1189,13 +1183,9 @@ bool ncc_visual_pump(uint32_t now_ms)
     unsigned elapsed = last_pump_ms ? (unsigned)(now_ms - last_pump_ms) : 0u;
 
     last_pump_ms = now_ms;
-    {
-        bool inputs_changed = ncc_visual_raw_inputs_tick(now_ms);
-
-        if (inputs_changed) {
-            last_draw_ms = now_ms;
-            return true;
-        }
+    if (ncc_visual_encoder_tick()) {
+        last_draw_ms = now_ms;
+        return true;
     }
     /* The screen's own clock first: it is where the card's one preset file is
        picked up, and the module that draws has no clock of its own. */

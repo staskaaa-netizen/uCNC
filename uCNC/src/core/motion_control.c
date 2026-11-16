@@ -1175,7 +1175,12 @@ uint8_t mc_incremental_jog(float *target_offset, motion_data_t *block_data)
 	float new_target[AXIS_COUNT];
 	uint16_t state = cnc_get_exec_state(EXEC_ALLACTIVE);
 
-	if ((state & ~EXEC_JOG) || cnc_has_alarm()) // if any other than idle or jog discards the command
+	/* An active jog reports EXEC_JOG together with EXEC_RUN. Accept both while
+	   the jog marker is still present so hand-wheel deltas can be queued. A
+	   program run without EXEC_JOG remains forbidden. */
+	if ((state & ~(EXEC_JOG | EXEC_RUN)) ||
+		((state & EXEC_RUN) && !(state & EXEC_JOG)) ||
+		cnc_has_alarm())
 	{
 		return STATUS_IDLE_ERROR;
 	}

@@ -1332,14 +1332,6 @@ extern "C"
 #endif
 // forces IC74HC595_COUNT to 4 to prevent errors
 #define IC74HC595_COUNT 4
-
-#ifdef IC74HC165_COUNT
-#if (IC74HC165_COUNT > 0)
-#undef IC74HC165_COUNT
-// full-duplex PIO transfers one 32-bit input word
-#define IC74HC165_COUNT 4
-#endif
-#endif
 #endif
 
 #define __timer_irq__(X) (TIMER0_IRQ_0 + X)

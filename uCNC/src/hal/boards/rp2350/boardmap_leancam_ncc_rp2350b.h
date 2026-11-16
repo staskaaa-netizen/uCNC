@@ -37,19 +37,9 @@ extern "C"
 #define TOOL_COUNT 1
 #define BAUDRATE 115200
 
-/* Four 74AHCT595 outputs and four 74HC165 inputs share one full-duplex PIO
-   bus. GPIO20/21/22 are DATA/CLK/LATCH and GPIO23 is the 165 serial return.
-   GPIO24 remains the 165 parallel-load output and is pulsed by the MCU HAL.
-   PIO0 belongs to the spindle encoder at fixed instruction offset 0; the
-   extender therefore owns PIO1 exclusively. */
-#define IC74HC595_CUSTOM_SHIFT_IO
-#define IC74HC595_PIO_DATA 20
-#define IC74HC595_PIO_CLK 21
-#define IC74HC595_PIO_LATCH 22
-#define IC74HC595_PIO_DATA_IN 23
-#define IC74HC595_PIO_INDEX 1
-#define IC74HC595_PIO_SM 0
-#define IC74HC595_PIO_FREQ 20000000UL
+/* Four 74AHCT595 outputs and four 74HC165 inputs share one bit-banged bus.
+   A combined PIO output/input scanner is not implemented, so this deliberately
+   uses the complete uCNC shift-register path. */
 #define IC74HC595_COUNT 4
 #define IC74HC165_COUNT 4
 

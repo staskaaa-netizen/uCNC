@@ -60,9 +60,7 @@
 #endif
 
 #define shift_register_delay() mcu_delay_cycles(SHIFT_REGISTER_DELAY_CYCLES)
-#ifndef SHIFT_REGISTER_CUSTOM_CALLBACK
 static DECL_MUTEX(shifter_running);
-#endif
 
 #if (IC74HC595_COUNT != 0) || (IC74HC165_COUNT != 0)
 #if (IC74HC595_COUNT != 0)
@@ -169,15 +167,6 @@ MCU_CALLBACK void __attribute__((weak)) shift_register_io_pins(void)
 bool shift_register_read_inputs(uint32_t *value)
 {
 #if (IC74HC165_COUNT > 0)
-#ifdef SHIFT_REGISTER_CUSTOM_CALLBACK
-	if (!value)
-	{
-		return false;
-	}
-	shift_register_io_pins();
-	*value = *((volatile uint32_t *)&ic74hc165_io_pins[0]);
-	return true;
-#else
 	uint8_t pins[IC74HC165_COUNT];
 	uint32_t raw = 0;
 
@@ -222,7 +211,6 @@ bool shift_register_read_inputs(uint32_t *value)
 	*value = raw;
 	BIN_SEMPH_UNLOCK(shifter_running);
 	return true;
-#endif
 #else
 	(void)value;
 	return false;
@@ -233,7 +221,6 @@ bool shift_register_read_inputs(uint32_t *value)
 DECL_MODULE(shift_register)
 {
 #if (IC74HC595_COUNT > 0)
-#ifndef SHIFT_REGISTER_CUSTOM_CALLBACK
 	io_config_output(SHIFT_REGISTER_SDO);
 	io_clear_output(SHIFT_REGISTER_SDO);
 	io_config_output(SHIFT_REGISTER_CLK);
@@ -241,11 +228,8 @@ DECL_MODULE(shift_register)
 	io_config_output(IC74HC595_LATCH);
 	io_set_output(IC74HC595_LATCH);
 #endif
-#endif
 #if (IC74HC165_COUNT > 0)
-#ifndef SHIFT_REGISTER_CUSTOM_CALLBACK
 	io_config_input(SHIFT_REGISTER_SDI);
-#endif
 	io_config_output(IC74HC165_LOAD);
 	io_set_output(IC74HC165_LOAD);
 #endif

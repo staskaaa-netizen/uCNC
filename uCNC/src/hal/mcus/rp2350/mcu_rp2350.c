@@ -41,45 +41,8 @@ uint8_t rp2350_pwm[16];
 #define IC74HC595_PIO_FREQ 20000000UL
 #endif
 
-#ifndef IC74HC595_PIO_SM
-#define IC74HC595_PIO_SM 0
-#endif
-
-#ifndef IC74HC595_PIO_INDEX
-#define IC74HC595_PIO_INDEX 0
-#endif
-
-#ifndef IC74HC595_PIO_CLK
-#ifdef IC74HC595_PIO_CLK_PIN
-#define IC74HC595_PIO_CLK __indirect__(IC74HC595_PIO_CLK_PIN, BIT)
-#endif
-#endif
-
-#ifndef IC74HC595_PIO_DATA
-#ifdef IC74HC595_PIO_DATA_PIN
-#define IC74HC595_PIO_DATA __indirect__(IC74HC595_PIO_DATA_PIN, BIT)
-#endif
-#endif
-
-#ifndef IC74HC595_PIO_LATCH
-#ifdef IC74HC595_PIO_LATCH_PIN
-#define IC74HC595_PIO_LATCH __indirect__(IC74HC595_PIO_LATCH_PIN, BIT)
-#endif
-#endif
-
-#if (IC74HC165_COUNT > 0)
-#ifndef IC74HC595_PIO_DATA_IN
-#ifdef IC74HC595_PIO_DATA_IN_PIN
-#define IC74HC595_PIO_DATA_IN __indirect__(IC74HC595_PIO_DATA_IN_PIN, BIT)
-#else
-#define IC74HC595_PIO_DATA_IN (IC74HC595_PIO_DATA + 3)
-#warning "IC74HC165 DATA pin was set to IC74HC595 DATA pin + 3"
-#endif
-#endif
-#endif
-
 #if IC74HC595_COUNT != 4
-#error "IC74HC595_COUNT must be 4 to use RP2350 PIO mode for IO shifting"
+#error "IC74HC595_COUNT must be 4 to use ESP32 I2S mode for IO shifting"
 #endif
 
 #ifdef IC74HC595_HAS_PWMS
@@ -95,49 +58,17 @@ static uint sm_ic74hc595;
 
 void ic74hc595_pio_init()
 {
-#if (IC74HC595_PIO_INDEX == 1)
-	pio_ic74hc595 = pio1;
-#elif (IC74HC595_PIO_INDEX == 2)
-	pio_ic74hc595 = pio2;
-#else
 	pio_ic74hc595 = pio0;
-#endif
-	sm_ic74hc595 = IC74HC595_PIO_SM;
+	sm_ic74hc595 = 0;
 	uint offset = pio_add_program(pio_ic74hc595, &ic74hc595_program);
-	ic74hc595_program_init(pio_ic74hc595, sm_ic74hc595, offset, IC74HC595_PIO_DATA,
-						   IC74HC595_PIO_CLK, IC74HC595_PIO_LATCH,
-#if (IC74HC165_COUNT > 0)
-						   IC74HC595_PIO_DATA_IN,
-#else
-						   0,
-#endif
-						   IC74HC595_PIO_FREQ);
+	ic74hc595_program_init(pio_ic74hc595, sm_ic74hc595, offset, IC74HC595_PIO_DATA, IC74HC595_PIO_CLK, IC74HC595_PIO_LATCH, IC74HC595_PIO_FREQ);
 }
 
-// Full-duplex transfer: output bytes are sent U10 first, then the returned
-// 74HC165 word is written back into the uCNC input pin array.
+// disable this function
+// IO will be updated at a fixed rate
 MCU_CALLBACK void shift_register_io_pins(void)
 {
-	uint32_t out = *((volatile uint32_t *)&ic74hc595_io_pins[0]);
-
-#if (IC74HC165_COUNT > 0)
-	// The NCC carrier has a dedicated 165 PL pin. Capture a fresh snapshot
-	// before the PIO clocks both chains.
-	mcu_clear_output(IC74HC165_LOAD);
-	mcu_delay_cycles(10);
-	mcu_set_output(IC74HC165_LOAD);
-#endif
-
-	ic74hc595_program_write(pio_ic74hc595, sm_ic74hc595, out);
-
-#if (IC74HC165_COUNT > 0)
-	uint32_t in = __builtin_bswap32(
-		ic74hc595_program_read(pio_ic74hc595, sm_ic74hc595));
-	*((volatile uint32_t *)&ic74hc165_io_pins[0]) = in;
-#else
-	// Drain the trailing push so the state machine cannot stall.
-	ic74hc595_program_read(pio_ic74hc595, sm_ic74hc595);
-#endif
+	ic74hc595_program_write(pio_ic74hc595, sm_ic74hc595, *((volatile uint32_t *)&ic74hc595_io_pins[0]));
 }
 
 #endif

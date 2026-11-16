@@ -46,16 +46,10 @@ STEP/DIR/shared-enable path through the shift registers, and produced 4.68 V on
 AO0 for `M3 S450` with `$30=1000`. The general-output and input-chain electrical
 paths work, but their physical-to-logical mapping is still a Batch 1 follow-up.
 
-The full-duplex PIO shift path was then verified on the same board. PIO1 owns
-GPIO20/21/22 plus input GPIO23, while the spindle encoder remains isolated on
-PIO0 and HSTX uses neither PIO block.
-
 The raw input diagnostic is a bench item: pull one PLC input to the active level
-and verify that exactly its bit changes in the 32-bit `0b...` value. The sample
-now comes from the upstream full-duplex PIO transaction while the 595 outputs
-remain latched. The four bytes are shown in `ic74hc165_io_pins[]` order. This
-also needs the WeAct R16 on GPIO23 removed, because that resistor loaded the
-shared input return.
+and verify that exactly its bit changes in the 32-bit `0b...` value. The four
+bytes are shown in `ic74hc165_io_pins[]` order. This also needs the WeAct R16 on
+GPIO23 removed, because that resistor loaded the shared input return.
 
 ## The module's checks
 

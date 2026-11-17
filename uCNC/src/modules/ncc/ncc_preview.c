@@ -210,7 +210,14 @@ static bool ncc_line_value(const char *line, char want, float *out)
             continue;
         }
         if (out) {
-            *out = (float)strtod(line + fields[i].value, 0);
+            char *end;
+            double value = strtod(line + fields[i].value, &end);
+
+            if (end == line + fields[i].value || !isfinite(value) ||
+                fabs(value) > 1000000.0) {
+                return false;
+            }
+            *out = (float)value;
         }
         return true;
     }
@@ -371,39 +378,11 @@ static void ncc_arrowhead(int x, int y, int dir_x, int dir_y, lvds_color_t color
     lvds_draw_line(x, y, x - dir_x * 7 - px * 3, y - dir_y * 7 - py * 3, color);
 }
 
-static void ncc_chuck_hatching(int x, int y, int w, int h, lvds_color_t color)
-{
-    int s;
-
-    if (w <= 0 || h <= 0) {
-        return;
-    }
-    for (s = -h; s < w; s += 8) {
-        int x0 = s > 0 ? s : 0;
-        int y0 = s > 0 ? 0 : -s;
-        int x1 = (s + h) < w ? s + h : w;
-        int y1 = (s + h) < w ? h : w - s;
-
-        y1 = ncc_clampi(y1, 0, h);
-        lvds_draw_line(x + x0, y + y0, x + x1, y + y1, color);
-    }
-    for (s = 0; s < w + h; s += 8) {
-        int x0 = s < w ? s : w;
-        int y0 = s < w ? 0 : s - w;
-        int x1 = s < h ? 0 : s - h;
-        int y1 = s < h ? s : h;
-
-        x1 = ncc_clampi(x1, 0, w);
-        y0 = ncc_clampi(y0, 0, h);
-        lvds_draw_line(x + x0, y + y0, x + x1, y + y1, color);
-    }
-}
-
 /* The chuck: the jaws the work is held in, as nc drew them (`nc_preview_chuck()`
-   and its relief, `nc_preview.c`) - a hatched bar along the bottom of the pane
-   that runs from the pane's left edge to a little past the stock's left end, its
-   length and its thickness both read from `G972 C`, with the jaw's pivot circle
-   at the stock's foot.
+   and its relief, `nc_preview.c`) - a plain dark-grey bar along the bottom of
+   the pane that runs from the pane's left edge to a little past the stock's
+   left end, its length and its thickness both read from `G972 C`, with the
+   jaw's pivot circle at the stock's foot.
 
    The port had replaced that with a vertical block *inside* the stock, and the
    stock was then filled over it, so the chuck was never on the glass and `G972`
@@ -445,7 +424,6 @@ static void ncc_chuck(const ncc_preview_info_t *p, int pane_x, int pane_w,
     }
     ncc_fill(pane_x, block_y, block_w, c_h, ncc_col_prev_chuck());
     ncc_frame(pane_x, block_y, block_w, c_h, ncc_col_prev_chuck_ink());
-    ncc_chuck_hatching(pane_x, block_y, block_w, c_h, ncc_col_prev_chuck_ink());
 }
 
 /* The jaw's pivot: the small circle centred on the stock's bottom corner, nc's
@@ -523,8 +501,26 @@ static void ncc_x_point_dimension(int dim_x, int start_y, int point_y,
              LVDS_FONT_SMALL);
 }
 
-/* The rulers and the two overall dimensions: the diameter of the stock and the
-   finished diameter, plus the centrelines the dimensions are taken from. */
+/* The stock's outer diameter is the drawing's reference in both `#` states, so
+   it has one owner here and is not repeated by contour-point dimensions at the
+   same X. The DIN layer adds the rulers and the finished/bore diameter. */
+static void ncc_stock_diameter_dimension(const ncc_preview_info_t *p,
+                                         int stock_left, int stock_top,
+                                         int stock_w, int stock_h)
+{
+    char label[16];
+    int stock_right = stock_left + stock_w;
+    int dim_x = stock_right + 14;
+
+    if (dim_x > LVDS_VIEW_WIDTH - 24) {
+        dim_x = stock_right - 18;
+    }
+    snprintf(label, sizeof(label), "%.0f", (double)p->stock_x);
+    ncc_diameter_dimension(dim_x, stock_top, stock_top + stock_h, label);
+}
+
+/* The rulers and the finished diameter, plus the centrelines the dimensions are
+   taken from. The outer stock diameter is already on the glass in both modes. */
 static void ncc_din_layer(const ncc_preview_info_t *p, int stock_left,
                           int stock_top, int stock_w, int stock_h, int z0_x)
 {
@@ -542,8 +538,6 @@ static void ncc_din_layer(const ncc_preview_info_t *p, int stock_left,
     ncc_dashdot(z0_x, stock_top - 26, z0_x, stock_bottom + 20, ncc_col_dim());
     ncc_origin_marker(z0_x, stock_top);
 
-    snprintf(label, sizeof(label), "%.0f", (double)p->stock_x);
-    ncc_diameter_dimension(dim_x, stock_top, stock_bottom, label);
     if (p->stock_i > 0.0f && p->stock_i < p->stock_x) {
         id_y = ncc_map_x(p, stock_top, stock_h, p->stock_i);
         ncc_dashdot(stock_left - 18, id_y, stock_right + 8, id_y, ncc_col_dim());
@@ -617,8 +611,12 @@ static void ncc_contour_points(const ncc_document_t *doc,
             float feature = 0.0f;
 
             ncc_contour_point_marker(mx, my, i == doc->cursor);
-            snprintf(label, sizeof(label), "%.0f", (double)x);
-            ncc_x_point_dimension(x_dim, prev_x_py, my, stock_top, mx, label);
+            /* The stock's outer diameter already has its own dimension. A
+               contour point at that X must not print the same number again. */
+            if (fabsf(x - p->stock_x) > 0.0001f) {
+                snprintf(label, sizeof(label), "%.0f", (double)x);
+                ncc_x_point_dimension(x_dim, prev_x_py, my, stock_top, mx, label);
+            }
             prev_x_py = my;
             snprintf(label, sizeof(label), "%.0f", (double)z);
             ncc_z_point_dimension(prev_z_px, mx, z0_x, stock_top, my, label);
@@ -1106,11 +1104,21 @@ static float g_ncc_live_work_z;
 static float g_ncc_live_last_x;         /* diameters, as the program reads them */
 static float g_ncc_live_last_z;
 
-/* The mask rows the last frame changed, and whether the pane was painted whole
-   (a mode change, the first frame after one): the drawing then has to paint
-   every row, otherwise only the band the tool moved through - the mask is
-   500x200 bytes and reading it whole every frame is the first thing the frame
-   meter shows. */
+/* Per-column material geometry and depth, refreshed only for columns a cut has
+   touched. This is not a second mask: it is four small facts per Z column so a
+   frame never scans the complete mask again. */
+typedef struct {
+    uint16_t inner;
+    uint16_t outer;
+    uint8_t base;
+    uint8_t frac;
+} ncc_live_column_t;
+
+static ncc_live_column_t g_ncc_live_columns[NCC_LIVE_STOCK_MAX_W];
+static uint8_t g_ncc_live_col_dirty[NCC_LIVE_STOCK_MAX_W];
+
+/* Rows overpainted by the tool glyph, outside a mask change, plus whether the
+   pane was painted whole. */
 static int g_ncc_live_dirty_y0;
 static int g_ncc_live_dirty_y1;
 
@@ -1171,6 +1179,51 @@ static bool ncc_live_context_changed(const ncc_preview_info_t *p, int stock_w,
            g_ncc_live_work_z != frame->work_z;
 }
 
+static void ncc_live_mark_columns(int x0, int x1)
+{
+    x0 = ncc_clampi(x0, 0, g_ncc_live_w - 1);
+    x1 = ncc_clampi(x1, 0, g_ncc_live_w - 1);
+    if (x1 < x0) {
+        int t = x0;
+
+        x0 = x1;
+        x1 = t;
+    }
+    memset(g_ncc_live_col_dirty + x0, 1, (size_t)(x1 - x0 + 1));
+}
+
+static void ncc_live_refresh_column(int col)
+{
+    ncc_live_column_t *column = &g_ncc_live_columns[col];
+    int inner = -1;
+    int outer = -1;
+    int row;
+    int span;
+    int scaled;
+
+    for (row = 0; row < g_ncc_live_h; row++) {
+        if (g_ncc_live_mask[(size_t)row * NCC_LIVE_STOCK_MAX_W + col]) {
+            if (inner < 0) {
+                inner = row;
+            }
+            outer = row;
+        }
+    }
+    if (outer < 0) {
+        column->inner = 0xffffu;
+        column->outer = 0xffffu;
+        column->base = 0u;
+        column->frac = 0u;
+        return;
+    }
+    column->inner = (uint16_t)inner;
+    column->outer = (uint16_t)outer;
+    span = g_ncc_live_h > 1 ? g_ncc_live_h - 1 : 1;
+    scaled = (g_ncc_live_h - 1 - outer) * 48 / span;
+    column->base = (uint8_t)ncc_clampi(scaled / 16, 0, 3);
+    column->frac = (uint8_t)(scaled & 15);
+}
+
 static void ncc_live_reset(const ncc_preview_info_t *p, int stock_w, int stock_h,
                            const ncc_frame_t *frame)
 {
@@ -1202,8 +1255,9 @@ static void ncc_live_reset(const ncc_preview_info_t *p, int stock_w, int stock_h
     g_ncc_live_setup_i = p->stock_i;
     g_ncc_live_work_x = frame->work_x;
     g_ncc_live_work_z = frame->work_z;
-    g_ncc_live_dirty_y0 = 0;
-    g_ncc_live_dirty_y1 = g_ncc_live_h - 1;
+    memset(g_ncc_live_col_dirty, 1, (size_t)g_ncc_live_w);
+    g_ncc_live_dirty_y0 = g_ncc_live_h;
+    g_ncc_live_dirty_y1 = -1;
     g_ncc_live_draw_all = true;
     g_ncc_live_ready = true;
 }
@@ -1247,26 +1301,16 @@ static void ncc_live_remove(int x0, int y0, int x1, int y1)
         y0 = y1;
         y1 = t;
     }
+    ncc_live_mark_columns(x0, x1);
     for (y = y0; y <= y1; y++) {
         uint8_t *slice = g_ncc_live_mask + (size_t)y * NCC_LIVE_STOCK_MAX_W + x0;
         int span = x1 - x0 + 1;
 
-        /* **The whole rectangle is dirty, not only the cells that held
-           material.** The glass is not always in step with the mask - a frame
-           that painted the stock whole (another screen), the tool's own box -
-           and a row this removal leaves behind on the glass is a row the
-           drawing never takes back: the material then stays where the program
-           has already cut it, which is exactly what the bench kept seeing
-           ("no remaing is bigger than x/z in g71 command. this was fixed
-           before"). nc repainted its whole band every frame and never had this;
-           the band only has to be as tall as the cut, which is what this is. */
+        /* The complete changed columns are handed to the drawing. A column's
+           shade belongs to its new cut surface, so redrawing only the removed
+           cells would leave the material above it in the previous depth
+           colour. */
         memset(slice, 0, (size_t)span);
-        if (y < g_ncc_live_dirty_y0) {
-            g_ncc_live_dirty_y0 = y;
-        }
-        if (y > g_ncc_live_dirty_y1) {
-            g_ncc_live_dirty_y1 = y;
-        }
     }
 }
 
@@ -1442,54 +1486,92 @@ static void ncc_live_update(const ncc_preview_info_t *p,
     g_ncc_live_has_last = true;
 }
 
-/* What is left of the stock, drawn: the material in the stock's own colour and
-   the cut away part in the pane's ground. Only the rows the cut went through
-   are painted; the rest of the mask is already on the glass - except after a
-   frame that painted the pane whole (`full`), when every row is painted again. */
+static void ncc_live_draw_column(int stock_left, int stock_top, int col,
+                                 int y0, int y1)
+{
+    const ncc_live_column_t *column = &g_ncc_live_columns[col];
+    int top;
+    int bottom;
+
+    if (column->outer == 0xffffu) {
+        return;
+    }
+    top = column->inner > y0 ? column->inner : y0;
+    bottom = column->outer < y1 ? column->outer : y1;
+    if (bottom < top) {
+        return;
+    }
+    ncc_stock_depth_fill_level(stock_left + col, stock_top + top, 1,
+                               bottom - top + 1, column->base, column->frac);
+}
+
+/* What is left of the stock, drawn from the column cache. Untouched stock is
+   the darkest amber. A cut refreshes only the columns it changed; the glyph's
+   overpaint refreshes only its row band. Dither is emitted as same-colour runs,
+   so no frame scans the whole mask or writes the stock one pixel at a time. */
 static void ncc_live_draw(int stock_left, int stock_top, bool full)
 {
+    bool paint_all = full || g_ncc_live_draw_all;
+    int col;
     int y0;
     int y1;
-    int y;
 
     if (!g_ncc_live_mask || !g_ncc_live_ready) {
         return;
     }
-    y0 = (full || g_ncc_live_draw_all) ? 0 : g_ncc_live_dirty_y0;
-    y1 = (full || g_ncc_live_draw_all) ? g_ncc_live_h - 1
-                                        : g_ncc_live_dirty_y1;
+    for (col = 0; col < g_ncc_live_w; col++) {
+        if (g_ncc_live_col_dirty[col]) {
+            ncc_live_refresh_column(col);
+        }
+    }
+    y0 = g_ncc_live_dirty_y0;
+    y1 = g_ncc_live_dirty_y1;
+    if (!paint_all && y0 > y1) {
+        bool dirty_column = false;
+
+        for (col = 0; col < g_ncc_live_w; col++) {
+            if (g_ncc_live_col_dirty[col]) {
+                dirty_column = true;
+                break;
+            }
+        }
+        if (!dirty_column) {
+            return;
+        }
+    }
+
+    if (paint_all) {
+        ncc_fill(stock_left, stock_top, g_ncc_live_w, g_ncc_live_h,
+                 ncc_col_prev_bg());
+        for (col = 0; col < g_ncc_live_w; col++) {
+            ncc_live_draw_column(stock_left, stock_top, col, 0,
+                                 g_ncc_live_h - 1);
+        }
+        memset(g_ncc_live_col_dirty, 0, (size_t)g_ncc_live_w);
+    } else {
+        if (y0 <= y1) {
+            y0 = ncc_clampi(y0, 0, g_ncc_live_h - 1);
+            y1 = ncc_clampi(y1, y0, g_ncc_live_h - 1);
+            ncc_fill(stock_left, stock_top + y0, g_ncc_live_w, y1 - y0 + 1,
+                     ncc_col_prev_bg());
+            for (col = 0; col < g_ncc_live_w; col++) {
+                ncc_live_draw_column(stock_left, stock_top, col, y0, y1);
+            }
+        }
+        for (col = 0; col < g_ncc_live_w; col++) {
+            if (!g_ncc_live_col_dirty[col]) {
+                continue;
+            }
+            ncc_fill(stock_left + col, stock_top, 1, g_ncc_live_h,
+                     ncc_col_prev_bg());
+            ncc_live_draw_column(stock_left, stock_top, col, 0,
+                                 g_ncc_live_h - 1);
+            g_ncc_live_col_dirty[col] = 0;
+        }
+    }
     g_ncc_live_draw_all = false;
     g_ncc_live_dirty_y0 = g_ncc_live_h;
     g_ncc_live_dirty_y1 = -1;
-    if (y1 < y0) {
-        return;                 /* nothing moved: the glass is already right */
-    }
-    y0 = ncc_clampi(y0, 0, g_ncc_live_h - 1);
-    y1 = ncc_clampi(y1, y0, g_ncc_live_h - 1);
-    ncc_fill(stock_left, ncc_pane_y(stock_top, y0), g_ncc_live_w,
-             y1 - y0 + 1,
-             ncc_col_prev_bg());
-    for (y = y0; y <= y1; y++) {
-        const uint8_t *row = g_ncc_live_mask + (size_t)y * NCC_LIVE_STOCK_MAX_W;
-        int x = 0;
-
-        while (x < g_ncc_live_w) {
-            int start;
-
-            while (x < g_ncc_live_w && !row[x]) {
-                x++;
-            }
-            start = x;
-            while (x < g_ncc_live_w && row[x]) {
-                x++;
-            }
-            if (x > start) {
-                ncc_fill(ncc_pane_x(stock_left, start),
-                         ncc_pane_y(stock_top, y), x - start, 1,
-                         ncc_col_prev_stock());
-            }
-        }
-    }
 }
 
 void ncc_preview_draw(const ncc_document_t *doc, const ncc_preview_run_t *run,
@@ -1594,8 +1676,7 @@ void ncc_preview_draw(const ncc_document_t *doc, const ncc_preview_run_t *run,
                 ncc_chuck(&preview, x, w, y + h, stock_left, stock_top,
                           stock_w, stock_h);
                 ncc_chuck_relief(&preview, stock_left, stock_top, stock_h);
-                ncc_fill(stock_left, stock_top, stock_w, stock_h,
-                         ncc_col_prev_stock());
+                ncc_stock_fill(stock_left, stock_top, stock_w, stock_h);
                 if (preview.stock_i > 0.0f) {
                     int id_h = ncc_map_x(&preview, stock_top, stock_h,
                                          preview.stock_i) -
@@ -1640,6 +1721,8 @@ void ncc_preview_draw(const ncc_document_t *doc, const ncc_preview_run_t *run,
         g_ncc_preview_geom_us = 0u;
         return;
     }
+    ncc_stock_diameter_dimension(&preview, stock_left, stock_top,
+                                 stock_w, stock_h);
     if (dims) {
         ncc_din_layer(&preview, stock_left, stock_top, stock_w, stock_h, z0_x);
     }

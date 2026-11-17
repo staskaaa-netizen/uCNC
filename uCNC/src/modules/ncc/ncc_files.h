@@ -15,6 +15,9 @@
 bool ncc_path_is_program(const char *path);
 /* A path the editor may open at all: a program or a text file. */
 bool ncc_path_is_text(const char *path);
+/* A loaded document is safe to hand to the read-only path preview: every
+   meaningful line has a known command shape and finite, bounded numbers. */
+bool ncc_file_document_is_preview_safe(const ncc_document_t *doc);
 /* Does the path end with this suffix, either case? The card is FAT with short
    names only, so what the machine reads back is `LATHE-~1.NC` for a file written
    on a PC as `lathe-demo.nc`: the extension is capitals, and asking for it in

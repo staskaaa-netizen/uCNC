@@ -224,6 +224,10 @@ Core0 may draw and present only through the public renderer/HSTX APIs. Core1
 owns LUT expansion and line preparation. DMA owns HSTX FIFO feed and descriptor
 progression.
 
+The PSRAM draw backbuffer tracks the union of changed panel pixels. Presentation
+copies only that dirty rectangle into the SRAM scanout buffer, rounded to whole
+packed bytes; a small stock-column update no longer copies the complete frame.
+
 Static storage gives stable lifetime and predictable addresses. It does not
 make memory core-private; ownership is enforced by module boundaries and API
 discipline.
@@ -266,6 +270,14 @@ The release boundary is intentionally small:
 
 Higher layers must not depend on DMA channel internals, line-buffer addresses,
 descriptor layout, core1 state, or old diagnostic counters.
+
+## Palette
+
+The HSTX frame carries sixteen palette slots. The panel's shared table currently
+uses thirteen: two greys, black, white, yellow, pale yellow, red, green, blue,
+and four stock ambers. Tool elements share `yellow`; the NC2 boot mark uses the
+normal `green`. The former duplicate white, red, grey, tool-orange and
+bright-green entries are retired, leaving three slots free for later overlays.
 
 Draw guards belong in the low-level API: invalid coordinates must be rejected
 before they can touch framebuffer memory.

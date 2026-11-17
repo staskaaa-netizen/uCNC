@@ -170,8 +170,8 @@ not something the preview can do on its own.
 
 | state | the drawing |
 | --- | --- |
-| **DIN** | the whole picture: stock, chuck, the contour, the emitted path, the rulers and the dimension callouts |
-| **stock + path** | the same without the DIN layer - the plain block and what the program cuts |
+| **DIN** | the whole picture: stock, chuck, the contour, the emitted path, the rulers and the DIN dimension callouts |
+| **stock + path** | the same without the DIN rulers and callouts - the plain block and what the program cuts |
 
 On RUN the key is the run's (`#` reloads the program), and the screen does not
 ask: **while the machine is cutting it draws the stock** - the cut is what the
@@ -191,6 +191,20 @@ leave a piece of a callout behind (bench: *"and dimensions too ?"*). What the
 run screen still does **not** draw while cutting is the program's *path* - the
 emitted moves and the three offset lines - because the glass is already showing
 the cut itself; those come back as soon as it parks.
+
+**The stock's outer diameter has one owner.** It is drawn in both `#` states;
+DIN adds the rulers, centrelines and finished/bore diameter around it. A contour
+point at the same X does not repeat the stock diameter callout.
+
+**The live stock is shaded by material depth.** Untouched stock is the darkest
+amber. Each Z column reads its remaining X span directly from the existing mask
+and recolours from the current surface toward the centre. The four adjacent
+amber bands are mixed by a static 4×4 ordered dither, giving an inexpensive
+multi-level reading without another matrix, allocation or pseudo-3D lighting.
+The per-column cut surface and dither level are cached when that column changes;
+the frame redraws only those columns, or the tool glyph's dirty row band. Dither
+colours are emitted as same-colour fill runs rather than one pixel call at a
+time, and presentation copies only the changed panel rectangle into scanout.
 
 `#` is the editor's key too, and the order is fixed: the path builder is modal
 and takes `#` as its step key (`nc`'s own); a value that is *picked* takes it as
@@ -296,6 +310,11 @@ to edit i am stuck here + its need a safety not to edit [a] running file"*):
 `--runlock2test` pins both: it gives the card a *different* program behind the
 panel's back after the run is armed, so a switch that re-reads it shows in the
 machine's own end position.
+
+HOLD is not execution: while the run is held, `B`/`C` may still move the RUN
+mark so the next `1 SINGLE` or `2 FROM` acts on the chosen row. Starting a fresh
+`3 FULL` or `2 FROM` clears a stale controller HOLD from the completed run; a
+door or feed hold is still respected.
 
 ### The tool table's group is the TOOLS screen's
 
@@ -588,7 +607,7 @@ on the machine") and has been walked against the ELF that had the bug.
 
 ### The chuck, and `G972 C`
 
-The jaws are nc's own drawing (`nc_preview.c`): a hatched bar whose **length
+The jaws are nc's own drawing (`nc_preview.c`): a plain dark-grey bar whose **length
 along Z and thickness both come from `G972 C`**, from the pane's left edge to a
 little past the stock's left end, with the jaw's pivot circle hanging under the
 stock's foot. The port had replaced this with a vertical block *inside* the
@@ -628,6 +647,28 @@ again on every visit, and not on "whatever sorts first" (bench, 2026-09-27:
 *"it was better approach in nc - same folder if 0 pressed not root"*, nc's
 `nc_files_select_path()` doing exactly this). With nothing open - a program that
 was never saved - it falls back to the root, which is the only place there is.
+On RUN this key is handled before the no-program guard, so an empty RUN screen
+can still reach the card. Opening a program from RUN remembers it as the program
+path, the same file EDIT and RUN share.
+
+The file's row behaves the same on RUN as on EDIT: `B` from line 1 selects it,
+`B` stays there, `C` returns to line 1, and `D` opens the folder with that file
+selected. While `EXEC_RUN` is active, `B`/`C` belong to the machine and the file
+row cannot be taken by the operator.
+
+**The picker previews without taking over the document.** The selected program
+is loaded into a separate static document and drawn in the pane while the list
+is up. The editor's file and the run's file are untouched; stepping over a
+folder or text file falls back to the active document. No selection is read
+while a run owns the program. This costs one static document and one bounded
+card read per selection, not a frame-loop allocation.
+
+The preview gate is lexical rather than extension-only. Every meaningful line
+must begin with a numeric `G`/direct sender command, use a known contour row, or
+be blank/comment/controller text; every number must be finite and bounded.
+Macro-like files such as `SETUP ...` / `TOOLCALL ...` therefore stay out of the
+path renderer, leave the active document intact, and replace the preview pane
+with “Unable to generate preview.”
 
 **A refresh does not move the pick.** `8` reads the folder again and the entry
 the operator was standing on stays picked; it used to fall back to the first

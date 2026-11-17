@@ -14,6 +14,7 @@
    state. */
 
 const ncc_document_t *ncc_visual_document(void);
+bool ncc_visual_file_preview_failed(void);
 bool ncc_visual_list(void);
 bool ncc_visual_name_selected(void);
 const char *ncc_visual_refused(void);

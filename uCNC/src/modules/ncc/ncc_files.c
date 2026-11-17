@@ -1,10 +1,13 @@
 #include "ncc_files.h"
 
 #include "../file_system.h"
+#include "../g7x/g7x.h"
 #include "../../interface/grbl_stream.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* How many entries one scan reports to the console. The list a card hands back
@@ -57,6 +60,70 @@ bool ncc_path_is_text(const char *path)
 {
     return ncc_path_is_program(path) || ncc_path_has_suffix(path, ".t") ||
            ncc_path_has_suffix(path, ".txt");
+}
+
+bool ncc_file_document_is_preview_safe(const ncc_document_t *doc)
+{
+    bool saw_command = false;
+    size_t i;
+
+    if (!doc) {
+        return false;
+    }
+    for (i = 0u; i < doc->line_count; i++) {
+        const char *line = doc->lines[i];
+        const char *p = line;
+        ncc_field_t fields[NCC_MAX_FIELDS];
+        int count;
+        int first = -1;
+        int j;
+        char *end;
+        double value;
+
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+        if (!*p || *p == '(' || *p == ';' || *p == '%' || *p == '$') {
+            continue;
+        }
+        count = ncc_fields(line, fields, NCC_MAX_FIELDS);
+        for (j = 0; j < count; j++) {
+            if (toupper((unsigned char)fields[j].letter) != 'N') {
+                first = j;
+                break;
+            }
+        }
+        /* Macro-like text such as SETUP or TOOLCALL has no numeric value after
+           its first command letter. It is not a program the preview may parse. */
+        if (first < 0 || fields[first].value == fields[first].end) {
+            return false;
+        }
+        for (j = 0; j < count; j++) {
+            if (fields[j].value == fields[j].end) {
+                continue;
+            }
+            value = strtod(line + fields[j].value, &end);
+            if (end == line + fields[j].value || !isfinite(value) ||
+                fabs(value) > 1000000.0) {
+                return false;
+            }
+        }
+        if (toupper((unsigned char)fields[first].letter) == 'G' ||
+            nc_sender_emit_line_is_direct(g7x_skip_line_number(p))) {
+            saw_command = true;
+            continue;
+        }
+        {
+            g7x_contour_cmd_t cmd =
+                g7x_contour_cmd_from_line(g7x_skip_line_number(p));
+
+            if (cmd == G7X_CONTOUR_NONE || cmd == G7X_CONTOUR_END) {
+                return false;
+            }
+        }
+        saw_command = true;
+    }
+    return saw_command;
 }
 
 /* One line at a time, cut at the panel's own width: a longer line could not be

@@ -25,6 +25,12 @@
 #include <string.h>
 
 static ncc_document_t g_doc;
+/* The file picker's preview is a separate read-only document: browsing must
+   never replace the editor document or the run's document. It is static, so a
+   selection change is one bounded card read and never a frame-loop allocation. */
+static ncc_document_t g_file_preview_doc;
+static bool g_file_preview_ready;
+static bool g_file_preview_failed;
 static char g_address[NCC_ADDR_MAX + 1];
 static char g_status[NCC_STATUS_MAX];
 /* What the panel handed over for the line the controller refused: the block,
@@ -72,6 +78,7 @@ static g7x_doc_t *ncc_visual_run_source(void)
 static void ncc_visual_load_tools(void);
 static void ncc_visual_load_tool_table(void);
 static void ncc_statusf(const char *text);
+static void ncc_visual_refresh_file_preview(void);
 
 /* The wording of a refused line: the module that refused it knows *why* and
    hands its reason over (`g7x_take_refusal_text()` - reading it takes it, so it
@@ -193,7 +200,11 @@ void ncc_visual_init(void)
        reason the host backend now keeps a real palette too). */
     ncc_boot_start();
     ncc_draw_init();
+    g_list = false;
     ncc_document_init(&g_doc);
+    ncc_document_init(&g_file_preview_doc);
+    g_file_preview_ready = false;
+    g_file_preview_failed = false;
     ncc_address_reset(g_address);
     g_name_selected = false;
     ncc_statusf("");
@@ -373,6 +384,8 @@ void ncc_visual_select_mode(ncc_mode_t mode)
         (void)ncc_visual_save();       /* whatever this screen had open */
     }
     g_list = false;
+    g_file_preview_ready = false;
+    g_file_preview_failed = false;
     g_mode = mode;
     ncc_state_set_mode(mode);
     ncc_state_flush();             /* the screen is what the card remembers */
@@ -488,7 +501,9 @@ bool ncc_visual_open(const char *path)
     }
     ncc_address_reset(g_address);
     ncc_labels_at(g_address);
-    ncc_state_remember_path(g_mode, g_doc.path);
+    ncc_state_remember_path(g_mode == NCC_MODE_TOOLS ? NCC_MODE_TOOLS
+                                                      : NCC_MODE_PROGRAM,
+                            g_doc.path);
     ncc_state_flush();
     g_dirty = true;
     return true;
@@ -530,6 +545,7 @@ static void ncc_visual_open_current_folder(void)
     }
     (void)ncc_file_select_path(path);
     g_list = true;
+    ncc_visual_refresh_file_preview();
     ncc_statusf("");
 }
 
@@ -607,7 +623,55 @@ const char *ncc_visual_status(void)
 
 const ncc_document_t *ncc_visual_document(void)
 {
-    return &g_doc;
+    return (g_list && g_file_preview_ready) ? &g_file_preview_doc : &g_doc;
+}
+
+bool ncc_visual_file_preview_failed(void)
+{
+    return g_list && g_file_preview_failed;
+}
+
+/* Keep the picker's drawing on the selected program without touching the
+   editor/run document. Only a completed, non-running selection is loaded; a
+   folder, a non-program, or a failed read leaves no picker preview rather than
+   showing a half-read file as if it were the operator's. */
+static void ncc_visual_refresh_file_preview(void)
+{
+    char path[NCC_PATH_MAX];
+    const ncc_file_entry_t *entry;
+
+    if (!g_list || nc_sender_run_active() || nc_sender_run_streaming()) {
+        g_file_preview_ready = false;
+        g_file_preview_failed = false;
+        return;
+    }
+    entry = ncc_file_entry(ncc_file_selected());
+    if (!entry || entry->is_dir ||
+        !ncc_file_selected_path(path, sizeof(path)) ||
+        !ncc_path_is_program(path)) {
+        g_file_preview_ready = false;
+        g_file_preview_failed = true;
+        ncc_statusf("Unable to generate preview");
+        return;
+    }
+    if (g_file_preview_ready &&
+        strcmp(g_file_preview_doc.path, path) == 0) {
+        return;
+    }
+    if (ncc_file_load(&g_file_preview_doc, path)) {
+        g_file_preview_ready =
+            ncc_file_document_is_preview_safe(&g_file_preview_doc);
+        g_file_preview_failed = !g_file_preview_ready;
+        if (!g_file_preview_ready) {
+            ncc_statusf("Unable to generate preview");
+        } else if (strcmp(g_status, "Unable to generate preview") == 0) {
+            ncc_statusf("");
+        }
+    } else {
+        g_file_preview_ready = false;
+        g_file_preview_failed = true;
+        ncc_statusf("Unable to generate preview");
+    }
 }
 
 bool ncc_visual_list(void)
@@ -805,8 +869,8 @@ static bool ncc_visual_run_key(char key)
     }
     case 'B':
     case 'C':
-        if (nc_sender_run_active()) {
-            return true;            /* RUN owns the cursor while it runs */
+        if (cnc_get_exec_state(EXEC_RUN)) {
+            return true;            /* only executing motion owns the cursor */
         }
         if (key == 'B') {
             line = line > 0u ? line - 1u : 0u;
@@ -919,9 +983,11 @@ void ncc_visual_key(char key)
         switch (key) {
         case 'B':
             ncc_file_step(-1);
+            ncc_visual_refresh_file_preview();
             break;
         case 'C':
             ncc_file_step(1);
+            ncc_visual_refresh_file_preview();
             break;
         case 'D':
         case '#':
@@ -934,10 +1000,13 @@ void ncc_visual_key(char key)
                 if (!ncc_file_scan(path)) {
                     ncc_statusf("Cannot read that folder");
                 }
+                ncc_visual_refresh_file_preview();
                 break;
             }
             if (ncc_visual_open(path)) {
                 g_list = false;
+                g_file_preview_ready = false;
+                g_file_preview_failed = false;
             }
             break;
         case '5':
@@ -947,6 +1016,7 @@ void ncc_visual_key(char key)
         case '6':
             if (ncc_file_delete_selected()) {
                 ncc_statusf("Deleted");
+                ncc_visual_refresh_file_preview();
             } else {
                 ncc_statusf("Cannot delete that");
             }
@@ -954,6 +1024,8 @@ void ncc_visual_key(char key)
         case '8':
             if (!ncc_file_scan(ncc_file_dir())) {
                 ncc_statusf("Refresh failed");
+            } else {
+                ncc_visual_refresh_file_preview();
             }
             break;
         case '*':
@@ -961,6 +1033,8 @@ void ncc_visual_key(char key)
             /* `0` is the way out of whatever is up, and the list is one of those
                things: out of the list is the program. */
             g_list = false;
+            g_file_preview_ready = false;
+            g_file_preview_failed = false;
             ncc_statusf("");
             break;
         default:
@@ -982,14 +1056,12 @@ void ncc_visual_key(char key)
         g_dirty = true;
         return;
     }
-    if (g_doc.line_count == 0u) {
-        return;                     /* no program: the keys have nothing to act on */
-    }
     /* The run screen: `0` still opens the card and `A` still leaves, and the
-       rest of the pad is the run's. */
+       rest of the pad is the run's. These navigation keys come before the
+       no-program guard so an empty RUN screen can still reach the card. */
     if (g_mode == NCC_MODE_RUN) {
         if (key == '0') {
-        ncc_visual_open_current_folder();
+            ncc_visual_open_current_folder();
             g_dirty = true;
             return;
         }
@@ -997,8 +1069,43 @@ void ncc_visual_key(char key)
             ncc_visual_next_mode();
             return;
         }
+        if (cnc_get_exec_state(EXEC_RUN)) {
+            if (g_name_selected) {
+                g_name_selected = false;
+                g_dirty = true;
+            }
+        } else {
+            size_t line = ncc_visual_run_line();
+
+            if (g_name_selected) {
+                if (key == 'B') {
+                    g_dirty = true;
+                    return;
+                }
+                if (key == 'C') {
+                    g_name_selected = false;
+                    g_doc.cursor = 0u;
+                    nc_sender_run_set_line(ncc_visual_run_source(), 0u);
+                    g_dirty = true;
+                    return;
+                }
+                if (key == 'D') {
+                    ncc_visual_open_current_folder();
+                    g_dirty = true;
+                    return;
+                }
+                g_name_selected = false;
+            } else if (key == 'B' && g_doc.field < 0 && line == 0u) {
+                g_name_selected = true;
+                g_dirty = true;
+                return;
+            }
+        }
         (void)ncc_visual_run_key(key);
         return;
+    }
+    if (g_doc.line_count == 0u) {
+        return;                     /* no program: the keys have nothing to act on */
     }
     /* EDIT, with the run in flight: the keys that look still work, the keys
        that would write answer with the reason (see

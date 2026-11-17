@@ -134,6 +134,10 @@ typedef struct {
     volatile bool display_started;
     bool backbuffer_active;
     bool dirty;
+    int16_t dirty_x0;
+    int16_t dirty_y0;
+    int16_t dirty_x1;
+    int16_t dirty_y1;
 } lvds_hstx_ctrl_state_t;
 
 typedef struct {
@@ -174,6 +178,10 @@ static lvds_hstx_palette_state_t g_hstx_palette LVDS_HSTX_SECTION_PALETTE;
 #define g_display_started (g_hstx_ctrl.display_started)
 #define g_backbuffer_active (g_hstx_ctrl.backbuffer_active)
 #define g_dirty (g_hstx_ctrl.dirty)
+#define g_dirty_x0 (g_hstx_ctrl.dirty_x0)
+#define g_dirty_y0 (g_hstx_ctrl.dirty_y0)
+#define g_dirty_x1 (g_hstx_ctrl.dirty_x1)
+#define g_dirty_y1 (g_hstx_ctrl.dirty_y1)
 #define g_core1_ready (g_hstx_core1.ready)
 #define g_descriptor_last_index (g_hstx_core1.descriptor_last_index)
 
@@ -600,6 +608,37 @@ static void configure_lvds_clocks(void)
 #endif
 }
 
+static void mark_dirty_rect(int x, int y, int w, int h)
+{
+    int x1;
+    int y1;
+
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    x1 = x + w;
+    y1 = y + h;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x1 > LVDS_HSTX_WIDTH) x1 = LVDS_HSTX_WIDTH;
+    if (y1 > LVDS_HSTX_HEIGHT) y1 = LVDS_HSTX_HEIGHT;
+    if (x >= x1 || y >= y1) {
+        return;
+    }
+    if (!g_dirty) {
+        g_dirty_x0 = (int16_t)x;
+        g_dirty_y0 = (int16_t)y;
+        g_dirty_x1 = (int16_t)x1;
+        g_dirty_y1 = (int16_t)y1;
+        g_dirty = true;
+        return;
+    }
+    if (x < g_dirty_x0) g_dirty_x0 = (int16_t)x;
+    if (y < g_dirty_y0) g_dirty_y0 = (int16_t)y;
+    if (x1 > g_dirty_x1) g_dirty_x1 = (int16_t)x1;
+    if (y1 > g_dirty_y1) g_dirty_y1 = (int16_t)y1;
+}
+
 static void put_pixel_raw(int x, int y, uint8_t color)
 {
     uint32_t p;
@@ -613,7 +652,7 @@ static void put_pixel_raw(int x, int y, uint8_t color)
     } else {
         g_draw_buffer[p >> 1] = (uint8_t)((g_draw_buffer[p >> 1] & 0xf0) | color);
     }
-    g_dirty = true;
+    mark_dirty_rect(x, y, 1, 1);
 }
 
 static bool hstx_ready_for_draw(void)
@@ -646,6 +685,10 @@ bool lvds_hstx_init(void)
     g_draw_buffer = g_framebuffer;
     g_backbuffer_active = false;
     g_dirty = false;
+    g_dirty_x0 = 0;
+    g_dirty_y0 = 0;
+    g_dirty_x1 = 0;
+    g_dirty_y1 = 0;
 #if LEANCAM_USE_PSRAM_BACKBUFFER
     if (lvds_psram_available()) {
         g_draw_buffer = (uint8_t *)lvds_psram_ptr(0);
@@ -693,7 +736,7 @@ void lvds_hstx_clear(lvds_color_t color)
         return;
     }
     memset(g_draw_buffer, (int)((c << 4) | c), LVDS_HSTX_FB_SIZE);
-    g_dirty = true;
+    mark_dirty_rect(0, 0, LVDS_HSTX_WIDTH, LVDS_HSTX_HEIGHT);
 }
 
 void lvds_hstx_pixel(int x, int y, lvds_color_t color)
@@ -815,7 +858,7 @@ void lvds_hstx_fill_rect(int x, int y, int w, int h, lvds_color_t color)
             memset(g_draw_buffer + row + ((uint32_t)left >> 1), packed, (size_t)(right - left) >> 1);
         }
     }
-    g_dirty = true;
+    mark_dirty_rect(x, y, w, h);
 }
 
 void lvds_hstx_ellipse(int x, int y, int rx, int ry, lvds_color_t color)
@@ -902,7 +945,19 @@ void lvds_hstx_present(void)
         return;
     }
     if (g_backbuffer_active && g_dirty) {
-        memcpy(g_framebuffer, g_draw_buffer, LVDS_HSTX_FB_SIZE);
+        int x0 = g_dirty_x0 & ~1;
+        int x1 = (g_dirty_x1 + 1) & ~1;
+        size_t row_bytes = (size_t)LVDS_HSTX_WIDTH / 2u;
+        int y;
+
+        if (x1 > LVDS_HSTX_WIDTH) x1 = LVDS_HSTX_WIDTH;
+        for (y = g_dirty_y0; y < g_dirty_y1; y++) {
+            size_t row = (size_t)y * row_bytes;
+
+            memcpy(g_framebuffer + row + (size_t)(x0 / 2),
+                   g_draw_buffer + row + (size_t)(x0 / 2),
+                   (size_t)(x1 - x0) / 2u);
+        }
         g_dirty = false;
     }
     (void)g_display_started;

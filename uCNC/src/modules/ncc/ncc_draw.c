@@ -20,7 +20,7 @@ lvds_color_t ncc_col_accent(void) { return lvds_palette_element(LC_ELEM_VALUE_TE
 lvds_color_t ncc_col_select(void) { return lvds_palette_element(LC_ELEM_SELECTED_ROW); }
 /* The pad's keys are the machine's own buttons: white with black on them, the way
    the footer's keys were - `LC_ELEM_PANEL` is the *screen's* green, not a key. */
-lvds_color_t ncc_col_pad_key(void) { return lvds_palette_color(white_warm); }
+lvds_color_t ncc_col_pad_key(void) { return lvds_palette_color(white); }
 lvds_color_t ncc_col_pad_hot(void) { return lvds_palette_color(yellow); }
 /* What is drawn *on a key*: the pad's number and label, and the values on a
    marked row, are the panel's dark ink on the key's own white. */
@@ -29,7 +29,7 @@ lvds_color_t ncc_col_pad_text(void) { return lvds_palette_color(black); }
    panel's black, which is what makes it read as the thing the digits go into
    (bench: "text to be edit - white on black background"). */
 lvds_color_t ncc_col_field_bg(void) { return lvds_palette_color(black); }
-lvds_color_t ncc_col_field_fg(void) { return lvds_palette_color(white_warm); }
+lvds_color_t ncc_col_field_fg(void) { return lvds_palette_color(white); }
 lvds_color_t ncc_col_block(void) { return lvds_palette_color(yellow_light); }
 lvds_color_t ncc_col_run(void) { return lvds_palette_color(green); }
 lvds_color_t ncc_col_error(void) { return lvds_palette_element(LC_ELEM_ERROR); }
@@ -38,15 +38,101 @@ lvds_color_t ncc_col_error(void) { return lvds_palette_element(LC_ELEM_ERROR); }
    and cut colours, so a pane can be read as a drawing and not as a screen. */
 lvds_color_t ncc_col_prev_bg(void) { return lvds_palette_element(LC_ELEM_PREVIEW_BG); }
 lvds_color_t ncc_col_prev_frame(void) { return lvds_palette_element(LC_ELEM_PREVIEW_FRAME); }
-lvds_color_t ncc_col_prev_stock(void) { return lvds_palette_element(LC_ELEM_PREVIEW_STOCK); }
-/* The chuck: nc's own white bar with its dark hatching, and the pivot circle it
-   hangs on. */
-lvds_color_t ncc_col_prev_chuck(void) { return lvds_palette_color(white_warm); }
+lvds_color_t ncc_col_prev_stock(void) { return lvds_palette_color(stock_dark); }
+/* The chuck: a plain dark-grey bar and the pivot circle it hangs on. */
+lvds_color_t ncc_col_prev_chuck(void) { return lvds_palette_color(gray_128); }
 lvds_color_t ncc_col_prev_chuck_ink(void) { return lvds_palette_color(black); }
 lvds_color_t ncc_col_prev_hatch(void) { return lvds_palette_element(LC_ELEM_PREVIEW_HATCH); }
 lvds_color_t ncc_col_prev_cut(void) { return lvds_palette_element(LC_ELEM_PREVIEW_CUT); }
 lvds_color_t ncc_col_prev_profile(void) { return lvds_palette_element(LC_ELEM_PREVIEW_PROFILE); }
 lvds_color_t ncc_col_tool(void) { return lvds_palette_element(LC_ELEM_PREVIEW_TOOL); }
+
+void ncc_stock_fill(int x, int y, int w, int h)
+{
+    ncc_fill(x, y, w, h, lvds_palette_color(stock_dark));
+}
+
+lvds_color_t ncc_stock_depth_colour(int cut_top, int stock_h)
+{
+    int span = stock_h > 1 ? stock_h - 1 : 1;
+    int depth = ncc_clampi(cut_top, 0, span);
+
+    if (depth * 16 < span) {
+        return lvds_palette_color(stock_dark);
+    }
+    if (depth * 4 < span) {
+        return lvds_palette_color(stock_base);
+    }
+    if (depth * 2 < span) {
+        return lvds_palette_color(stock_light);
+    }
+    return lvds_palette_color(stock_highlight);
+}
+
+static const uint8_t ncc_stock_bayer[4][4] = {
+    {0, 8, 2, 10},
+    {12, 4, 14, 6},
+    {3, 11, 1, 9},
+    {15, 7, 13, 5}
+};
+
+void ncc_stock_depth_fill_level(int x, int y, int w, int h,
+                                uint8_t base, uint8_t frac)
+{
+    lvds_color_t shade[4] = {
+        lvds_palette_color(stock_dark),
+        lvds_palette_color(stock_base),
+        lvds_palette_color(stock_light),
+        lvds_palette_color(stock_highlight)
+    };
+    int py;
+
+    base = (uint8_t)ncc_clampi(base, 0, 3);
+    frac &= 15;
+    for (py = y; py < y + h; py++) {
+        int start = py;
+        int level = base;
+        int run_level;
+
+        if (level < 3 && ncc_stock_bayer[py & 3][x & 3] < frac) {
+            level++;
+        }
+        run_level = level;
+        py++;
+        while (py < y + h) {
+            level = base;
+            if (level < 3 && ncc_stock_bayer[py & 3][x & 3] < frac) {
+                level++;
+            }
+            if (level != run_level) {
+                break;
+            }
+            py++;
+        }
+        ncc_fill(x, start, w, py - start, shade[run_level]);
+        py--;
+    }
+}
+
+void ncc_stock_depth_fill(int x, int y, int w, int h, int cut_depth,
+                          int stock_h)
+{
+    int span = stock_h > 1 ? stock_h - 1 : 1;
+    int scaled = ncc_clampi(cut_depth, 0, span) * 48 / span;
+
+    ncc_stock_depth_fill_level(x, y, w, h,
+                               (uint8_t)ncc_clampi(scaled / 16, 0, 3),
+                               (uint8_t)(scaled & 15));
+}
+
+bool ncc_stock_colour(lvds_color_t color)
+{
+    return color == lvds_palette_color(stock_dark) ||
+           color == lvds_palette_color(stock_base) ||
+           color == lvds_palette_color(stock_light) ||
+           color == lvds_palette_color(stock_highlight);
+}
+
 int ncc_clampi(int v, int lo, int hi)
 {
     if (v < lo) {

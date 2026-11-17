@@ -81,7 +81,7 @@
 #define LC_COL_DIM     lvds_palette_element(LC_ELEM_SECONDARY_TEXT)
 #define LC_COL_VALUE   lvds_palette_element(LC_ELEM_VALUE_TEXT)
 #define LC_COL_HI      lvds_palette_element(LC_ELEM_SELECTED_TEXT)
-#define LC_COL_EDIT_FG lvds_palette_color(white_warm)
+#define LC_COL_EDIT_FG lvds_palette_color(white)
 #define LC_COL_EDIT_BG lvds_palette_color(black)
 #define LC_COL_BAD     lvds_palette_element(LC_ELEM_ERROR)
 #define LC_COL_OK      lvds_palette_element(LC_ELEM_OK)
@@ -1416,7 +1416,7 @@ static int lc_tool_shape_tip_digit(int orient)
 static void lc_draw_tool_doc_dot(int tip_x, int tip_y, int size)
 {
     int r = lc_clampi(size / 2, 4, 28);
-    lvds_draw_fill_ellipse(tip_x, tip_y, r, r, lvds_palette_color(red_bright));
+    lvds_draw_fill_ellipse(tip_x, tip_y, r, r, lvds_palette_color(red));
     lvds_draw_ellipse(tip_x, tip_y, r, r, LC_PREVIEW_TOOL_OUTLINE);
 }
 
@@ -1514,7 +1514,7 @@ static void lc_draw_tool_drill_marker(int tip_x, int tip_y, int size, int thick)
     int half = (len * 1732) / 1000; /* 120 degree included drill point. */
     int base_x = tip_x + len;
     lvds_color_t fill = lvds_palette_color(yellow);
-    lvds_color_t edge = lvds_palette_color(red_bright);
+    lvds_color_t edge = lvds_palette_color(red);
 
     lc_fill_triangle(tip_x, tip_y, base_x, tip_y - half, base_x, tip_y, fill);
     lc_fill_triangle(tip_x, tip_y, base_x, tip_y, base_x, tip_y + half, fill);
@@ -1643,7 +1643,7 @@ static void lc_draw_tool_marker_shape(int x,
     int right_bottom = (right && bottom) ? rr : 0;
     int bottom_left = (bottom && left) ? rr : 0;
     lvds_color_t fill = lvds_palette_color(yellow);
-    lvds_color_t edge = lvds_palette_color(red_bright);
+    lvds_color_t edge = lvds_palette_color(red);
 
     if (size < 2) {
         return;
@@ -1691,7 +1691,7 @@ static void lc_draw_tool_polygon_marker(int tip_x, int tip_y, int orient, int si
     int step = lc_clampi(size / 2, 8, 56);
     int n = lc_tool_orient_digits(orient, digits, 4);
     lvds_color_t fill = lvds_palette_color(yellow);
-    lvds_color_t edge = lvds_palette_color(red_bright);
+    lvds_color_t edge = lvds_palette_color(red);
     lvds_color_t mount = LC_COL_DIM;
 
     if (n < 3) {
@@ -1842,7 +1842,7 @@ static void lc_draw_tool_tip_glyph_centered(const char *line,
         lc_draw_tool_marker_shape(sx, sy, marker_size, rr,
                                   left, top, right, bottom,
                                   selected ? 2 : 1, relief);
-        lvds_draw_fill_ellipse(tip_x, tip_y, 1, 1, lvds_palette_color(red_bright));
+        lvds_draw_fill_ellipse(tip_x, tip_y, 1, 1, lvds_palette_color(red));
     }
 }
 
@@ -1908,7 +1908,7 @@ static void lc_draw_tool_tip_glyph_at_tip(const char *line,
                                   left, top, right, bottom,
                                   selected ? 2 : 1, relief);
     }
-    lvds_draw_fill_ellipse(tip_x, tip_y, 2, 2, lvds_palette_color(red_bright));
+    lvds_draw_fill_ellipse(tip_x, tip_y, 2, 2, lvds_palette_color(red));
 }
 
 static void lc_draw_tool_row_glyph(const char *line, int x, int y, bool selected)
@@ -2141,7 +2141,7 @@ static void lc_draw_tool_asset_preview(const ui_snapshot_frame_t *frame)
     } else {
         lc_draw_tool_marker_shape(sx, sy, size, rr, left, top, right, bottom, 2, LC_PREVIEW_STOCK_FG);
     }
-    lvds_draw_fill_ellipse(tip_x, tip_y, 2, 2, lvds_palette_color(red_bright));
+    lvds_draw_fill_ellipse(tip_x, tip_y, 2, 2, lvds_palette_color(red));
 
     snprintf(buf, sizeof(buf), "O %d", orient);
     lc_text_clip(LC_TOOL_EDITOR_LEFT_X + 16, 326, buf, 32, LC_COL_TEXT, LC_COL_BG, LVDS_FONT_NORMAL);
@@ -4270,9 +4270,9 @@ static void draw_leancam_footer(const ui_snapshot_frame_t *frame,
                                LC_COL_FOOTER_BG,
                                LC_COL_FOOTER_VALUE,
                                LC_COL_FOOTER_TEXT,
-                               lvds_palette_color(white_warm),
+                               lvds_palette_color(white),
                                lvds_palette_color(black),
-                               lvds_palette_color(gray_96),
+                               lvds_palette_color(gray_128),
                                LC_COL_FOOTER_TEXT,
                                LVDS_FONT_NORMAL);
     draw_block_meter(350, 552, LC_COL_FOOTER_TEXT, LC_COL_FOOTER_BG);

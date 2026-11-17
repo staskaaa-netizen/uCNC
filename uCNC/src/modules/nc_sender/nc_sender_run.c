@@ -272,6 +272,7 @@ static void nc_sender_run_program_finish(int why)
     g_nc_sender_run_end_line = (size_t)-1;
     g_nc_sender_run_step_in_flight = false;
     g_nc_sender_run_active = false;
+    g_nc_sender_run_hold = false;
     /* A normal end is what makes the DRO stop saying "run" once the queue
        drains; a stop that has already spoken for itself is not one. */
     if (why >= 0) {
@@ -433,6 +434,14 @@ bool nc_sender_run_start(const g7x_doc_t *doc, size_t line)
        2026-10-04: *"g40 run is still red alert"*, and then *"now g42 still
        appears while g41 portion was not finished"*). */
     nc_sender_run_state_forget();
+    /* `3 FULL` / `2 FROM` starts a new run. A controller HOLD left by the prior
+       run must not silently turn that new run into HOLD and make the operator
+       press `4` again. The clear still respects the safety door and feed hold. */
+    if (!nc_sender_run_streaming() &&
+        !cnc_get_exec_state(EXEC_DOOR) &&
+        cnc_get_exec_state(EXEC_HOLD)) {
+        cnc_clear_exec_state(EXEC_HOLD);
+    }
     if (!nc_sender_run_arm(doc, line, doc ? doc->count - 1u : 0u)) {
         return false;
     }

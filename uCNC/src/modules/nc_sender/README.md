@@ -24,6 +24,11 @@ Output:
 - a bounded G7x error state;
 - run start/stop/hold and execution-line state.
 
+A fresh `FULL` or `FROM` run clears a controller HOLD left by the previous run,
+unless a door or feed hold is still active. HOLD does not count as execution for
+the caller's cursor movement: a held RUN screen can still select the row the
+next `SINGLE` or `FROM` will use.
+
 The caller keeps:
 
 - `U`/`W` display and editor rules;

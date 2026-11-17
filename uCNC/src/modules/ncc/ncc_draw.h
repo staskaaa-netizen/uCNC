@@ -43,6 +43,15 @@ lvds_color_t ncc_col_prev_cut(void);
 lvds_color_t ncc_col_prev_profile(void);
 /* The nose circle on the live cut. */
 lvds_color_t ncc_col_tool(void);
+/* Stock depth is a material reading, not lighting: untouched stock is dark and
+   the four adjacent amber bands are mixed by a static ordered dither. */
+void ncc_stock_fill(int x, int y, int w, int h);
+lvds_color_t ncc_stock_depth_colour(int cut_top, int stock_h);
+void ncc_stock_depth_fill(int x, int y, int w, int h, int cut_depth,
+                          int stock_h);
+void ncc_stock_depth_fill_level(int x, int y, int w, int h,
+                                uint8_t base, uint8_t frac);
+bool ncc_stock_colour(lvds_color_t color);
 /* Keep a value inside a range: the drawing code is full of it, and it belongs
    with the drawing rather than with each screen that draws. */
 int ncc_clampi(int v, int lo, int hi);

@@ -20,11 +20,11 @@ lvds_color_t nc2_col_accent(void) { return lvds_palette_element(LC_ELEM_VALUE_TE
 lvds_color_t nc2_col_select(void) { return lvds_palette_element(LC_ELEM_SELECTED_ROW); }
 /* The pad's keys are the machine's own buttons: white with black on them, the way
    the footer's keys were - `LC_ELEM_PANEL` is the *screen's* green, not a key. */
-lvds_color_t nc2_col_pad_key(void) { return lvds_palette_color(white_warm); }
+lvds_color_t nc2_col_pad_key(void) { return lvds_palette_color(white); }
 lvds_color_t nc2_col_pad_hot(void) { return lvds_palette_color(yellow); }
 /* The field being typed into: a bright box that stands out on the cursor's own
    row as much as on any other. */
-lvds_color_t nc2_col_field_bg(void) { return lvds_palette_color(white_warm); }
+lvds_color_t nc2_col_field_bg(void) { return lvds_palette_color(white); }
 lvds_color_t nc2_col_field_fg(void) { return lvds_palette_color(black); }
 lvds_color_t nc2_col_block(void) { return lvds_palette_color(yellow_light); }
 lvds_color_t nc2_col_run(void) { return lvds_palette_color(green); }

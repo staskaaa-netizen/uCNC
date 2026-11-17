@@ -873,6 +873,16 @@ static void ncc_draw_preview(bool full)
     ncc_preview_run_t run;
     ncc_tool_t tool;
 
+    if (ncc_visual_list() && ncc_visual_file_preview_failed()) {
+        ncc_fill(NCC_PREVIEW_X, NCC_PREVIEW_Y, NCC_PREVIEW_W,
+                 NCC_PREVIEW_PANE_H, ncc_col_prev_bg());
+        ncc_text_clip(NCC_PREVIEW_X + 20,
+                      NCC_PREVIEW_Y + NCC_PREVIEW_PANE_H / 2,
+                      "Unable to generate preview", 60, ncc_col_error(),
+                      ncc_col_prev_bg(), LVDS_FONT_NORMAL);
+        return;
+    }
+
     /* Every screen draws it, the TOOLS screen included - its rows paint over
        the pane in the same frame, so what that screen shows is unchanged, but
        the live stock has to keep up wherever the operator is standing. Skipping
@@ -1144,7 +1154,9 @@ size_t ncc_visual_usage(const char *const **lines)
         "Send the program to the machine.",
         "1 SINGLE  2 FROM  3 FULL.",
         "4 HOLD (again resumes)  5 STOP.",
-        "B/C pick the line, # reload, 0 files."
+        "B/C pick the line; B on line 1 is",
+        "the file's row, and D opens it.",
+        "# reload, 0 the card."
     };
     static const char *const manual[] = {
         "Jog the machine by hand.",

@@ -37,6 +37,7 @@
 #include "ncc_state.h"
 #include "ncc_tools.h"
 #include "ncc_visual.h"
+#include "ncc_visual_internal.h"
 #include "ncc_vocab.h"
 #include "lvds_palette.h"
 #include "g7x.h"
@@ -508,7 +509,19 @@ static bool host_file2_select(const char *name)
 static int host_file2test(void)
 {
     static const char *const program = "/D/nc/files/one.nc";
+    static const char *const preview_program = "/D/nc/files/two.nc";
+    static const char *const unsafe_program = "/D/nc/files/wrong.nc";
     static const char *const text_file = "/D/nc/files/notes.txt";
+    static const char *const unsafe_text =
+        "SETUP L50 OD50 ID0 CLAMP12 EXTRA0 CLR1\n"
+        "TOOLCALL T1 R_FEED120 FIN_FEED60 DOC2.0 FIN_DOC0.5 RPM800\n"
+        "G71 U3 R1 X0.5 Z0.5 F450\n"
+        "G1 X25 Z1 C0 R0\n"
+        "G1 X25 Z-5 C0 R0\n"
+        "G1 X35 Z-5 C1 R0\n"
+        "G1 X35 Z-18 C0 R5\n"
+        "G1 X50 Z-18\n"
+        "G80\n";
     char created[NCC_PATH_MAX];
     int failures = 0;
     int count;
@@ -517,6 +530,8 @@ static int host_file2test(void)
     host_fs_mount(g_files_root[0] ? g_files_root : NULL);
     host_init_core();
     if (!host_fs_write_text(program, "G0 X1 Z1\n") ||
+        !host_fs_write_text(preview_program, "G0 X2 Z2\n") ||
+        !host_fs_write_text(unsafe_program, unsafe_text) ||
         !host_fs_write_text(text_file, "notes\n")) {
         puts("file2test: FAIL cannot write the fixture");
         return 1;
@@ -561,6 +576,65 @@ static int host_file2test(void)
                                     : "-");
             failures++;
         }
+    }
+    /* The picker draws the selected program without replacing the document the
+       editor or run owns. A folder or text file leaves the active document as
+       the fallback. */
+    if (!ncc_visual_document() ||
+        strcmp(ncc_visual_document()->path, program) != 0) {
+        printf("file2test: FAIL picker preview is \"%s\", not the open file\n",
+               ncc_visual_document() ? ncc_visual_document()->path : "-");
+        failures++;
+    }
+    if (!host_file2_select("two.nc")) {
+        puts("file2test: FAIL the second program is not in its folder");
+        failures++;
+    } else {
+        ncc_visual_key('8');
+        if (!ncc_visual_document() ||
+            strcmp(ncc_visual_document()->path, preview_program) != 0 ||
+            strcmp(ncc_visual_path(), program) != 0) {
+            printf("file2test: FAIL picker preview \"%s\" replaced \"%s\" with "
+                   "\"%s\"\n",
+                   ncc_visual_document() ? ncc_visual_document()->path : "-",
+                   ncc_visual_path(),
+                   preview_program);
+            failures++;
+        }
+    }
+    if (!host_file2_select("notes.txt")) {
+        puts("file2test: FAIL the text file is not in its folder");
+        failures++;
+    } else {
+        ncc_visual_key('8');
+        if (!ncc_visual_document() ||
+            strcmp(ncc_visual_document()->path, program) != 0 ||
+            !ncc_visual_file_preview_failed()) {
+            puts("file2test: FAIL a text pick replaced the active document");
+            failures++;
+        }
+    }
+    if (!host_file2_select("wrong.nc")) {
+        puts("file2test: FAIL the unsafe program is not in its folder");
+        failures++;
+    } else {
+        ncc_visual_key('8');
+        if (!ncc_visual_document() ||
+            strcmp(ncc_visual_document()->path, program) != 0 ||
+            !ncc_visual_file_preview_failed() ||
+            strcmp(ncc_visual_status(), "Unable to generate preview") != 0) {
+            printf("file2test: FAIL an unsafe program reached the preview "
+                   "(\"%s\", \"%s\")\n",
+                   ncc_visual_document() ? ncc_visual_document()->path : "-",
+                   ncc_visual_status());
+            failures++;
+        }
+    }
+    if (!host_file2_select("one.nc")) {
+        puts("file2test: FAIL cannot restore the original pick");
+        failures++;
+    } else {
+        ncc_visual_key('8');
     }
 
     /* 2. a folder is entered, and a program opens into the editor. */
@@ -1506,6 +1580,14 @@ static int host_run2test(void)
     }
     ncc_visual_init();
     ncc_visual_tick(NCC_BOOT_HOLD_MS + 1000u);                 /* past the first start's logo */
+    ncc_visual_select_mode(NCC_MODE_RUN);
+    ncc_visual_key('0');
+    if (strcmp(ncc_visual_screen_name(), "FILES") != 0) {
+        printf("run2test: FAIL `0` on an empty RUN opened \"%s\"\n",
+               ncc_visual_screen_name());
+        failures++;
+    }
+    ncc_visual_key('0');
     if (!ncc_visual_open(program)) {
         puts("run2test: FAIL the fixture does not load");
         return 1;
@@ -1513,6 +1595,49 @@ static int host_run2test(void)
     ncc_visual_select_mode(NCC_MODE_RUN);
     if (strcmp(ncc_visual_screen_name(), "RUN") != 0) {
         printf("run2test: FAIL the screen is \"%s\", not RUN\n",
+               ncc_visual_screen_name());
+        failures++;
+    }
+    nc_sender_run_reset();
+    host_pump_idle(64u);
+    ncc_visual_key('B');
+    if (!ncc_visual_name_selected()) {
+        puts("run2test: FAIL `B` from RUN line 1 did not select the file row");
+        failures++;
+    }
+    ncc_visual_key('B');
+    if (!ncc_visual_name_selected()) {
+        puts("run2test: FAIL the file row did not stay selected");
+        failures++;
+    }
+    ncc_visual_key('D');
+    if (strcmp(ncc_visual_screen_name(), "FILES") != 0) {
+        printf("run2test: FAIL `D` on the RUN file row opened \"%s\"\n",
+               ncc_visual_screen_name());
+        failures++;
+    }
+    ncc_visual_key('0');
+    ncc_visual_key('C');
+    if (ncc_visual_name_selected()) {
+        puts("run2test: FAIL `C` did not leave the RUN file row");
+        failures++;
+    }
+    cnc_set_exec_state(EXEC_RUN);
+    ncc_visual_key('B');
+    if (ncc_visual_name_selected()) {
+        puts("run2test: FAIL executing RUN let the user take the file row");
+        failures++;
+    }
+    cnc_clear_exec_state(EXEC_RUN);
+    ncc_visual_key('0');
+    if (strcmp(ncc_visual_screen_name(), "FILES") != 0) {
+        printf("run2test: FAIL `0` in RUN opened \"%s\"\n",
+               ncc_visual_screen_name());
+        failures++;
+    }
+    ncc_visual_key('0');
+    if (strcmp(ncc_visual_screen_name(), "RUN") != 0) {
+        printf("run2test: FAIL leaving files returned to \"%s\"\n",
                ncc_visual_screen_name());
         failures++;
     }
@@ -1540,10 +1665,26 @@ static int host_run2test(void)
                (unsigned long)host_view_at(NCC_DRO_X + 3, NCC_DRO_Y + 3));
         failures++;
     }
+    /* HOLD is not execution: the RUN cursor still walks. A fresh FULL also
+       clears the stale controller HOLD instead of making the operator press
+       `4` before the run starts. */
+    nc_sender_run_reset();
+    host_pump_idle(64u);
+    cnc_set_exec_state(EXEC_HOLD);
+    ncc_visual_key('C');
+    if (nc_sender_run_display_line() != 1u) {
+        printf("run2test: FAIL HOLD pinned the mark on line %lu\n",
+               (unsigned long)(nc_sender_run_display_line() + 1u));
+        failures++;
+    }
+    ncc_visual_key('3');
+    if (cnc_get_exec_state(EXEC_HOLD)) {
+        puts("run2test: FAIL a fresh FULL kept the previous HOLD");
+        failures++;
+    }
     /* `3 FULL`: what the panel hands the controller, line for line. Reading the
        reader here is what takes the lines, so the machine does not run them -
        the next pass runs the same program for the machine's own sake. */
-    ncc_visual_key('3');
     host_read_run2(sent, sizeof(sent), &n);
 
     ncc_document_init(&doc);
@@ -1686,6 +1827,30 @@ static int host_count_rect(int x0, int y0, int x1, int y1, uint32_t rgb)
     return count;
 }
 
+static bool host_is_stock_rgb(uint32_t rgb)
+{
+    return rgb == host_panel_rgb(lvds_palette_color(stock_dark)) ||
+           rgb == host_panel_rgb(lvds_palette_color(stock_base)) ||
+           rgb == host_panel_rgb(lvds_palette_color(stock_light)) ||
+           rgb == host_panel_rgb(lvds_palette_color(stock_highlight));
+}
+
+static int host_count_stock_rect(int x0, int y0, int x1, int y1)
+{
+    int count = 0;
+    int x;
+    int y;
+
+    for (y = y0; y < y1; y++) {
+        for (x = x0; x < x1; x++) {
+            if (host_is_stock_rgb(host_view_at(x, y))) {
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
 /* The stock's own colour down one column of the drawing: how many pixels carry
    it, and the first and last row they sit on. A column with none writes
    nothing into `top`/`bottom`. */
@@ -1694,8 +1859,9 @@ static int host_stock_column(int x, uint32_t rgb, int *top, int *bottom)
     int count = 0;
     int y;
 
+    (void)rgb;
     for (y = NCC_PREVIEW_Y; y < NCC_PREVIEW_BOTTOM; y++) {
-        if (host_view_at(x, y) != rgb) {
+        if (!host_is_stock_rgb(host_view_at(x, y))) {
             continue;
         }
         if (count == 0 && top) {
@@ -1876,14 +2042,34 @@ static int host_live2test(void)
                cut_top, cut_bottom, stock_left, stock_right);
         failures++;
     }
+    /* The cut is a material depth reading: all four amber bands survive in the
+       dithered picture, with untouched material still on the darkest one. */
+    {
+        static const lvds_palette_color_id_t shade[4] = {
+            stock_dark, stock_base, stock_light, stock_highlight
+        };
+        int counts[4];
+        int i;
+
+        for (i = 0; i < 4; i++) {
+            counts[i] = host_count_rect(stock_left, rect_top, stock_right + 1,
+                                        rect_bottom + 1,
+                                        host_panel_rgb(lvds_palette_color(shade[i])));
+            if (counts[i] == 0) {
+                printf("live2test: FAIL stock shade %d is absent after the cut\n",
+                       i);
+                failures++;
+            }
+        }
+    }
 
     /* The RUN screen keeps the part: the machine is parked, and the second frame
        is the one the operator left on the glass. */
-    kept = host_count_rect(stock_left, rect_top, stock_right + 1, rect_bottom + 1,
-                           stock_rgb);
+    kept = host_count_stock_rect(stock_left, rect_top, stock_right + 1,
+                                 rect_bottom + 1);
     ncc_visual_draw();
-    if (host_count_rect(stock_left, rect_top, stock_right + 1, rect_bottom + 1,
-                        stock_rgb) != kept) {
+    if (host_count_stock_rect(stock_left, rect_top, stock_right + 1,
+                              rect_bottom + 1) != kept) {
         puts("live2test: FAIL the part moves under the parked machine");
         failures++;
     }
@@ -1896,8 +2082,8 @@ static int host_live2test(void)
     /* The editor draws the stock whole again: the mask is the RUN screen's. */
     ncc_visual_select_mode(NCC_MODE_PROGRAM);
     ncc_visual_draw();
-    whole = host_count_rect(stock_left, rect_top, stock_right + 1, rect_bottom + 1,
-                            stock_rgb);
+    whole = host_count_stock_rect(stock_left, rect_top, stock_right + 1,
+                                  rect_bottom + 1);
     if (whole != before_total) {
         printf("live2test: FAIL the editor shows %d stock pixels, wanted %d\n",
                whole, before_total);
@@ -2059,7 +2245,7 @@ static int host_live2test(void)
                         if (c == profile_rgb || c == debug_rgb) {
                             profile_y = y;      /* the finish contour's row */
                         }
-                        if (c == stock_rgb) {
+                        if (host_is_stock_rgb(c)) {
                             material_y = y;     /* the material still there */
                         }
                     }
@@ -6089,7 +6275,7 @@ static int host_state2test(void)
                  row++) {
                 for (col = NCC_PREVIEW_X;
                      col < NCC_PREVIEW_X + NCC_PREVIEW_W; col++) {
-                    if (host_view_at(col, row) == stock) {
+                    if (host_is_stock_rgb(host_view_at(col, row))) {
                         break;
                     }
                 }
@@ -6100,7 +6286,7 @@ static int host_state2test(void)
             top = row;
             for (col = NCC_PREVIEW_X; col < NCC_PREVIEW_X + NCC_PREVIEW_W; col++) {
                 for (row = top; row < top + NCC_PREVIEW_PANE_H; row++) {
-                    if (host_view_at(col, row) == stock) {
+                    if (host_is_stock_rgb(host_view_at(col, row))) {
                         break;
                     }
                 }
@@ -6112,7 +6298,7 @@ static int host_state2test(void)
                 }
             }
             for (row = top; row < top + NCC_PREVIEW_PANE_H; row++) {
-                if (host_view_at(left + 4, row) == stock) {
+                if (host_is_stock_rgb(host_view_at(left + 4, row))) {
                     bottom = row;
                 }
             }
@@ -6414,7 +6600,7 @@ static int host_brush2test(void)
              row++) {
             for (col = NCC_PREVIEW_X; col < NCC_PREVIEW_X + NCC_PREVIEW_W;
                  col++) {
-                if (host_view_at(col, row) == stock) {
+                if (host_is_stock_rgb(host_view_at(col, row))) {
                     break;
                 }
             }
@@ -6425,7 +6611,7 @@ static int host_brush2test(void)
         top = row;
         for (col = NCC_PREVIEW_X; col < NCC_PREVIEW_X + NCC_PREVIEW_W; col++) {
             for (row = top; row < top + NCC_PREVIEW_PANE_H; row++) {
-                if (host_view_at(col, row) == stock) {
+                if (host_is_stock_rgb(host_view_at(col, row))) {
                     break;
                 }
             }
@@ -6437,7 +6623,7 @@ static int host_brush2test(void)
             }
         }
         for (row = top; row < top + NCC_PREVIEW_PANE_H; row++) {
-            if (host_view_at(left + 4, row) == stock) {
+            if (host_is_stock_rgb(host_view_at(left + 4, row))) {
                 bottom = row;
             }
         }
@@ -6556,7 +6742,7 @@ static int host_frame2test(void)
              row++) {
             for (col = NCC_PREVIEW_X; col < NCC_PREVIEW_X + NCC_PREVIEW_W;
                  col++) {
-                if (host_view_at(col, row) == stock) {
+                if (host_is_stock_rgb(host_view_at(col, row))) {
                     break;
                 }
             }
@@ -6567,7 +6753,7 @@ static int host_frame2test(void)
         top = row;
         for (col = NCC_PREVIEW_X; col < NCC_PREVIEW_X + NCC_PREVIEW_W; col++) {
             for (row = top; row < top + NCC_PREVIEW_PANE_H; row++) {
-                if (host_view_at(col, row) == stock) {
+                if (host_is_stock_rgb(host_view_at(col, row))) {
                     break;
                 }
             }
@@ -6579,7 +6765,7 @@ static int host_frame2test(void)
             }
         }
         for (row = top; row < top + NCC_PREVIEW_PANE_H; row++) {
-            if (host_view_at(left + 4, row) == stock) {
+            if (host_is_stock_rgb(host_view_at(left + 4, row))) {
                 bottom = row;
             }
         }
@@ -6682,7 +6868,7 @@ static int host_glyph2test(void)
                      NCC_PREVIEW_W, NCC_PREVIEW_PANE_H);
     for (row = NCC_PREVIEW_Y; row < NCC_PREVIEW_Y + NCC_PREVIEW_PANE_H; row++) {
         for (col = NCC_PREVIEW_X; col < NCC_PREVIEW_X + NCC_PREVIEW_W; col++) {
-            if (host_view_at(col, row) == stock) {
+            if (host_is_stock_rgb(host_view_at(col, row))) {
                 break;
             }
         }
@@ -6693,7 +6879,7 @@ static int host_glyph2test(void)
     top = row;
     for (col = NCC_PREVIEW_X; col < NCC_PREVIEW_X + NCC_PREVIEW_W; col++) {
         for (row = top; row < top + NCC_PREVIEW_PANE_H; row++) {
-            if (host_view_at(col, row) == stock) {
+            if (host_is_stock_rgb(host_view_at(col, row))) {
                 break;
             }
         }
@@ -6705,7 +6891,7 @@ static int host_glyph2test(void)
         }
     }
     for (row = top; row < top + NCC_PREVIEW_PANE_H; row++) {
-        if (host_view_at(left + 4, row) == stock) {
+        if (host_is_stock_rgb(host_view_at(left + 4, row))) {
             bottom = row;
         }
     }

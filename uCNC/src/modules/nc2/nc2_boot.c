@@ -160,8 +160,8 @@ void nc2_boot_tick(unsigned ms)
 void nc2_boot_draw(void)
 {
     lvds_color_t bg = lvds_palette_color(black);
-    lvds_color_t ink = lvds_palette_color(white_warm);
-    lvds_color_t mark = lvds_palette_color(green_bright);
+    lvds_color_t ink = lvds_palette_color(white);
+    lvds_color_t mark = lvds_palette_color(green);
     char line[48];
     int cx = LVDS_VIEW_WIDTH / 2;
     const int y0 = LVDS_VIEW_HEIGHT / 2 - 60;

@@ -145,6 +145,18 @@ const char g_pad_keys[PAD_ROWS][PAD_COLS + 1] = {
     "789A"
 };
 
+static const uint8_t g_pad_display_rows[PAD_ROWS] = {
+    0, 3, 2, 1
+};
+
+char host_pad_key_at(int row, int col)
+{
+    if (row < 0 || row >= PAD_ROWS || col < 0 || col >= PAD_COLS) {
+        return 0;
+    }
+    return g_pad_keys[g_pad_display_rows[row]][col];
+}
+
 /* Pad geometry: cell (row, col), row major, top row first. */
 #define PAD_X0 12
 #define PAD_Y0 308
@@ -215,7 +227,7 @@ static void host_pad_click(int row, int col)
 
     if (row < 0 || row >= PAD_ROWS || col < 0 || col >= PAD_COLS)
         return;
-    key = g_pad_keys[row][col];
+    key = host_pad_key_at(row, col);
     if (!key)
         return;
     ncc_visual_key(key);
@@ -453,7 +465,7 @@ static void host_draw_side(HDC dc)
 
         for (row = 0; row < PAD_ROWS; row++) {
             for (col = 0; col < PAD_COLS; col++) {
-                char key = g_pad_keys[row][col];
+                char key = host_pad_key_at(row, col);
                 ncc_visual_key_meaning_t meaning;
                 RECT r = { PANEL_W + PAD_X0 + col * PAD_PITCH_X,
                            PAD_Y0 + row * PAD_PITCH_Y,

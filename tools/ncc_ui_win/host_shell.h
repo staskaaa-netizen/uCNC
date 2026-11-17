@@ -47,6 +47,10 @@
 #define PAD_ROWS 4
 extern const char g_pad_keys[PAD_ROWS][PAD_COLS + 1];
 
+/* The key shown in a helper-keyboard cell. Display rows run up for the numeric
+   block: `7 8 9` above `4 5 6` above `1 2 3`, with `1` at bottom-left. */
+char host_pad_key_at(int row, int col);
+
 /* The pad key's meaning on the active screen: the pad entry that carries it, the
    screen's own word for a key the pad does not name, and whether the key steps a
    field or the axis. False when the key means nothing here. */

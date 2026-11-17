@@ -31,7 +31,9 @@
 #define PANEL_H LVDS_VIEW_HEIGHT
 #define SIDE_W 300
 #define WIN_W (PANEL_W + SIDE_W)
-#define WIN_H PANEL_H
+/* The right-hand operator panel uses a little more height than the glass so the
+   larger helper and keyboard text keeps its line spacing. */
+#define WIN_H (PANEL_H + 50)
 
 /* The window's own timer: one tick of the machine's main loop. */
 #define TIMER_ID 1

@@ -147,7 +147,7 @@ const char g_pad_keys[PAD_ROWS][PAD_COLS + 1] = {
 
 /* Pad geometry: cell (row, col), row major, top row first. */
 #define PAD_X0 12
-#define PAD_Y0 282
+#define PAD_Y0 308
 #define PAD_CELL_W 64
 #define PAD_CELL_H 40
 #define PAD_GAP_X 6
@@ -163,11 +163,11 @@ const char g_pad_keys[PAD_ROWS][PAD_COLS + 1] = {
 #define SIDE_TITLE_Y 10
 #define SIDE_USAGE_NAME_Y 134
 #define SIDE_USAGE_Y 152
-#define SIDE_USAGE_STEP 15
-#define SIDE_PAD_NAME_Y 266
-#define SIDE_KEYS_NAME_Y 466
-#define SIDE_KEYS_Y 482
-#define SIDE_KEYS_STEP 15
+#define SIDE_USAGE_STEP 17
+#define SIDE_PAD_NAME_Y 292
+#define SIDE_KEYS_NAME_Y 492
+#define SIDE_KEYS_Y 509
+#define SIDE_KEYS_STEP 17
 
 static bool host_pad_cell(int x, int y, int *row, int *col)
 {
@@ -378,11 +378,11 @@ static void host_draw_side(HDC dc)
     HBRUSH button = CreateSolidBrush(RGB(58, 62, 66));
     HBRUSH mode_button = CreateSolidBrush(RGB(34, 96, 60));
     HPEN edge = CreatePen(PS_SOLID, 1, RGB(120, 124, 128));
-    HFONT font = CreateFontA(15, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+    HFONT font = CreateFontA(17, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                              CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                              DEFAULT_PITCH | FF_SWISS, "Segoe UI");
-    HFONT small = CreateFontA(12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    HFONT small = CreateFontA(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                               DEFAULT_PITCH | FF_SWISS, "Segoe UI");

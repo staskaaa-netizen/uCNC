@@ -158,6 +158,11 @@ void nc_sender_run_init(nc_sender_status_fn status, void *status_user,
                         void *tool_radius_user);
 void nc_sender_run_pace(void);
 
+/* The firmware normally lets a G7x cycle's emitted lines follow back-to-back as
+   one cut. A desktop station can ask for strict pacing, which waits for the
+   virtual machine to become idle between every emitted line as well. */
+void nc_sender_run_set_strict_block_pacing(bool enabled);
+
 bool nc_sender_run_start(const g7x_doc_t *doc, size_t line);
 bool nc_sender_run_send_unit(const g7x_doc_t *doc, size_t line);
 

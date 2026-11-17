@@ -57,5 +57,10 @@ mingw32-make
 build\ncc_ui.exe --files build\ncc-files
 ```
 
+The desktop machine loop parses at most one queued line per 30 ms timer tick and
+enables strict G7x block pacing. The firmware keeps its normal continuous-cycle
+pacing; this difference is deliberate so RUN stays visible and controllable in
+the station.
+
 The compiler needs its own `bin` on `PATH` (it finds `cc1`'s DLLs there), which
 is also how `tools/test_ncc.py` sets it up.

@@ -29,6 +29,10 @@ unless a door or feed hold is still active. HOLD does not count as execution for
 the caller's cursor movement: a held RUN screen can still select the row the
 next `SINGLE` or `FROM` will use.
 
+The firmware default lets the emitted lines of one G7x cycle follow back-to-back
+as a single cut. The Windows station enables strict block pacing instead, so it
+waits for each virtual move to finish before handing over the next line.
+
 The caller keeps:
 
 - `U`/`W` display and editor rules;

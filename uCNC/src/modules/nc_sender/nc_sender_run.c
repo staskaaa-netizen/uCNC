@@ -22,6 +22,7 @@
    and the interpolator are empty. */
 static bool g_nc_sender_run_active;
 static bool g_nc_sender_run_hold;
+static bool g_nc_sender_run_strict_block_pacing;
 static size_t g_nc_sender_run_line;
 static uint8_t g_nc_sender_run_error;
 static size_t g_nc_sender_run_error_line;
@@ -337,6 +338,11 @@ void nc_sender_run_init(nc_sender_status_fn status, void *status_user,
         registered = true;
     }
     nc_sender_run_reset();
+}
+
+void nc_sender_run_set_strict_block_pacing(bool enabled)
+{
+    g_nc_sender_run_strict_block_pacing = enabled;
 }
 
 static bool nc_sender_run_failed(void *args)
@@ -788,7 +794,8 @@ void nc_sender_run_pace(void)
     if (g_nc_sender_run_send_count > 0u) {
         return;                       /* the last line is still going out */
     }
-    if (!nc_sender_run_mid_block() && !nc_sender_run_machine_idle()) {
+    if ((g_nc_sender_run_strict_block_pacing || !nc_sender_run_mid_block()) &&
+        !nc_sender_run_machine_idle()) {
         return;                       /* the machine is still running the last */
     }
 

@@ -752,19 +752,14 @@ static void host_tick(HWND hwnd, unsigned now_ms)
     }
 }
 
-/* One tick of the firmware's main loop: parse what the panel queued and what a
-   program stream holds, run the machine's tasks, and move the virtual clock.
-   All three have to happen - with the parser or the clock missing, a jog is
-   queued and never executed, which looks exactly like a feed that does not
-   work. The machine keypad reports the key that is down every poll; the shell
-   does the same here, so a feed also sees an alarm or a program take the
-   reader. */
+/* One tick of the firmware's main loop: parse at most one queued line, run the
+   machine's tasks, and move the virtual clock. One line per timer tick is the
+   desktop pacer: consuming every ready block in a burst made RUN jump several
+   lines between paints. */
 void host_run_machine(unsigned elapsed_ms)
 {
-    unsigned i;
-
     ncc_visual_hold_key(g_host_held_key);
-    for (i = 0u; i < 8u && grbl_stream_available(); i++) {
+    if (grbl_stream_available()) {
         (void)cnc_parse_cmd();
     }
     cnc_dotasks();
@@ -1074,6 +1069,9 @@ void host_init_core(void)
 {
     cnc_init();
     cnc_unit_test_start();
+    /* The desktop shows RUN in real time: wait for each virtual move before
+       handing over the next line, including inside a G7x block. */
+    nc_sender_run_set_strict_block_pacing(true);
     host_fs_mount(g_files_root[0] ? g_files_root : NULL);
     /* A machine's palette is empty when it boots (the backend takes its colours
        as they are first used), so every check starts from the same blank

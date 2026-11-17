@@ -87,8 +87,9 @@ void host_play_keys(const char *script);
 /* Bring the firmware up the way the machine's own boot does, and mount `/D`. */
 void host_init_core(void);
 
-/* One tick of the firmware's main loop: parse what the panel queued, run
-   `cnc_dotasks()` and advance the virtual clock by `elapsed_ms`. */
+/* One tick of the firmware's main loop: parse at most one queued line, run
+   `cnc_dotasks()` and advance the virtual clock by `elapsed_ms`. Parsing one
+   line per timer tick keeps a RUN visibly paced. */
 void host_run_machine(unsigned elapsed_ms);
 
 /* The main loop with the clock ticking, `iterations` times. */

@@ -50,6 +50,39 @@ itself today.
       The pilot is the splash itself: converting `ncc_boot.c` to the library is
       the first user, and it is already a passing check (`--boot2test`).
 
+## Stock depth presentation modes
+
+- [x] **OD pseudo-3D shading is the current machine behavior.** The live stock
+      maps remaining OD material depth through four amber anchors and a static
+      4x4 ordered dither. Untouched stock is darkest; cut columns redraw from
+      their current surface toward the centre. The pattern and geometry are
+      static/cached and must not become lighting or camera-dependent.
+
+- [ ] **When ID shading is added, OD must become solid.** An internal diameter
+      has to read as the actual cut-out of the part. Dithering both OD and ID at
+      once makes the bore boundary ambiguous, so selecting ID depth replaces the
+      OD depth texture with one solid OD stock colour while the ID surface uses
+      the depth texture.
+
+- [ ] **Keep three explicit stock presentation states** for later UI wiring:
+
+      1. **Solid** - one stock colour, no depth dithering.
+      2. **OD depth** - current behavior: OD uses depth shading, ID remains a
+         geometric cut-out.
+      3. **ID depth** - ID uses depth shading, OD is forced solid so the bore is
+         read as a real opening.
+
+      The key/mode used to select these states is not decided yet. Do not infer
+      it from `#`; that remains the DIN/full versus stock-plus-path switch.
+
+- [ ] **Dither budget for later ID work.** The hardware framebuffer is 4bpp and
+      the HSTX palette has 16 real entries; extra surface levels are spatial,
+      not extra palette colours. OD and ID can each have 16 logical levels while
+      sharing the same four amber anchors, with different dither phase or
+      orientation. Two separate four-anchor OD/ID families need eight stock
+      entries; the current table leaves seven after the nine general UI colours,
+      so one existing role would have to be reclaimed first.
+
 ## Keeping the box honest
 
 ## The TOOLS screen's editor does not show the word being typed
